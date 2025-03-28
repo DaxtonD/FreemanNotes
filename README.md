@@ -1,6 +1,6 @@
 # FreemanNotes
 
-FreemanNotes is a modern note-keeping web application inspired by the original Keeper project. This project is built from scratch with the goal of preserving the original layout and user experience while replacing Firebase with a custom Node/Express backend using a MySQL database.
+FreemanNotes is a modern note-keeping web application inspired by the original Keeper project. This project is built from scratch with the goal of preserving the original layout and user experience while adding user registration and replacing Firebase with a custom Node/Express backend using a MySQL database. 
 
 ## Features
 
