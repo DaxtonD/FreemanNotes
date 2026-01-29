@@ -1,0 +1,130 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id             Int            @id @default(autoincrement())
+  email          String         @unique
+  name           String?
+  passwordHash   String?
+  role           String         @default("user")
+  fontFamily     String?        @default("Calibri, system-ui, Arial, sans-serif")
+  checkboxBg     String?
+  checkboxBorder String?
+  noteWidth      Int?           @default(288)
+  checklistSpacing Int?         @default(15)
+  checkboxSize     Int?         @default(20)
+  checklistTextSize Int?        @default(17)
+  dragBehavior   String?        @default("swap")
+  animationSpeed String?        @default("normal")
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+  collaborations Collaborator[]
+  invitesSent    Invite[]       @relation("InvitesSent")
+  labels         Label[]
+  notes          Note[]         @relation("OwnerNotes")
+}
+
+model Invite {
+  id          Int       @id @default(autoincrement())
+  email       String
+  token       String    @unique
+  desiredRole String    @default("user")
+  invitedById Int?
+  usedAt      DateTime?
+  createdAt   DateTime  @default(now())
+  invitedBy   User?     @relation("InvitesSent", fields: [invitedById], references: [id])
+
+  @@index([invitedById], map: "Invite_invitedById_fkey")
+}
+
+model Note {
+  id            Int            @id @default(autoincrement())
+  title         String?
+  body          String?
+  color         String?
+  type          NoteType       @default(TEXT)
+  ord           Int            @default(0)
+  pinned        Boolean        @default(false)
+  archived      Boolean        @default(false)
+  ownerId       Int
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  collaborators Collaborator[]
+  owner         User           @relation("OwnerNotes", fields: [ownerId], references: [id])
+  images        NoteImage[]
+  items         NoteItem[]
+  noteLabels    NoteLabel[]
+
+  @@index([ownerId])
+}
+
+model NoteItem {
+  id      Int     @id @default(autoincrement())
+  noteId  Int
+  content String
+  checked Boolean @default(false)
+  indent  Int     @default(0)
+  ord     Int     @default(0)
+  note    Note    @relation(fields: [noteId], references: [id])
+
+  @@index([noteId], map: "NoteItem_noteId_fkey")
+}
+
+model NoteImage {
+  id        Int      @id @default(autoincrement())
+  noteId    Int
+  url       String
+  ocrText   String?
+  createdAt DateTime @default(now())
+  note      Note     @relation(fields: [noteId], references: [id])
+
+  @@index([noteId], map: "NoteImage_noteId_fkey")
+}
+
+model Label {
+  id         Int         @id @default(autoincrement())
+  name       String
+  ownerId    Int
+  createdAt  DateTime    @default(now())
+  owner      User        @relation(fields: [ownerId], references: [id])
+  noteLabels NoteLabel[]
+
+  @@unique([ownerId, name])
+}
+
+model NoteLabel {
+  id      Int   @id @default(autoincrement())
+  noteId  Int
+  labelId Int
+  label   Label @relation(fields: [labelId], references: [id])
+  note    Note  @relation(fields: [noteId], references: [id])
+
+  @@unique([noteId, labelId])
+  @@index([labelId], map: "NoteLabel_labelId_fkey")
+}
+
+model Collaborator {
+  id      Int      @id @default(autoincrement())
+  noteId  Int
+  userId  Int
+  role    String   @default("editor")
+  addedAt DateTime @default(now())
+  note    Note     @relation(fields: [noteId], references: [id])
+  user    User     @relation(fields: [userId], references: [id])
+
+  @@index([noteId])
+  @@index([userId])
+}
+
+enum NoteType {
+  TEXT
+  CHECKLIST
+  IMAGE
+}
+

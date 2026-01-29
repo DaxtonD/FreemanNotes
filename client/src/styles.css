@@ -1,0 +1,524 @@
+:root{
+  --bg:#121212;
+  --card:#1e1e1e;
+  --muted:#bdbdbd;
+  --checklist-gap:8px;
+  --checklist-checkbox-size:26px;
+  --checklist-text-size:14px;
+  --checkbox-bg: var(--card);
+  --checkbox-border-default: #ffffff;
+  --checkbox-border: var(--checkbox-border-default);
+  --accent:#ffcc00;
+  --gap:16px;
+  --sidebar-width:220px;
+  --checklist-item-shift: 6px;
+  --note-card-width: 288px; /* fixed card width; change this to experiment (or via prefs) */
+  --note-card-max-width: 420px; /* optional max width preference placeholder */
+  --app-font-family: Inter, system-ui, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+}
+*{box-sizing:border-box}
+html,body,#root{height:100%;margin:0;font-family:var(--app-font-family)}
+
+body{
+  background:var(--bg);
+  color:#fff;
+}
+
+/* Header */
+.app-header{
+  height:64px;
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  padding:0 16px;
+  border-bottom:1px solid rgba(255,255,255,0.04);
+  background:linear-gradient(180deg, rgba(255,255,255,0.02), transparent);
+  position:sticky;
+  top:0;
+  z-index:50;
+}
+.header-left{display:flex;align-items:center;gap:12px}
+.brand{font-weight:600;font-size:18px}
+.search{width:520px;max-width:60vw;padding:8px 12px;border-radius:8px;background:#2b2b2b;border:1px solid rgba(255,255,255,0.04);color:#fff}
+.icon-btn{background:transparent;border:none;color:var(--muted);font-size:18px;margin-left:8px}
+.avatar{width:32px;height:32px;border-radius:50%;background:linear-gradient(90deg,#2ea7ff,#9b59ff);display:flex;align-items:center;justify-content:center}
+
+/* Layout */
+.app-body{display:flex;height:calc(100vh - 64px)}
+.sidebar{width:var(--sidebar-width);padding:20px;border-right:1px solid rgba(255,255,255,0.03);background:transparent}
+.main-area{flex:1;padding:24px 32px;overflow:auto}
+
+/* Sidebar items */
+.sidebar-item{padding:8px 6px;border-radius:6px;color:var(--muted);margin-bottom:6px}
+.sidebar-item.active{background:rgba(255,255,255,0.03);color:#fff}
+
+/* Notes sections & masonry grid */
+.notes-area{display:block}
+.section-title{color:var(--muted);font-weight:600;margin:0 0 8px 0;padding-left:6px;font-size:13px}
+.notes-grid{
+  /* Masonry-style layout via CSS columns. JS sets column-count to increase
+     when a new card fits. Cards stack top-to-bottom per column, keeping
+     vertical alignment consistent without row holes. */
+  display: block;
+  column-gap: var(--gap);
+  column-fill: balance;
+  margin: 0;
+  transition: width 180ms ease;
+}
+
+/* while user is actively resizing, disable transitions to avoid visual glitches */
+.is-resizing .notes-grid > div,
+.is-resizing .note-card {
+  transition: none !important;
+}
+
+/* hide the live grid content while resizing to avoid layout-jump flashes; clones will animate */
+/* Note: do not hide the live grid during resize; clones will animate visually while the grid remains visible */
+
+/* Take-note bar (collapsed) and expanded editor styling */
+.take-note-bar{
+  background: var(--card);
+  padding: 8px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+  color: inherit;
+  display: flex;
+  align-items: center;
+}
+.take-note-expanded{
+  background: var(--card);
+  border-radius: 8px;
+  box-shadow: 0 6px 20px rgba(0,0,0,0.6);
+}
+
+/* Checklist item / drag handle styles */
+.checklist-item { padding: 4px 6px; border-radius:6px; background: transparent; margin-bottom: var(--checklist-gap); }
+.checklist-item .drag-handle { opacity: 0.9; color: inherit; display:flex; align-items:center; justify-content:center; margin-right:6px }
+.take-note-input{ padding:4px 6px; border-radius:4px; font-size: var(--checklist-text-size); resize: none; width:100%; min-height:22px; background: transparent; border: none; color: inherit; outline: none; font-family: inherit; }
+.take-note-input::placeholder{ color: var(--muted); }
+
+/* checkbox visuals */
+.checkbox-visual, .note-checkbox {
+  width: var(--checklist-checkbox-size);
+  height: var(--checklist-checkbox-size);
+  min-width: var(--checklist-checkbox-size);
+  min-height: var(--checklist-checkbox-size);
+  border-radius: 6px;
+  background: var(--checkbox-bg);
+  border: 2px solid var(--checkbox-border);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--checkbox-border);
+  cursor: pointer;
+  box-shadow: 0 1px 0 rgba(0,0,0,0.25) inset;
+}
+.checkbox-visual, .note-checkbox { padding: calc(var(--checklist-checkbox-size) * 0.08); margin-right: 8px; box-sizing: border-box; }
+.checkbox-visual svg, .note-checkbox svg { width: 100%; height: 100%; display:block; /* ensure SVG inherits `color` */ stroke: currentColor; fill: none; }
+.note-checkbox svg path { stroke-linecap:round; stroke-linejoin:round; }
+/* scale checkmark stroke relative to checkbox size (increased multiplier for better visibility at small sizes) */
+.checkbox-visual svg path, .note-checkbox svg path { stroke-width: calc(var(--checklist-checkbox-size) * 0.42); }
+
+/* visible checked state - per-card variables set by NoteCard */
+.note-checkbox.checked, .checkbox-visual.checked {
+  /* Keep background matching the note/card background so checkbox doesn't become a white block
+     Use border color for both border and checkmark so they match */
+  background: var(--checkbox-bg);
+  border-color: var(--checkbox-border);
+  color: var(--checkbox-border);
+}
+
+/* subtle shift classes used during drag-over to animate neighbors */
+.checklist-item.shift-up { transform: translateY(calc(-1 * var(--checklist-item-shift))); }
+.checklist-item.shift-down { transform: translateY(var(--checklist-item-shift)); }
+.note-body .note-item { font-size: var(--checklist-text-size); }
+/* Ensure note preview items use the same spacing as the checklist editor */
+.note-item { margin-bottom: var(--checklist-gap); }
+
+/* drag animation */
+.checklist-item{
+  transition: transform 140ms cubic-bezier(.22,.95,.3,1), opacity 120ms ease;
+  -webkit-transition: transform 140ms cubic-bezier(.22,.95,.3,1), opacity 120ms ease;
+  will-change: transform;
+}
+.checklist-item.dragging{ opacity: 0.7; transform: scale(0.985); }
+
+/* floating ghost clone used during drag to hover over other items */
+.checklist-ghost {
+  box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+  border-radius: 8px;
+  background: var(--card);
+  transform: translateZ(0);
+  pointer-events: none;
+  opacity: 0.98;
+}
+
+/* Slightly smaller checkmark stroke inside the full editor so it doesn't appear oversized */
+.image-dialog .checkbox-visual svg path,
+.image-dialog .note-checkbox svg path {
+  stroke-width: calc(var(--checklist-checkbox-size) * 0.32);
+}
+
+/* hide original element while dragging so the ghost appears above neighbors */
+/* keep original visible (use ghost for visual hover) */
+.checklist-item.drag-source { visibility: hidden; }
+
+/* up/down controls for mobile-friendly reorder */
+.move-controls{ display:flex; gap:6px; }
+.move-btn{ background:transparent;border:none;color:var(--muted);cursor:pointer;padding:6px;border-radius:6px }
+.move-btn:active{ transform: translateY(1px); }
+.note-card{
+  display:flex;
+  flex-direction:column;
+  /* fill the grid cell width; keep height/content independent to avoid overlap */
+  width: 100%;
+  background:var(--card);
+  border-radius:8px;
+  padding:12px;
+  margin:0;
+  break-inside:avoid;
+  box-shadow: 0 1px 0 rgba(0,0,0,0.6);
+  max-height: var(--note-card-max-height, 380px);
+  overflow: hidden;
+  transition: transform 300ms cubic-bezier(.2,.9,.2,1), opacity 260ms ease;
+  will-change: transform, opacity;
+}
+.notes-grid > div { display: block; width: 100%; margin: 0 0 var(--gap); transition: transform 300ms cubic-bezier(.2,.9,.2,1); will-change: transform; break-inside: avoid; }
+.note-title{font-weight:600;margin-bottom:8px;color: inherit;}
+.note-body{color:inherit;white-space:pre-wrap;font-size:14px;line-height:1.35; overflow:visible; max-height: calc(var(--note-card-max-height, 380px) - 120px); flex: 1 1 auto;} 
+.note-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:12px;opacity:0.95}
+.note-card:hover .note-actions{opacity:1}
+
+/* small action style */
+.tiny{background:transparent;border:none;color:var(--muted);cursor:pointer}
+
+/* Icon hover/scale: consolidated and fixed (no syntax errors) */
+.note-actions .tiny,
+.note-footer .tiny {
+  filter: grayscale(100%);
+  opacity: 0.9;
+  transition: transform 140ms cubic-bezier(.2,0,0,1), opacity 120ms ease;
+  transform: translateY(0) scale(1);
+  transform-origin: center center;
+  will-change: transform, opacity;
+  backface-visibility: hidden;
+}
+
+/* Card hover nudges all action icons slightly */
+.note-card:hover .note-actions .tiny,
+.note-card:hover .note-footer .tiny {
+  transform: translateY(-2px) scale(1.08);
+  opacity: 0.98;
+}
+
+/* Individual hover/focus on the buttons -- scale the button and the inner SVG
+   so behavior is visible even when the pointer is over the SVG element itself */
+.note-footer .tiny:hover,
+.note-actions .tiny:hover,
+.note-footer .tiny:focus,
+.note-actions .tiny:focus {
+  transform: translateY(-2px) scale(1.14);
+  opacity: 1;
+  outline: none;
+}
+.note-footer .tiny svg,
+.note-actions .tiny svg {
+  transition: transform 140ms cubic-bezier(.2,0,0,1);
+  transform-origin: center center;
+}
+.note-footer .tiny:hover svg,
+.note-actions .tiny:hover svg,
+.note-footer .tiny:focus svg,
+.note-actions .tiny:focus svg {
+  transform: scale(1.14);
+}
+
+/* Palette emoji is a text glyph (not an SVG) — ensure it visibly grows on hover */
+.note-footer .tiny.palette,
+.note-actions .tiny.palette {
+  font-size: 18px; /* baseline */
+  transition: font-size 120ms ease, transform 140ms cubic-bezier(.2,0,0,1);
+}
+.note-footer .tiny.palette:hover,
+.note-actions .tiny.palette:hover,
+.note-footer .tiny.palette:focus,
+.note-actions .tiny.palette:focus {
+  font-size: 22px; /* visibly larger emoji */
+  transform: translateY(-2px) scale(1.14); /* keep consistent with other icons */
+}
+
+/* Chips */
+.collab-chips{display:flex;gap:6px;margin-bottom:8px}
+.chip{background: var(--chip-bg, rgba(255,255,255,0.06));padding:4px 8px;border-radius:999px;font-size:12px;color: inherit;}
+
+/* Note images */
+.note-image{margin-top:10px;border-radius:6px;overflow:hidden}
+.note-image img{width:100%;height:auto;display:block}
+
+/* Palette popover (positioned via inline fixed coordinates) */
+.palette-popover{
+  position:fixed;
+  background:#181818; /* fully opaque */
+  color:#ffffff;      /* force white text inside popovers */
+  border-radius:10px;
+  padding:10px;
+  box-shadow:0 8px 24px rgba(0,0,0,0.6);
+  z-index:200;
+  max-width: var(--note-card-width);
+}
+.palette-grid{display:flex;gap:8px;flex-wrap:wrap;max-width:300px}
+.palette-swatch{
+  width:40px;height:40px;border-radius:6px;border:1px solid rgba(255,255,255,0.04);cursor:pointer;
+  box-shadow: inset 0 0 0 1px rgba(0,0,0,0.06);
+}
+
+/* Image dialog */
+.image-dialog-backdrop{
+  position:fixed;inset:0;background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;z-index:60;
+}
+.image-dialog{
+  width: min(420px, calc(var(--note-card-width) + 120px));
+  background:#181818;   /* solid opaque background */
+  color:#ffffff;        /* white text */
+  border-radius:10px;
+  padding:12px;
+  border:1px solid rgba(255,255,255,0.04);
+  display:flex; flex-direction:column; max-height:80vh;
+}
+/* Preferences dialog: fixed width independent of note width */
+.prefs-dialog{
+  width: 420px;
+  background:#181818;   /* solid opaque background */
+  color:#ffffff;        /* white text */
+  border-radius:10px;
+  padding:12px;
+  border:1px solid rgba(255,255,255,0.04);
+  display:flex; flex-direction:column; max-height:80vh;
+}
+.image-dialog, .image-dialog * {
+  font-family: var(--app-font-family) !important;
+}
+.prefs-dialog, .prefs-dialog * {
+  font-family: var(--app-font-family) !important;
+}
+.image-url-input{width:100%;padding:8px;border-radius:6px;border:1px solid rgba(255,255,255,0.04);background:#1c1c1c;color:#fff}
+.dialog-header{display:flex;align-items:center;justify-content:space-between}
+/* dialog body (scrollable) and footer (sticky) */
+.dialog-body{ padding:12px; overflow:auto; flex:1 1 auto; }
+.dialog-footer{ padding:12px; border-top:1px solid rgba(255,255,255,0.03); display:flex; gap:8px; align-items:center; }
+.delete-item{ background:transparent;border:none;color:var(--muted);cursor:pointer;opacity:0; transition:opacity 140ms; padding:4px 6px;border-radius:6px }
+.checklist-item:hover .delete-item{ opacity:1 }
+.btn{background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.03);padding:8px 10px;border-radius:6px;color:#fff;cursor:pointer}
+.btn:hover{background:rgba(255,255,255,0.06)}
+
+/* allow buttons inside a colored note card or the editor/preference dialog to inherit the computed text color */
+.note-card .btn,
+.image-dialog .btn,
+.prefs-dialog .btn {
+  color: inherit;
+}
+
+/* compact completed-toggle inside notes/editors */
+.completed-toggle { display:inline-flex; align-items:center; gap:8px; background:transparent; border:none; padding:6px; color:inherit; cursor:pointer }
+
+/* Reminder picker */
+.reminder-backdrop{position:fixed;inset:0;background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;z-index:60}
+.reminder-popover{
+  width: min(320px, var(--note-card-width));
+  background:#181818;   /* solid opaque background */
+  color:#ffffff;        /* white text */
+  border-radius:10px;
+  padding:12px;
+  border:1px solid rgba(255,255,255,0.04);
+}
+.reminder-popover input[type="date"],
+.reminder-popover input[type="time"] {
+  background:#1c1c1c;
+  color:#fff;
+  border:1px solid rgba(255,255,255,0.04);
+  padding:6px;
+  border-radius:6px;
+}
+
+/* More menu (portal) */
+.more-menu{
+  background:#232323; /* solid opaque background */
+  border-radius:8px;
+  padding:6px 8px;
+  box-shadow:0 6px 18px rgba(0,0,0,0.6);
+  display:flex;
+  flex-direction:column;
+  box-sizing:border-box;
+  color:#ffffff;
+}
+.more-item{
+  background:transparent;
+  border:none;
+  color:#ffffff;
+  padding:6px 10px;
+  text-align:left;
+  cursor:pointer;
+}
+
+/* ensure items are sized normally */
+.more-item { white-space: nowrap; }
+
+.more-item:hover{background:rgba(255,255,255,0.02);color:#fff}
+
+/* Collaborator modal */
+.collab-modal-backdrop{
+  position:fixed;inset:0;background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;z-index:60;
+}
+.collab-modal{
+  width:420px;
+  background:#181818;   /* solid opaque background */
+  color:#ffffff;        /* white text */
+  border-radius:10px;
+  padding:12px;
+  border:1px solid rgba(255,255,255,0.04);
+}
+.collab-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
+.icon-close{background:transparent;border:none;color:#fff;cursor:pointer}
+.collab-search{width:100%;padding:8px;border-radius:6px;border:1px solid rgba(255,255,255,0.04);background:#1c1c1c;color:#fff;margin-bottom:8px}
+.collab-list{max-height:220px;overflow:auto}
+.collab-item{display:flex;gap:10px;align-items:center;padding:8px;border-radius:6px;cursor:pointer}
+.collab-item:hover{background:rgba(255,255,255,0.02)}
+.collab-avatar{width:36px;height:36px;border-radius:50%;background:linear-gradient(90deg,#2ea7ff,#9b59ff);display:flex;align-items:center;justify-content:center;color:#fff;font-weight:600}
+.collab-email{font-size:13px;color:inherit}
+.collab-empty{padding:12px;color:var(--muted);text-align:center;font-size:13px}
+
+/* dialog header and close button should inherit the dialog's text color (set inline) */
+.image-dialog .icon-close,
+.image-dialog .icon-close:hover,
+.image-dialog .dialog-header strong {
+  color: inherit;
+}
+/* preferences dialog header and close button inherit text color */
+.prefs-dialog .icon-close,
+.prefs-dialog .icon-close:hover,
+.prefs-dialog .dialog-header strong {
+  color: inherit;
+}
+
+/* keep icons greyscale and scale only */
+.note-actions .tiny{
+  filter: grayscale(100%);
+  opacity:0.9;
+  transition: transform 140ms cubic-bezier(.2,0,.0,1), opacity 120ms ease;
+  transform: translateY(0) scale(1);
+  background:transparent;border:none;cursor:pointer;font-size:18px;
+}
+.note-card:hover .note-actions .tiny{
+  transform: translateY(-2px) scale(1.08);
+  opacity:1;
+}
+
+/* Protected footer region for actions (edge-to-edge, solid, and hidden until hover) */
+.note-card { padding-bottom: 62px; }
+.note-footer {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 52px;
+  border-bottom-left-radius: 8px;
+  border-bottom-right-radius: 8px;
+  background: #161616; /* solid, not transparent */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6px 10px;
+  box-shadow: 0 -1px 0 rgba(255,255,255,0.02) inset, 0 6px 18px rgba(0,0,0,0.6);
+  transition: transform 160ms ease, opacity 160ms ease;
+  opacity: 0;
+  transform: translateY(6px);
+  pointer-events: none;
+  z-index: 20;
+  /* icons should be white (matching other action icons) */
+  color: #ffffff;
+}
+.note-card:hover .note-footer {
+  opacity: 1;
+  transform: translateY(0);
+  pointer-events: auto;
+}
+
+/* Actions inside footer: full-width row, spaced to fit the card */
+.note-actions {
+  display:flex;
+  align-items:center;
+  width: 100%;
+  justify-content: space-between;
+  gap: 0;
+}
+
+/* Icons: fixed square, centered content so emoji and SVG align */
+.note-footer .tiny {
+  width: clamp(20px, calc(var(--note-card-width) * 0.14), 36px);
+  height: clamp(20px, calc(var(--note-card-width) * 0.14), 36px);
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  border-radius:6px;
+  filter: grayscale(100%);
+  opacity: 0.95;
+  transition: transform 140ms cubic-bezier(.2,0,.0,1), opacity 120ms ease;
+  transform: translateY(0) scale(1);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  font-size: clamp(14px, calc(var(--note-card-width) * 0.055), 18px);
+  color: inherit;
+  line-height:1;
+  padding:0;
+  flex: 0 0 auto;
+}
+
+/* subtle scale on icon hover */
+.note-footer .tiny:hover {
+  transform: translateY(-2px) scale(1.08);
+  opacity: 1;
+}
+
+/* More menu should auto-size to content; no min/max width constraints here */
+
+/* Settings dropdown (used in header) */
+.settings-dropdown{
+  position:absolute;
+  right:8px;
+  top:44px;
+  background:var(--card);
+  color:#e6e6e6;
+  border-radius:8px;
+  box-shadow:0 8px 28px rgba(0,0,0,0.6);
+  min-width:160px;
+  z-index:2000;
+  border:1px solid rgba(255,255,255,0.03);
+  overflow:hidden;
+  transform-origin: top right;
+  animation: dropdown-in 160ms cubic-bezier(.2,0,.2,1) both;
+}
+.settings-item{
+  display:block;
+  width:100%;
+  text-align:left;
+  padding:10px 12px;
+  border:none;
+  background:transparent;
+  color:inherit;
+  cursor:pointer;
+}
+.settings-item:hover{background:rgba(255,255,255,0.02)}
+
+@keyframes dropdown-in{
+  from { opacity: 0; transform: translateY(-6px) scale(0.98); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+/* responsive */
+@media (max-width:640px){
+  /* On small/mobile screens hide the sidebar; desktop windows (even narrow) keep it visible */
+  .sidebar{display:none}
+  .search{max-width:40vw}
+  .notes-grid{column-width:220px}
+}

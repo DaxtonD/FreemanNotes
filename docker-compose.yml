@@ -1,0 +1,14 @@
+version: "3.8"
+services:
+  freemannotes:
+    build: .
+    ports:
+      - "4000:4000"
+    env_file:
+      - .env
+    # MySQL is external; if you run MySQL in compose, add it here and adjust .env
+    # networks:
+    #   - appnet
+#networks:
+#  appnet:
+#    driver: bridge

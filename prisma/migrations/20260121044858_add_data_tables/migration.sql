@@ -1,0 +1,2 @@
+-- migration removed: this migration previously created DataTable/DataColumn metadata tables.
+-- Those models were removed from the Prisma schema; retaining this file as a stub for history.

@@ -1,0 +1,24 @@
+# Node
+node_modules/
+
+# Build
+dist/
+.client-dist/
+
+# Local env files
+.env
+.env.local
+.env.*.local
+
+# Editor directories and files
+.vscode/
+.DS_Store
+npm-debug.log*
+coverage/
+
+# Prisma
+prisma/dev.db
+
+# Logs
+logs/
+*.log
