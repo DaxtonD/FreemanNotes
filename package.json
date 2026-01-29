@@ -13,7 +13,10 @@
     "prisma:db:push": "prisma db push --schema=prisma/schema.prisma",
     "prisma:studio": "prisma studio",
     "setup-db": "prisma db push --schema=prisma/schema.prisma",
-    "postinstall": "npm run setup-db"
+    "postinstall": "npm run setup-db",
+    "release:patch": "npm version patch -m \"chore(release): v%s\" && git push && git push --tags",
+    "release:minor": "npm version minor -m \"chore(release): v%s\" && git push && git push --tags",
+    "release:major": "npm version major -m \"chore(release): v%s\" && git push && git push --tags"
   },
   "dependencies": {
     "@prisma/client": "^5.10.0",

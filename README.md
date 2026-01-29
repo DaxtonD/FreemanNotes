@@ -96,6 +96,16 @@ Or with Compose:
 docker compose up --build
 ```
 
+## Versioning
+
+- Uses Semantic Versioning (MAJOR.MINOR.PATCH).
+- When you say a milestone is done, we will bump and tag:
+  - Patch: `npm run release:patch`
+  - Minor: `npm run release:minor`
+  - Major: `npm run release:major`
+- Each release updates `package.json` version, creates a Git tag `vX.Y.Z`, and pushes to GitHub.
+- Maintain notes in [CHANGELOG.md](CHANGELOG.md).
+
 ## API Summary
 
 - `POST /api/auth/register` — Register (invite required if registration disabled).
