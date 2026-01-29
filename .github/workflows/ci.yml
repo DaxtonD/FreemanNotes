@@ -9,6 +9,9 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      CI: true
+      SKIP_DB_SETUP: true
 
     steps:
       - name: Checkout repository
