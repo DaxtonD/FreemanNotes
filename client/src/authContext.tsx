@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { me as apiMe, login as apiLogin, register as apiRegister } from './lib/authApi';
 
-type User = { id: number; email: string; name?: string } | null;
+type User = { id: number; email: string; name?: string; role?: 'admin' | 'user' } | null;
 
 type AuthContextValue = {
   user: User;
