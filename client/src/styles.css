@@ -45,7 +45,18 @@ body{
 
 /* Layout */
 .app-body{display:flex;height:calc(100vh - 64px)}
-.sidebar{width:var(--sidebar-width);padding:20px;border-right:1px solid rgba(255,255,255,0.03);background:transparent}
+.sidebar{width:var(--sidebar-width);padding:20px;border-right:1px solid rgba(255,255,255,0.03);background:transparent; transition: width 200ms cubic-bezier(.2,0,.2,1);}
+.sidebar.collapsed{ width: 64px; padding: 16px 10px; }
+.sidebar .sidebar-item { display:flex; align-items:center; gap:8px; transition: transform 140ms cubic-bezier(.2,0,.2,1), color 120ms ease; }
+.sidebar .sidebar-item .icon { width: 24px; height: 24px; display:inline-flex; align-items:center; justify-content:center; }
+.sidebar .sidebar-item .icon svg { width: 24px; height: 24px; fill: currentColor; stroke: none; transition: transform 140ms cubic-bezier(.2,0,.2,1); }
+.sidebar .sidebar-item .text { font-size: 16px; transition: font-size 140ms ease, font-weight 120ms ease; }
+.sidebar .sidebar-item:hover .text { font-weight: 600; font-size: 17px; }
+.sidebar .sidebar-item:hover .icon svg { transform: scale(1.14); }
+.sidebar:not(.collapsed) .sidebar-item .icon { display: none; }
+.sidebar.collapsed .sidebar-item { justify-content:center; }
+.sidebar.collapsed .sidebar-item .text { display:none; }
+.sidebar-section hr { border: none; border-top: 1px solid rgba(255,255,255,0.06); margin: 8px 0; }
 .main-area{flex:1;padding:24px 32px;overflow:auto}
 
 /* Sidebar items */
@@ -84,17 +95,54 @@ body{
   color: inherit;
   display: flex;
   align-items: center;
+  gap: 8px;
+  width: 600px;
+  margin: 12px auto;
 }
 .take-note-expanded{
   background: var(--card);
   border-radius: 8px;
   box-shadow: 0 6px 20px rgba(0,0,0,0.6);
+  width: 600px;
+  margin: 12px auto;
 }
+.take-note-expanded.maximized{
+  position: fixed;
+  top: 3vh;
+  left: 2vw;
+  width: 96vw;
+  z-index: 70;
+  max-height: 90vh;
+  overflow: auto;
+}
+
+/* Larger checkbox icon in collapsed take-note bar */
+.take-note-bar .checkbox-visual{ --checklist-checkbox-size: 32px; }
+/* Make the checkmark lighter and slightly smaller inside the box */
+.take-note-bar .checkbox-visual svg path{ stroke-width: calc(var(--checklist-checkbox-size) * 0.22); }
+.take-note-bar .checkbox-visual svg{ transform: scale(0.86); }
+
+/* Rich text editor styling to match checklist aesthetics */
+.rt-toolbar { background: rgba(255,255,255,0.03); padding: 6px; border-radius: 6px; display:flex; flex-wrap: wrap; gap:8px; align-items:center; }
+.rt-toolbar .tiny { background: transparent; color: var(--muted); border: 1px solid rgba(255,255,255,0.08); padding: 4px 8px; border-radius: 6px; flex: 0 0 auto; }
+.rt-toolbar .tiny svg { width: 18px; height: 18px; display: block; fill: currentColor; }
+.rt-toolbar .tiny rect, .rt-toolbar .tiny circle { fill: currentColor; }
+.rt-toolbar .tiny text { font-weight: 600; }
+.rt-toolbar .tiny[aria-pressed="true"] { background: rgba(255,255,255,0.08); color: #fff; }
+.rt-editor { min-height: 300px; padding: 12px 14px; border-radius: 8px; background: var(--card); color: inherit; }
+.rt-editor h1, .rt-editor h2, .rt-editor h3 { margin: 8px 0; font-weight: 700; }
+.rt-editor p { margin: 6px 0; font-size: var(--checklist-text-size); }
+.rt-editor ul, .rt-editor ol { margin: 8px 0 8px 20px; }
+.note-html { font-size: var(--checklist-text-size); line-height: 1.5; }
+.note-html h1, .note-html h2, .note-html h3 { margin: 8px 0; font-weight: 700; }
+.note-html p { margin: 6px 0; }
+.note-html ul, .note-html ol { margin: 8px 0 8px 20px; }
 
 /* Checklist item / drag handle styles */
 .checklist-item { padding: 4px 6px; border-radius:6px; background: transparent; margin-bottom: var(--checklist-gap); }
 .checklist-item .drag-handle { opacity: 0.9; color: inherit; display:flex; align-items:center; justify-content:center; margin-right:6px }
 .take-note-input{ padding:4px 6px; border-radius:4px; font-size: var(--checklist-text-size); resize: none; width:100%; min-height:22px; background: transparent; border: none; color: inherit; outline: none; font-family: inherit; }
+.take-note-input{ overflow: hidden; }
 .take-note-input::placeholder{ color: var(--muted); }
 
 /* checkbox visuals */
@@ -178,14 +226,14 @@ body{
   margin:0;
   break-inside:avoid;
   box-shadow: 0 1px 0 rgba(0,0,0,0.6);
-  max-height: var(--note-card-max-height, 380px);
+  max-height: var(--note-card-max-height, 570px);
   overflow: hidden;
   transition: transform 300ms cubic-bezier(.2,.9,.2,1), opacity 260ms ease;
   will-change: transform, opacity;
 }
 .notes-grid > div { display: block; width: 100%; margin: 0 0 var(--gap); transition: transform 300ms cubic-bezier(.2,.9,.2,1); will-change: transform; break-inside: avoid; }
 .note-title{font-weight:600;margin-bottom:8px;color: inherit;}
-.note-body{color:inherit;white-space:pre-wrap;font-size:14px;line-height:1.35; overflow:visible; max-height: calc(var(--note-card-max-height, 380px) - 120px); flex: 1 1 auto;} 
+.note-body{color:inherit;white-space:pre-wrap;font-size:14px;line-height:1.35; overflow:hidden; max-height: calc(var(--note-card-max-height, 570px) - 120px); flex: 1 1 auto;} 
 .note-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:12px;opacity:0.95}
 .note-card:hover .note-actions{opacity:1}
 
@@ -250,6 +298,19 @@ body{
 /* Chips */
 .collab-chips{display:flex;gap:6px;margin-bottom:8px}
 .chip{background: var(--chip-bg, rgba(255,255,255,0.06));padding:4px 8px;border-radius:999px;font-size:12px;color: inherit;}
+.label-chips{
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: 58px; /* just above footer (height ~52px + small gap) */
+  display:flex;
+  gap:6px;
+  flex-wrap: wrap;
+  z-index: 15; /* above body, below footer */
+  max-height: 56px; /* up to ~2 rows */
+  overflow: hidden; /* clip extra rows when many labels */
+  padding: 4px 0;
+}
 
 /* Note images */
 .note-image{margin-top:10px;border-radius:6px;overflow:hidden}
@@ -285,6 +346,13 @@ body{
   border:1px solid rgba(255,255,255,0.04);
   display:flex; flex-direction:column; max-height:80vh;
 }
+.image-dialog.maximized{
+  width: 96vw !important;
+  max-height: 90vh;
+}
+.image-dialog.maximized .rt-editor{
+  min-height: 60vh;
+}
 /* Preferences dialog: fixed width independent of note width */
 .prefs-dialog{
   width: 420px;
@@ -319,7 +387,7 @@ body{
 }
 
 /* compact completed-toggle inside notes/editors */
-.completed-toggle { display:inline-flex; align-items:center; gap:8px; background:transparent; border:none; padding:6px; color:inherit; cursor:pointer }
+.completed-toggle { display:inline-flex; align-items:center; gap:8px; background:transparent; border:none; padding:6px; color:inherit; cursor:pointer; margin-bottom: var(--checklist-gap); }
 
 /* Reminder picker */
 .reminder-backdrop{position:fixed;inset:0;background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;z-index:60}
@@ -415,6 +483,8 @@ body{
 
 /* Protected footer region for actions (edge-to-edge, solid, and hidden until hover) */
 .note-card { padding-bottom: 62px; }
+.note-card.has-labels { padding-bottom: 126px; }
+.note-card.has-labels .note-body { max-height: calc(var(--note-card-max-height, 570px) - 180px); }
 .note-footer {
   position: absolute;
   left: 0;

@@ -46,7 +46,7 @@ model Invite {
 model Note {
   id            Int            @id @default(autoincrement())
   title         String?
-  body          String?
+  body          String?        @db.LongText
   color         String?
   type          NoteType       @default(TEXT)
   ord           Int            @default(0)

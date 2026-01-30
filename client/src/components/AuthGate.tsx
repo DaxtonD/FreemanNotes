@@ -4,7 +4,7 @@ import NotesGrid from './NotesGrid';
 import RegisterModal from './RegisterModal';
 import LoginModal from './LoginModal';
 
-export default function AuthGate() {
+export default function AuthGate({ selectedLabelIds }: { selectedLabelIds?: number[] }) {
   const { user } = useAuth();
   const [showRegister, setShowRegister] = useState(false);
   const [showLogin, setShowLogin] = useState(false);
@@ -17,7 +17,7 @@ export default function AuthGate() {
       .catch(() => setRegistrationEnabled(false));
   }, []);
 
-  if (user) return <NotesGrid />;
+  if (user) return <NotesGrid selectedLabelIds={selectedLabelIds || []} />;
 
   return (
     <div style={{ padding: 24, display: 'flex', flexDirection: 'column', alignItems: 'center' }}>

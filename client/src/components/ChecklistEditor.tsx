@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { useAuth } from '../authContext';
 
 export default function ChecklistEditor({ note, onClose, onSaved, noteBg }:
-  { note: any; onClose: () => void; onSaved?: () => void; noteBg?: string }) {
+  { note: any; onClose: () => void; onSaved?: (payload: { items: Array<{ id: number; content: string; checked: boolean; ord: number; indent: number }>; title: string }) => void; noteBg?: string }) {
   const { token } = useAuth();
   // Prevent immediate pointer interactions for a short time after mount
   const pointerSafeRef = useRef(false);
@@ -58,6 +58,18 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg }:
   }
 
   useEffect(() => { itemRefs.current = itemRefs.current.slice(0, items.length); }, [items.length]);
+  // Autosize textareas whenever items or preview changes
+  useEffect(() => {
+    requestAnimationFrame(() => {
+      itemRefs.current.forEach(el => {
+        if (!el) return;
+        try {
+          el.style.height = 'auto';
+          el.style.height = Math.max(22, el.scrollHeight) + 'px';
+        } catch {}
+      });
+    });
+  }, [items, previewItems]);
 
   function shiftClassForIndex(realIdx: number, list: any[]) {
     if (dragging === null || hoverIndex === null) return '';
@@ -76,6 +88,16 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg }:
 
   function updateItem(idx: number, content: string) {
     setItems(s => s.map((it, i) => i === idx ? { ...it, content } : it));
+    // Autosize the edited textarea on next frame
+    requestAnimationFrame(() => {
+      const el = itemRefs.current[idx];
+      if (el) {
+        try {
+          el.style.height = 'auto';
+          el.style.height = Math.max(22, el.scrollHeight) + 'px';
+        } catch {}
+      }
+    });
   }
 
   function handleInputKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>, realIdx: number) {
@@ -241,10 +263,11 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg }:
       // reflect cleaned list in the UI
       setItems(filtered);
       const ordered = [...filtered].sort((a, b) => (a.checked === b.checked) ? 0 : (a.checked ? 1 : -1));
-      const payload = { items: ordered.map((it, i) => ({ id: it.id, content: it.content, checked: !!it.checked, ord: i, indent: it.indent || 0 })) };
-      const res = await fetch(`/api/notes/${note.id}/items`, { method: 'PUT', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify(payload) });
+      const payloadItems = ordered.map((it, i) => ({ id: it.id, content: it.content, checked: !!it.checked, ord: i, indent: it.indent || 0 }));
+      const res = await fetch(`/api/notes/${note.id}/items`, { method: 'PUT', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ items: payloadItems }) });
       if (!res.ok) throw new Error(await res.text());
-      onSaved && onSaved(); onClose();
+      onSaved && onSaved({ items: payloadItems, title });
+      onClose();
     } catch (err) { console.error('Failed to save checklist', err); window.alert('Failed to save checklist'); } finally { setSaving(false); }
   }
   // compute inline styles for the dialog to reflect note color (so editor shows same background)
@@ -294,7 +317,7 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg }:
 
   const dialog = (
     <div className="image-dialog-backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget) { save(); } }}>
-      <div className="image-dialog" role="dialog" aria-modal style={{ width: 560, ...dialogStyle }}
+      <div className="image-dialog" role="dialog" aria-modal style={{ width: 'min(1000px, 86vw)', ...dialogStyle }}
         onPointerDownCapture={(e) => { if (!pointerSafeRef.current) { e.preventDefault(); e.stopPropagation(); } }}
       >
         <div className="dialog-header">
@@ -315,7 +338,7 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg }:
                     const realIdx = currentList.indexOf(it);
                     const shiftClass = shiftClassForIndex(realIdx, currentList);
                     return (
-                      <div key={realIdx} className={`checklist-item ${shiftClass}`} style={{ display: 'flex', gap: 8, alignItems: 'center', marginLeft: (it.indent || 0) * 18 }} draggable={false}
+                      <div key={realIdx} className={`checklist-item ${shiftClass}`} style={{ display: 'flex', gap: 8, alignItems: 'flex-start', marginLeft: (it.indent || 0) * 18 }} draggable={false}
                         onPointerCancel={() => { pointerTrackRef.current = null; }}
                         
                         onDragOver={(e) => {
@@ -551,7 +574,7 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg }:
                           }}
                         >≡</div>
                         <div className={`checkbox-visual ${it.checked ? 'checked' : ''}`} onClick={() => toggleChecked(realIdx)}>{it.checked && (<svg viewBox="0 0 24 24" fill="none" aria-hidden focusable="false"><path d="M20 6L9 17l-5-5" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" /></svg>)}</div>
-                        <textarea ref={el => itemRefs.current[realIdx] = el} value={it.content} onChange={e => updateItem(realIdx, (e.target as HTMLTextAreaElement).value)} onKeyDown={(e) => handleInputKeyDown(e as React.KeyboardEvent<HTMLTextAreaElement>, realIdx)} placeholder="List item" className="take-note-input" style={{ flex: 1 }} rows={1} />
+                        <textarea ref={el => itemRefs.current[realIdx] = el} value={it.content} onChange={e => updateItem(realIdx, (e.target as HTMLTextAreaElement).value)} onKeyDown={(e) => handleInputKeyDown(e as React.KeyboardEvent<HTMLTextAreaElement>, realIdx)} placeholder="List item" className="take-note-input" style={{ flex: 1, height: 'auto' }} rows={1} />
                         <div className="move-controls"><button className="move-btn" onClick={() => moveItem(realIdx, Math.max(0, realIdx-1))} aria-label="Move up">↑</button><button className="move-btn" onClick={() => moveItem(realIdx, Math.min(items.length-1, realIdx+1))} aria-label="Move down">↓</button></div>
                         <button className="delete-item" onClick={(e) => { e.stopPropagation(); deleteItemAt(realIdx); }} aria-label="Delete item">✕</button>
                       </div>
@@ -559,7 +582,7 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg }:
                   })}
 
                   <div style={{ marginTop: 12 }}>
-                    <button className="btn" onClick={() => setCompletedOpen(o => !o)} aria-expanded={completedOpen} aria-controls={`editor-completed-${note.id}`}>
+                    <button className="btn completed-toggle" onClick={() => setCompletedOpen(o => !o)} aria-expanded={completedOpen} aria-controls={`editor-completed-${note.id}`}>
                       <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
                         <span style={{ transform: completedOpen ? 'rotate(90deg)' : 'rotate(0deg)', display: 'inline-block' }}>{'▸'}</span>
                         <span>{items.filter(it=>it.checked).length} completed items</span>
@@ -570,14 +593,14 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg }:
                       const realIdx = currentList.indexOf(it);
                       const shiftClass = shiftClassForIndex(realIdx, previewItems ?? items);
                       return (
-                        <div key={realIdx} className={`checklist-item ${shiftClass}`} style={{ display: 'flex', gap: 8, alignItems: 'center', marginLeft: (it.indent || 0) * 18 }} draggable={false}
+                        <div key={realIdx} className={`checklist-item ${shiftClass}`} style={{ display: 'flex', gap: 8, alignItems: 'flex-start', marginLeft: (it.indent || 0) * 18 }} draggable={false}
                           onDragOver={(e) => { e.preventDefault(); const target = e.currentTarget as HTMLElement; const rect = target.getBoundingClientRect(); const y = (e as unknown as React.DragEvent<HTMLElement>).clientY; const height = rect.height || 40; if (rafRef.current) cancelAnimationFrame(rafRef.current); rafRef.current = requestAnimationFrame(() => { if (dragging === null) return; let shouldHover = false; if (dragging < realIdx) { shouldHover = (y - rect.top < height * 0.28); } else if (dragging > realIdx) { shouldHover = (rect.bottom - y < height * 0.28); } setHoverIndex(prev => shouldHover ? (prev === realIdx ? prev : realIdx) : (prev === realIdx ? null : prev)); }); }}
                           onDrop={(e) => { e.preventDefault(); const src = dragging !== null ? dragging : parseInt(e.dataTransfer.getData('text/plain') || '-1', 10); const dst = realIdx; if (src >= 0 && src !== dst) moveItem(src, dst); endDragCleanup(); }}
                           onDragLeave={() => { if (hoverIndex === realIdx) setHoverIndex(null); if (rafRef.current) { cancelAnimationFrame(rafRef.current); rafRef.current = null; } }}
                         >
                           <div style={{ width: 20 }} />
                           <div className={`checkbox-visual ${it.checked ? 'checked' : ''}`} onClick={() => toggleChecked(realIdx)}>{it.checked && (<svg viewBox="0 0 24 24" fill="none" aria-hidden focusable="false"><path d="M20 6L9 17l-5-5" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" /></svg>)}</div>
-                          <textarea ref={el => itemRefs.current[realIdx] = el} value={it.content} onChange={e => updateItem(realIdx, (e.target as HTMLTextAreaElement).value)} onKeyDown={(e) => handleInputKeyDown(e as React.KeyboardEvent<HTMLTextAreaElement>, realIdx)} placeholder="List item" className="take-note-input" style={{ flex: 1 }} rows={1} />
+                          <textarea ref={el => itemRefs.current[realIdx] = el} value={it.content} onChange={e => updateItem(realIdx, (e.target as HTMLTextAreaElement).value)} onKeyDown={(e) => handleInputKeyDown(e as React.KeyboardEvent<HTMLTextAreaElement>, realIdx)} placeholder="List item" className="take-note-input" style={{ flex: 1, height: 'auto' }} rows={1} />
                           <div className="move-controls"><button className="move-btn" onClick={() => moveItem(realIdx, Math.max(0, realIdx-1))} aria-label="Move up">↑</button><button className="move-btn" onClick={() => moveItem(realIdx, Math.min(items.length-1, realIdx+1))} aria-label="Move down">↓</button></div>
                           <button className="delete-item" onClick={(e) => { e.stopPropagation(); deleteItemAt(realIdx); }} aria-label="Delete item">✕</button>
                         </div>

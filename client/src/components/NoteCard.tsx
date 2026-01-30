@@ -1,8 +1,11 @@
 import React, { useRef, useState } from "react";
+import DOMPurify from 'dompurify';
 import { useAuth } from '../authContext';
 import ChecklistEditor from "./ChecklistEditor";
+import RichTextEditor from "./RichTextEditor";
 import CollaboratorModal from "./CollaboratorModal";
 import MoreMenu from "./MoreMenu";
+import LabelsDialog from "./LabelsDialog";
 import ColorPalette from "./ColorPalette";
 import ImageDialog from "./ImageDialog";
 import ReminderPicker from "./ReminderPicker";
@@ -23,6 +26,7 @@ type Note = {
   items?: NoteItem[];
   type?: string;
   color?: string;
+  noteLabels?: Array<{ id: number; label?: { id: number; name: string } }>;
 };
 
 /** choose '#000' or '#fff' based on best WCAG contrast vs provided hex color */
@@ -55,8 +59,10 @@ export default function NoteCard({ note, onChange }: { note: Note, onChange?: ()
   const [archived, setArchived] = useState(false);
   const [imageUrl, setImageUrl] = useState<string | null>(null);
   const [noteItems, setNoteItems] = useState<any[]>(note.items || []);
+  const [title, setTitle] = useState<string>(note.title || '');
   const [showCollaborator, setShowCollaborator] = useState(false);
   const [collaborators, setCollaborators] = useState<{ id: number; email: string }[]>([]);
+  const [labels, setLabels] = useState<Array<{ id: number; name: string }>>(() => (note.noteLabels || []).map((nl:any) => nl.label).filter((l:any) => l && typeof l.id === 'number' && typeof l.name === 'string'));
   const [showMore, setShowMore] = useState(false);
   const [moreAnchorPoint, setMoreAnchorPoint] = useState<{ x:number; y:number } | null>(null);
 
@@ -64,6 +70,7 @@ export default function NoteCard({ note, onChange }: { note: Note, onChange?: ()
   const [showImageDialog, setShowImageDialog] = useState(false);
   const [showReminderPicker, setShowReminderPicker] = useState(false);
   const [showEditor, setShowEditor] = useState(false);
+  const [showTextEditor, setShowTextEditor] = useState(false);
   const [showCompleted, setShowCompleted] = useState<boolean>(true);
 
   const fileRef = useRef<HTMLInputElement | null>(null);
@@ -74,6 +81,10 @@ export default function NoteCard({ note, onChange }: { note: Note, onChange?: ()
     setBg(note.color || '');
     setTextColor(note.color ? contrastColorForBackground(note.color) : undefined);
   }, [note.color]);
+  React.useEffect(() => {
+    setLabels((note.noteLabels || []).map((nl:any) => nl.label).filter((l:any) => l && typeof l.id === 'number' && typeof l.name === 'string'));
+  }, [note.noteLabels]);
+  React.useEffect(() => { setTitle(note.title || ''); }, [note.title]);
 
   // track pointer down/up to distinguish clicks from small drags (prevents accidental reflows)
   const pointerStartRef = React.useRef<{ x: number; y: number } | null>(null);
@@ -154,25 +165,15 @@ export default function NoteCard({ note, onChange }: { note: Note, onChange?: ()
       window.alert('Failed to delete note');
     }
   }
-  async function onAddLabel() {
-    const label = window.prompt("Add label name:");
-    if (!label) return;
-    try {
-      const res = await fetch(`/api/notes/${note.id}/labels`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: token ? `Bearer ${token}` : '' }, body: JSON.stringify({ name: label }) });
-      if (!res.ok) throw new Error(await res.text());
-      onChange && onChange();
-    } catch (err) {
-      console.error(err);
-      window.alert('Failed to add label');
-    }
-  }
+  const [showLabels, setShowLabels] = useState(false);
+  function onAddLabel() { setShowLabels(true); }
   async function onUncheckAll() {
     try {
       const updated = (noteItems || []).map((it:any, idx:number) => ({ id: it.id, content: it.content, checked: false, ord: typeof it.ord === 'number' ? it.ord : idx, indent: typeof it.indent === 'number' ? it.indent : 0 }));
       setNoteItems(updated);
       const res = await fetch(`/api/notes/${note.id}/items`, { method: 'PUT', headers: { 'Content-Type': 'application/json', Authorization: token ? `Bearer ${token}` : '' }, body: JSON.stringify({ items: updated }) });
       if (!res.ok) throw new Error(await res.text());
-      onChange && onChange();
+      // no full reload needed; local state already reflects changes
     } catch (err) {
       console.error(err);
       window.alert('Failed to uncheck all items');
@@ -184,7 +185,7 @@ export default function NoteCard({ note, onChange }: { note: Note, onChange?: ()
       setNoteItems(updated);
       const res = await fetch(`/api/notes/${note.id}/items`, { method: 'PUT', headers: { 'Content-Type': 'application/json', Authorization: token ? `Bearer ${token}` : '' }, body: JSON.stringify({ items: updated }) });
       if (!res.ok) throw new Error(await res.text());
-      onChange && onChange();
+      // no full reload needed; local state already reflects changes
     } catch (err) {
       console.error(err);
       window.alert('Failed to check all items');
@@ -232,12 +233,12 @@ export default function NoteCard({ note, onChange }: { note: Note, onChange?: ()
     return (
     <article
       ref={(el) => { noteRef.current = el as HTMLElement | null; }}
-      className="note-card"
+      className={`note-card${labels.length > 0 ? ' has-labels' : ''}`}
       style={styleVars}
     >
       <input ref={fileRef} type="file" accept="image/*" style={{ display: "none" }} />
 
-      {note.title && <div className="note-title">{note.title}</div>}
+      {title && <div className="note-title">{title}</div>}
 
       {collaborators.length > 0 && (
         <div className="collab-chips">
@@ -245,12 +246,12 @@ export default function NoteCard({ note, onChange }: { note: Note, onChange?: ()
         </div>
       )}
 
-      <div className="note-body" onClick={() => { if (note.type === 'CHECKLIST' || (note.items && note.items.length)) setShowEditor(true); }}>
+      <div className="note-body" onClick={() => { if (note.type === 'CHECKLIST' || (note.items && note.items.length)) setShowEditor(true); else setShowTextEditor(true); }}>
         {noteItems && noteItems.length > 0 ? (
           <div>
             {/** Show incomplete first, then optionally completed items. Preserve indent in preview. */}
             {(noteItems.filter((it:any) => !it.checked)).map(it => (
-              <div key={it.id} className="note-item" style={{ display: 'flex', gap: 8, alignItems: 'center', marginLeft: ((it.indent || 0) * 16) }}>
+              <div key={it.id} className="note-item" style={{ display: 'flex', gap: 8, alignItems: 'flex-start', marginLeft: ((it.indent || 0) * 16) }}>
                 <button
                   className={`note-checkbox ${it.checked ? 'checked' : ''}`}
                   type="button"
@@ -264,14 +265,14 @@ export default function NoteCard({ note, onChange }: { note: Note, onChange?: ()
                     </svg>
                   )}
                 </button>
-                <div style={{ fontSize: 'var(--checklist-text-size)', overflow: 'hidden', textOverflow: 'ellipsis' }}>{it.content}</div>
+                <div style={{ fontSize: 'var(--checklist-text-size)', overflow: 'hidden', whiteSpace: 'normal', wordBreak: 'break-word' }}>{it.content}</div>
               </div>
             ))}
 
             {/** Completed items block */}
             {noteItems.some((it:any) => it.checked) && (
               <div style={{ marginTop: 6 }}>
-                <button className="btn" onClick={(e) => { e.stopPropagation(); setShowCompleted(s => !s); }} aria-expanded={showCompleted} aria-controls={`completed-${note.id}`}>
+                <button className="btn completed-toggle" onClick={(e) => { e.stopPropagation(); setShowCompleted(s => !s); }} aria-expanded={showCompleted} aria-controls={`completed-${note.id}`}>
                   <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
                     <span style={{ transform: showCompleted ? 'rotate(90deg)' : 'rotate(0deg)', display: 'inline-block' }}>{'▸'}</span>
                     <span>{noteItems.filter((it:any)=>it.checked).length} completed items</span>
@@ -281,7 +282,7 @@ export default function NoteCard({ note, onChange }: { note: Note, onChange?: ()
             )}
 
             {showCompleted && noteItems.filter((it:any) => it.checked).map(it => (
-              <div key={`c-${it.id}`} className="note-item completed" style={{ display: 'flex', gap: 8, alignItems: 'center', marginLeft: ((it.indent || 0) * 16), opacity: 0.7 }}>
+              <div key={`c-${it.id}`} className="note-item completed" style={{ display: 'flex', gap: 8, alignItems: 'flex-start', marginLeft: ((it.indent || 0) * 16), opacity: 0.7 }}>
                 <button
                   className={`note-checkbox ${it.checked ? 'checked' : ''}`}
                   type="button"
@@ -300,13 +301,21 @@ export default function NoteCard({ note, onChange }: { note: Note, onChange?: ()
             ))}
           </div>
         ) : (
-          note.body && note.body.split("\n").map((line, i) => <div key={i}>{line}</div>)
+          note.body ? (
+            <div className="note-html" dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(note.body, { USE_PROFILES: { html: true } }) }} />
+          ) : null
         )}
       </div>
 
       {imageUrl && (
         <div className="note-image">
           <img src={imageUrl} alt="note" />
+        </div>
+      )}
+
+      {labels.length > 0 && (
+        <div className="label-chips">
+          {labels.map(l => <span key={l.id} className="chip">{l.name}</span>)}
         </div>
       )}
 
@@ -364,6 +373,9 @@ export default function NoteCard({ note, onChange }: { note: Note, onChange?: ()
           onCheckAll={onCheckAll}
         />
       )}
+      {showLabels && (
+        <LabelsDialog noteId={note.id} onClose={() => setShowLabels(false)} onUpdated={(ls) => setLabels(ls)} />
+      )}
 
       {showCollaborator && (
         <CollaboratorModal onClose={() => setShowCollaborator(false)} onSelect={onCollaboratorSelect} />
@@ -374,7 +386,8 @@ export default function NoteCard({ note, onChange }: { note: Note, onChange?: ()
       {showImageDialog && <ImageDialog onClose={() => setShowImageDialog(false)} onAdd={onAddImageUrl} />}
 
       {showReminderPicker && <ReminderPicker onClose={() => setShowReminderPicker(false)} onSet={onSetReminder} />}
-      {showEditor && <ChecklistEditor note={note} noteBg={bg} onClose={() => setShowEditor(false)} onSaved={() => onChange && onChange()} />}
+      {showEditor && <ChecklistEditor note={note} noteBg={bg} onClose={() => setShowEditor(false)} onSaved={({ items, title }) => { setNoteItems(items); setTitle(title); }} />}
+      {showTextEditor && <RichTextEditor note={note} noteBg={bg} onClose={() => setShowTextEditor(false)} onSaved={({ title, body }) => { setTitle(title); /* update body via note; preview renders `noteItems` or sanitized HTML, but we keep local title */ note.body = body; }} />}
     </article>
   );
 }

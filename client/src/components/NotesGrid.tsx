@@ -3,7 +3,7 @@ import NoteCard from "./NoteCard";
 import { useAuth } from "../authContext";
 import TakeNoteBar from "./TakeNoteBar";
 
-export default function NotesGrid() {
+export default function NotesGrid({ selectedLabelIds = [] }: { selectedLabelIds?: number[] }) {
   const { token } = useAuth();
   const [notes, setNotes] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -33,6 +33,8 @@ export default function NotesGrid() {
       if (!res.ok) throw new Error(await res.text());
       const data = await res.json();
       setNotes(data.notes || []);
+      // After notes render, ask grid to recalc so width/columns lock immediately
+      try { setTimeout(() => window.dispatchEvent(new Event('notes-grid:recalc')), 0); } catch {}
       // apply any locally saved order (for unauthenticated or offline sessions)
       try {
         const raw = localStorage.getItem('notesOrder');
@@ -194,8 +196,13 @@ export default function NotesGrid() {
     };
   }, []);
 
-  const pinned = notes.filter(n => n.pinned);
-  const others = notes.filter(n => !n.pinned);
+  function matchesLabels(n: any): boolean {
+    if (!selectedLabelIds.length) return true;
+    const labels = (n.noteLabels || []).map((nl: any) => nl.label?.id).filter((id: any) => typeof id === 'number');
+    return selectedLabelIds.some(id => labels.includes(id));
+  }
+  const pinned = notes.filter(n => n.pinned).filter(matchesLabels);
+  const others = notes.filter(n => !n.pinned).filter(matchesLabels);
   function moveNote(from: number, to: number) {
     // FLIP for reordering only: capture before positions, update state, then animate transforms
     const before = new Map<number, DOMRect>();
@@ -299,9 +306,6 @@ export default function NotesGrid() {
       <TakeNoteBar onCreated={load} />
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
         <h3 className="section-title">Notes</h3>
-        <div>
-          <button className="btn" onClick={createNote}>New note</button>
-        </div>
       </div>
 
       {pinned.length > 0 && (

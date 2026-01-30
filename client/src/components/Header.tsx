@@ -5,7 +5,7 @@ import SettingsModal from "./SettingsModal";
 import PreferencesModal from "./PreferencesModal";
 import { useAuth } from "../authContext";
 
-export default function Header() {
+export default function Header({ onToggleSidebar }: { onToggleSidebar?: () => void }) {
   const [showRegister, setShowRegister] = useState(false);
   const [showLogin, setShowLogin] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
@@ -42,7 +42,7 @@ export default function Header() {
   return (
     <header className="app-header">
       <div className="header-left">
-        <button className="menu-btn" aria-label="menu">☰</button>
+        <button className="menu-btn" aria-label="menu" onClick={() => onToggleSidebar && onToggleSidebar()}>☰</button>
         <div className="brand">FreemanNotes</div>
       </div>
       <div className="header-center">

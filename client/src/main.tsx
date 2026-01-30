@@ -12,8 +12,10 @@ function applySavedPrefs() {
 				'prefs.checklistTextSize': '--checklist-text-size',
 				'prefs.checkboxBg': '--checkbox-bg',
 				'prefs.checkboxBorder': '--checkbox-border',
+				'prefs.noteWidth': '--note-card-width',
+				'prefs.fontFamily': '--app-font-family',
 			};
-			const pxKeys = new Set(['prefs.checklistSpacing', 'prefs.checkboxSize', 'prefs.checklistTextSize']);
+			const pxKeys = new Set(['prefs.checklistSpacing', 'prefs.checkboxSize', 'prefs.checklistTextSize', 'prefs.noteWidth']);
 			Object.entries(map).forEach(([key, cssVar]) => {
 				const v = localStorage.getItem(key);
 				if (v === null || v === '') return;
@@ -26,6 +28,8 @@ function applySavedPrefs() {
 					root.style.setProperty(cssVar, v);
 				}
 			});
+			// request grid recalculation early so first notes respect width
+			try { window.dispatchEvent(new Event('notes-grid:recalc')); } catch {}
 	} catch (err) { console.warn('Failed to apply saved prefs', err); }
 }
 

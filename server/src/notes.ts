@@ -276,4 +276,52 @@ router.delete('/api/notes/:id/collaborators/:collabId', async (req: Request, res
 });
 
 export default router;
+// list labels for current user
+router.get('/api/labels', async (req: Request, res: Response) => {
+  const user = await getUserFromToken(req);
+  if (!user) return res.status(401).json({ error: 'unauthenticated' });
+  try {
+    const labels = await prisma.label.findMany({ where: { ownerId: user.id }, orderBy: { name: 'asc' } });
+    res.json({ labels });
+  } catch (err) {
+    res.status(500).json({ error: String(err) });
+  }
+});
+
+// remove label from a note
+router.delete('/api/notes/:id/labels/:labelId', async (req: Request, res: Response) => {
+  const user = await getUserFromToken(req);
+  if (!user) return res.status(401).json({ error: 'unauthenticated' });
+  const id = Number(req.params.id);
+  const labelId = Number(req.params.labelId);
+  try {
+    const note = await prisma.note.findUnique({ where: { id } });
+    if (!note) return res.status(404).json({ error: 'not found' });
+    if (note.ownerId !== user.id) return res.status(403).json({ error: 'forbidden' });
+    await prisma.noteLabel.deleteMany({ where: { noteId: id, labelId } });
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: String(err) });
+  }
+});
+
+// delete a label globally for the current user
+router.delete('/api/labels/:labelId', async (req: Request, res: Response) => {
+  const user = await getUserFromToken(req);
+  if (!user) return res.status(401).json({ error: 'unauthenticated' });
+  const labelId = Number(req.params.labelId);
+  try {
+    const label = await prisma.label.findUnique({ where: { id: labelId } });
+    if (!label) return res.status(404).json({ error: 'label not found' });
+    if (label.ownerId !== user.id) return res.status(403).json({ error: 'forbidden' });
+
+    await prisma.$transaction([
+      prisma.noteLabel.deleteMany({ where: { labelId } }),
+      prisma.label.delete({ where: { id: labelId } })
+    ]);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: String(err) });
+  }
+});
 
