@@ -30,6 +30,13 @@ Adheres to Semantic Versioning (MAJOR.MINOR.PATCH).
 - Debounced preview sync for text notes; Windows `start` uses `cross-env`.
 - Minor UI polish: checklist alignment, paragraph margin resets, Underline restored.
 
+-
+## [0.2.1] - 2026-01-31
+
+### Changed
+- CI: Docker workflow now publishes semver tags without the leading `v` (e.g., `0.2.1`, `0.2`) in addition to `v0.2.1`.
+- No code changes.
+
 ## [0.1.0] - 2026-01-28
 - Initial public commit of FreemanNotes
 - Core features: responsive notes grid, drag-to-reorder, user preferences, invites, and updated README
