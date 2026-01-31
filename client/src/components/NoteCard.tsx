@@ -9,6 +9,13 @@ import LabelsDialog from "./LabelsDialog";
 import ColorPalette from "./ColorPalette";
 import ImageDialog from "./ImageDialog";
 import ReminderPicker from "./ReminderPicker";
+import * as Y from 'yjs';
+import { WebsocketProvider } from 'y-websocket';
+import { Editor } from '@tiptap/core';
+import StarterKit from '@tiptap/starter-kit';
+import Link from '@tiptap/extension-link';
+import TextAlign from '@tiptap/extension-text-align';
+import Collaboration from '@tiptap/extension-collaboration';
 
 type NoteItem = {
   id: number;
@@ -75,6 +82,119 @@ export default function NoteCard({ note, onChange }: { note: Note, onChange?: ()
 
   const fileRef = useRef<HTMLInputElement | null>(null);
   const { token } = useAuth();
+  // Subscribe to Yjs checklist for live card updates
+  const ydoc = React.useMemo(() => new Y.Doc(), [note.id]);
+  const providerRef = React.useRef<WebsocketProvider | null>(null);
+  const yarrayRef = React.useRef<Y.Array<Y.Map<any>> | null>(null);
+  const [rtHtmlFromY, setRtHtmlFromY] = React.useState<string | null>(null);
+  React.useEffect(() => {
+    const room = `note-${note.id}`;
+    const serverUrl = `ws://${window.location.host}/collab`;
+    const provider = new WebsocketProvider(serverUrl, room, ydoc);
+    providerRef.current = provider;
+    const yarr = ydoc.getArray<Y.Map<any>>('checklist');
+    yarrayRef.current = yarr;
+    const updateFromY = () => {
+      try {
+        if (yarr.length === 0) return; // avoid overwriting DB items until doc has content
+        const arr = yarr.toArray().map((m) => ({
+          id: (typeof m.get('id') === 'number' ? Number(m.get('id')) : undefined),
+          content: String(m.get('content') || ''),
+          checked: !!m.get('checked'),
+          indent: Number(m.get('indent') || 0),
+        }));
+        setNoteItems(arr);
+      } catch {}
+    };
+    yarr.observeDeep(updateFromY);
+    provider.on('sync', (isSynced: boolean) => { if (isSynced) updateFromY(); });
+    return () => { try { yarr.unobserveDeep(updateFromY as any); } catch {}; try { provider.destroy(); } catch {}; };
+  }, [note.id, ydoc]);
+
+  // Subscribe to Yjs text doc for real-time HTML preview on cards (TEXT notes)
+  React.useEffect(() => {
+    if (note.type !== 'TEXT') { setRtHtmlFromY(null); return; }
+    let ed: Editor | null = null;
+    try {
+      ed = new Editor({
+        extensions: [
+          StarterKit.configure({ heading: { levels: [1, 2, 3] } }),
+          Link.configure({ openOnClick: false, autolink: true }),
+          TextAlign.configure({ types: ['heading', 'paragraph'] }),
+          Collaboration.configure({ document: ydoc })
+        ],
+        content: ''
+      });
+      const compute = () => {
+        try {
+          const html = ed?.getHTML() || '';
+          const safe = DOMPurify.sanitize(html, { USE_PROFILES: { html: true } });
+          setRtHtmlFromY(safe);
+        } catch {}
+      };
+      ed.on('update', compute);
+      // On initial provider sync, compute once
+      const provider = providerRef.current;
+      const onSync = (isSynced: boolean) => { if (isSynced) compute(); };
+      provider?.on('sync', onSync);
+      return () => { try { ed?.destroy(); } catch {}; try { provider?.off('sync', onSync as any); } catch {}; };
+    } catch {
+      // ignore editor init failures
+    }
+  }, [note.id, note.type, ydoc]);
+  // Render a minimal formatted HTML preview from TipTap JSON stored in note.body
+  function bodyHtmlPreview(): string {
+    const raw = note.body || '';
+    const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const renderMarks = (text: string, marks?: any[]): string => {
+      if (!marks || !marks.length) return esc(text);
+      return marks.reduce((acc, m) => {
+        switch (m.type) {
+          case 'bold': return `<strong>${acc}</strong>`;
+          case 'italic': return `<em>${acc}</em>`;
+          case 'underline': return `<u>${acc}</u>`;
+          case 'link': {
+            const href = typeof m.attrs?.href === 'string' ? m.attrs.href : '#';
+            return `<a href="${esc(href)}" target="_blank" rel="noopener noreferrer">${acc}</a>`;
+          }
+          default: return acc;
+        }
+      }, esc(text));
+    };
+    const renderNode = (node: any, inListItem = false): string => {
+      if (!node) return '';
+      if (Array.isArray(node)) return node.map(n => renderNode(n, inListItem)).join('');
+      const t = node.type;
+      if (t === 'text') return renderMarks(node.text || '', node.marks);
+      if (t === 'hardBreak') return '<br/>';
+      if ((t === 'paragraph' || t === 'heading') && (!node.content || node.content.length === 0)) return inListItem ? '' : '<p></p>';
+      const inner = node.content ? renderNode(node.content, t === 'listItem') : '';
+      switch (t) {
+        case 'paragraph': return `<p>${inner}</p>`;
+        case 'heading': {
+          const lvl = Math.min(6, Math.max(1, Number(node.attrs?.level || 1)));
+          return `<h${lvl}>${inner}</h${lvl}>`;
+        }
+        case 'bulletList': return `<ul>${inner}</ul>`;
+        case 'orderedList': return `<ol>${inner}</ol>`;
+        case 'listItem': {
+          // TipTap listItem usually wraps a paragraph; flatten to inline
+          return `<li>${inner.replace(/^<p>|<\/p>$/g, '')}</li>`;
+        }
+        case 'blockquote': return `<blockquote>${inner}</blockquote>`;
+        case 'codeBlock': return `<pre><code>${esc((node.textContent || '') as string)}</code></pre>`;
+        default: return inner;
+      }
+    };
+    try {
+      const json = JSON.parse(raw);
+      const html = renderNode(json);
+      return DOMPurify.sanitize(html, { USE_PROFILES: { html: true } });
+    } catch {
+      const fallback = esc(raw).replace(/\n/g, '<br/>');
+      return DOMPurify.sanitize(`<p>${fallback}</p>`);
+    }
+  }
 
   // keep local bg/textColor in sync when the parent reloads the note (e.g., after page refresh)
   React.useEffect(() => {
@@ -123,21 +243,30 @@ export default function NoteCard({ note, onChange }: { note: Note, onChange?: ()
   }
 
   async function toggleItemChecked(itemId: number, checked: boolean) {
-    // optimistic update: immediately reflect change in UI
-    setNoteItems(s => {
-      const updated = s.map(it => it.id === itemId ? { ...it, checked } : it);
-      const incomplete = updated.filter(x => !x.checked);
-      const complete = updated.filter(x => x.checked);
-      return [...incomplete, ...complete];
-    });
-
+    const yarr = yarrayRef.current;
+    if (yarr) {
+      const idx = yarr.toArray().findIndex((m) => (typeof m.get('id') === 'number' ? Number(m.get('id')) === itemId : false));
+      if (idx >= 0) {
+        const m = yarr.get(idx) as Y.Map<any>;
+        m.set('checked', checked);
+        const indent = Number(m.get('indent') || 0);
+        if (indent === 0) {
+          for (let i = idx + 1; i < yarr.length; i++) {
+            const child = yarr.get(i) as Y.Map<any>;
+            const childIndent = Number(child.get('indent') || 0);
+            if (childIndent > 0) child.set('checked', checked); else break;
+          }
+        }
+        return;
+      }
+    }
+    // Fallback to REST if Yjs not available
     try {
       const res = await fetch(`/api/notes/${note.id}/items/${itemId}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ checked }) });
       if (!res.ok) throw new Error(await res.text());
+      setNoteItems(s => s.map(it => it.id === itemId ? { ...it, checked } : it));
     } catch (err) {
       console.error(err);
-      // revert optimistic change on failure
-      setNoteItems(s => s.map(it => it.id === itemId ? { ...it, checked: !checked } : it));
       window.alert('Failed to update checklist item — please try again.');
     }
   }
@@ -238,7 +367,18 @@ export default function NoteCard({ note, onChange }: { note: Note, onChange?: ()
     >
       <input ref={fileRef} type="file" accept="image/*" style={{ display: "none" }} />
 
-      {title && <div className="note-title">{title}</div>}
+      {title && (
+        <div
+          className="note-title"
+          style={{ cursor: 'pointer' }}
+          onClick={() => { if (note.type === 'CHECKLIST' || (note.items && note.items.length)) setShowEditor(true); else setShowTextEditor(true); }}
+          role="button"
+          tabIndex={0}
+          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); if (note.type === 'CHECKLIST' || (note.items && note.items.length)) setShowEditor(true); else setShowTextEditor(true); } }}
+        >
+          {title}
+        </div>
+      )}
 
       {collaborators.length > 0 && (
         <div className="collab-chips">
@@ -265,7 +405,9 @@ export default function NoteCard({ note, onChange }: { note: Note, onChange?: ()
                     </svg>
                   )}
                 </button>
-                <div style={{ fontSize: 'var(--checklist-text-size)', overflow: 'hidden', whiteSpace: 'normal', wordBreak: 'break-word' }}>{it.content}</div>
+                <div style={{ fontSize: 'var(--checklist-text-size)', overflow: 'hidden', whiteSpace: 'normal', wordBreak: 'break-word', display: 'flex', alignItems: 'flex-start' }}>
+                  <div className="rt-html" dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(String(it.content || ''), { USE_PROFILES: { html: true } }) }} />
+                </div>
               </div>
             ))}
 
@@ -296,13 +438,15 @@ export default function NoteCard({ note, onChange }: { note: Note, onChange?: ()
                     </svg>
                   )}
                 </button>
-                <div style={{ fontSize: 'var(--checklist-text-size)', textDecoration: 'line-through' }}>{it.content}</div>
+                <div style={{ fontSize: 'var(--checklist-text-size)', textDecoration: 'line-through', display: 'flex', alignItems: 'flex-start' }}>
+                  <div className="rt-html" dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(String(it.content || ''), { USE_PROFILES: { html: true } }) }} />
+                </div>
               </div>
             ))}
           </div>
         ) : (
-          note.body ? (
-            <div className="note-html" dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(note.body, { USE_PROFILES: { html: true } }) }} />
+          (rtHtmlFromY || note.body) ? (
+            <div className="note-html" dangerouslySetInnerHTML={{ __html: (rtHtmlFromY || bodyHtmlPreview()) }} />
           ) : null
         )}
       </div>
@@ -386,7 +530,7 @@ export default function NoteCard({ note, onChange }: { note: Note, onChange?: ()
       {showImageDialog && <ImageDialog onClose={() => setShowImageDialog(false)} onAdd={onAddImageUrl} />}
 
       {showReminderPicker && <ReminderPicker onClose={() => setShowReminderPicker(false)} onSet={onSetReminder} />}
-      {showEditor && <ChecklistEditor note={note} noteBg={bg} onClose={() => setShowEditor(false)} onSaved={({ items, title }) => { setNoteItems(items); setTitle(title); }} />}
+      {showEditor && <ChecklistEditor note={{ ...note, items: noteItems }} noteBg={bg} onClose={() => setShowEditor(false)} onSaved={({ items, title }) => { setNoteItems(items); setTitle(title); }} />}
       {showTextEditor && <RichTextEditor note={note} noteBg={bg} onClose={() => setShowTextEditor(false)} onSaved={({ title, body }) => { setTitle(title); /* update body via note; preview renders `noteItems` or sanitized HTML, but we keep local title */ note.body = body; }} />}
     </article>
   );

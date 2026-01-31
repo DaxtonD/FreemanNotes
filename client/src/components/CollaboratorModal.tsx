@@ -1,15 +1,23 @@
-import React, { useMemo, useState } from "react";
-
-const MOCK_USERS = [
-  { id: 1, email: "alice@example.com" },
-  { id: 2, email: "bob@example.com" },
-  { id: 3, email: "carol@example.com" },
-  { id: 4, email: "dan@example.com" }
-];
+import React, { useMemo, useState, useEffect } from "react";
+import { useAuth } from '../authContext';
 
 export default function CollaboratorModal({ onClose, onSelect }: { onClose: ()=>void; onSelect: (u:{id:number;email:string})=>void }) {
+  const { token, user } = useAuth();
   const [q, setQ] = useState("");
-  const list = useMemo(() => MOCK_USERS.filter(u => u.email.includes(q) || u.email.split("@")[0].includes(q)), [q]);
+  const [users, setUsers] = useState<Array<{id:number;email:string}>>([]);
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await fetch('/api/users', { headers: { Authorization: token ? `Bearer ${token}` : '' } });
+        if (!res.ok) throw new Error(await res.text());
+        const data = await res.json();
+        setUsers(Array.isArray(data.users) ? data.users : []);
+      } catch (err) {
+        console.warn('Failed to load users', err);
+      }
+    })();
+  }, [token]);
+  const list = useMemo(() => users.filter(u => (u.email.includes(q) || u.email.split("@")[0].includes(q)) && (user ? u.id !== user.id : true)), [q, users, user]);
 
   return (
     <div className="collab-modal-backdrop" onClick={onClose}>

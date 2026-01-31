@@ -1,6 +1,7 @@
 import { Router, Request, Response } from "express";
 import prisma from "./prismaClient";
 import jwt from "jsonwebtoken";
+import * as Y from "yjs";
 
 const router = Router();
 
@@ -11,9 +12,12 @@ function getJwtSecret() {
 }
 
 async function getUserFromToken(req: Request) {
+  // Accept Authorization header or dev-only ?token= query param for quick testing
   const auth = req.headers.authorization;
-  if (!auth || !auth.startsWith("Bearer ")) return null;
-  const token = auth.slice(7);
+  let token: string | null = null;
+  if (auth && auth.startsWith("Bearer ")) token = auth.slice(7);
+  else if (typeof req.query?.token === 'string' && req.query.token.length > 0) token = String(req.query.token);
+  if (!token) return null;
   try {
     const payload = jwt.verify(token, getJwtSecret()) as any;
     if (!payload?.userId) return null;
@@ -47,6 +51,40 @@ router.get('/api/notes', async (req: Request, res: Response) => {
     // ensure checklist items are returned in ord order
     const normalized = notes.map(n => ({ ...n, items: (n.items || []).slice().sort((a, b) => (a.ord || 0) - (b.ord || 0)) }));
     res.json({ notes: normalized });
+  } catch (err) {
+    res.status(500).json({ error: String(err) });
+  }
+});
+
+// Integrity check: compare DB items vs Y.Doc snapshot for a note
+router.get('/api/notes/:id/integrity', async (req: Request, res: Response) => {
+  const user = await getUserFromToken(req);
+  if (!user) return res.status(401).json({ error: 'unauthenticated' });
+  const noteId = Number(req.params.id);
+  if (!Number.isInteger(noteId)) return res.status(400).json({ error: 'invalid note id' });
+  try {
+    const note = await prisma.note.findUnique({ where: { id: noteId }, include: { items: true } });
+    if (!note) return res.status(404).json({ error: 'not found' });
+    if (note.ownerId !== user.id) {
+      const collab = await prisma.collaborator.findFirst({ where: { noteId, userId: user.id } });
+      if (!collab) return res.status(403).json({ error: 'forbidden' });
+    }
+    const dbItems = (note.items || []).slice().sort((a, b) => (a.ord || 0) - (b.ord || 0)).map((it) => ({ id: it.id, content: it.content, checked: !!it.checked, indent: it.indent || 0, ord: it.ord || 0 }));
+    const yItems: Array<any> = [];
+    try {
+      const ydoc = new Y.Doc();
+      const buf = note.yData as unknown as Buffer;
+      if (buf && buf.length) {
+        Y.applyUpdate(ydoc, new Uint8Array(buf));
+        const yarr = ydoc.getArray<Y.Map<any>>('checklist');
+        yarr.forEach((m: Y.Map<any>, idx: number) => {
+          yItems.push({ id: (typeof m.get('id') === 'number' ? Number(m.get('id')) : undefined), content: String(m.get('content') || ''), checked: !!m.get('checked'), indent: Number(m.get('indent') || 0), ord: idx });
+        });
+      }
+    } catch (e) {
+      // ignore snapshot decode errors
+    }
+    res.json({ dbItems, yItems });
   } catch (err) {
     res.status(500).json({ error: String(err) });
   }
@@ -95,6 +133,24 @@ router.post('/api/notes', async (req: Request, res: Response) => {
     // sort items by ord before returning
     const created = { ...note, items: (note.items || []).slice().sort((a, b) => (a.ord || 0) - (b.ord || 0)) };
     res.status(201).json({ note: created });
+  } catch (err) {
+    res.status(500).json({ error: String(err) });
+  }
+});
+
+// add image to a note
+router.post('/api/notes/:id/images', async (req: Request, res: Response) => {
+  const user = await getUserFromToken(req);
+  if (!user) return res.status(401).json({ error: 'unauthenticated' });
+  const id = Number(req.params.id);
+  const { url } = req.body || {};
+  if (!url || typeof url !== 'string') return res.status(400).json({ error: 'image url required' });
+  try {
+    const note = await prisma.note.findUnique({ where: { id } });
+    if (!note) return res.status(404).json({ error: 'not found' });
+    if (note.ownerId !== user.id) return res.status(403).json({ error: 'forbidden' });
+    const img = await prisma.noteImage.create({ data: { noteId: id, url } });
+    res.status(201).json({ image: img });
   } catch (err) {
     res.status(500).json({ error: String(err) });
   }
@@ -276,6 +332,17 @@ router.delete('/api/notes/:id/collaborators/:collabId', async (req: Request, res
 });
 
 export default router;
+// list users (for collaborator selection)
+router.get('/api/users', async (req: Request, res: Response) => {
+  const user = await getUserFromToken(req);
+  if (!user) return res.status(401).json({ error: 'unauthenticated' });
+  try {
+    const users = await prisma.user.findMany({ select: { id: true, email: true, name: true }, orderBy: { email: 'asc' } });
+    res.json({ users });
+  } catch (err) {
+    res.status(500).json({ error: String(err) });
+  }
+});
 // list labels for current user
 router.get('/api/labels', async (req: Request, res: Response) => {
   const user = await getUserFromToken(req);

@@ -2,6 +2,22 @@ import express from "express";
 import path from "path";
 import dotenv from "dotenv";
 import { ensureDatabaseReady } from "./dbSetup";
+import http from "http";
+import { WebSocketServer } from "ws";
+// y-websocket util sets up Yjs collaboration rooms over WebSocket
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore
+// Import y-websocket utils and persistence hook
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore
+import { setupWSConnection, setPersistence } from "y-websocket/bin/utils";
+import * as Y from "yjs";
+// TipTap headless editor to initialize Yjs doc state from DB on server
+import { Editor } from "@tiptap/core";
+import StarterKit from "@tiptap/starter-kit";
+import Link from "@tiptap/extension-link";
+import TextAlign from "@tiptap/extension-text-align";
+import Collaboration from "@tiptap/extension-collaboration";
 
 dotenv.config();
 
@@ -25,6 +41,104 @@ async function start() {
       console.log("Prisma connected.");
     } catch (err) {
       console.warn("Prisma connection warning:", err);
+    }
+
+    // Wire Yjs persistence to Prisma so rooms load from/stay in sync with DB
+    try {
+      setPersistence({
+        bindState: async (docName: string, ydoc: Y.Doc) => {
+          // y-websocket uses the URL path as docName (e.g., "collab/note-123").
+          // We only need the final segment for note ID parsing.
+          const last = docName.split('/').pop() || docName;
+          const m = /^note-(\d+)$/.exec(last);
+          if (m) {
+            const noteId = Number(m[1]);
+            try {
+              const note = await prisma.note.findUnique({ where: { id: noteId }, include: { items: true } });
+              const persisted = note?.yData as unknown as Buffer | null;
+              const hasPersisted = !!(persisted && persisted.length > 0);
+              if (hasPersisted) {
+                Y.applyUpdate(ydoc, new Uint8Array(persisted as Buffer));
+              } else if (note) {
+                // Initialize Y.Doc from DB once, server-authoritatively.
+                // 1) Text notes: seed ProseMirror fragment with TipTap JSON or plain text.
+                try {
+                  const tempEditor = new Editor({
+                    extensions: [
+                      StarterKit.configure({ heading: { levels: [1,2,3] } }),
+                      Link.configure({ openOnClick: false, autolink: false }),
+                      TextAlign.configure({ types: ['heading', 'paragraph'] }),
+                      Collaboration.configure({ document: ydoc })
+                    ],
+                    content: ''
+                  });
+                  if (note.body) {
+                    try {
+                      const raw = String(note.body);
+                      const json = JSON.parse(raw);
+                      tempEditor.commands.setContent(json);
+                    } catch {
+                      // Fallback: plain HTML/text body inside a paragraph
+                      tempEditor.commands.setContent({ type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: String(note.body) }]}] });
+                    }
+                  }
+                  // 2) Checklist items: seed Y.Array<Y.Map>
+                  try {
+                    const yarr = ydoc.getArray<Y.Map<any>>('checklist');
+                    if (Array.isArray(note.items) && note.items.length) {
+                      const toInsert = note.items.map(it => {
+                        const m = new Y.Map<any>();
+                        if (typeof it.id === 'number') m.set('id', it.id);
+                        m.set('content', String(it.content || ''));
+                        m.set('checked', !!it.checked);
+                        m.set('indent', typeof it.indent === 'number' ? it.indent : 0);
+                        return m;
+                      });
+                      yarr.insert(0, toInsert);
+                    }
+                  } catch {}
+                  // Persist initial snapshot atomically
+                  try {
+                    const snapshot = Y.encodeStateAsUpdate(ydoc);
+                    await prisma.note.update({ where: { id: noteId }, data: { yData: Buffer.from(snapshot) } });
+                  } catch (e) {
+                    console.warn('Yjs initial persist error:', e);
+                  }
+                  try { tempEditor?.destroy(); } catch {}
+                } catch (e) {
+                  console.warn('Server-side TipTap init error:', e);
+                }
+              }
+            } catch (e) {
+              console.warn("Yjs bindState load error:", e);
+            }
+            // Persist on every update (can be optimized/batched later)
+            ydoc.on("update", async () => {
+              try {
+                const snapshot = Y.encodeStateAsUpdate(ydoc);
+                await prisma.note.update({ where: { id: noteId }, data: { yData: Buffer.from(snapshot) } });
+              } catch (e) {
+                console.warn("Yjs persist error:", e);
+              }
+            });
+          }
+        },
+        writeState: async (docName: string, ydoc: Y.Doc) => {
+          const last = docName.split('/').pop() || docName;
+          const m = /^note-(\d+)$/.exec(last);
+          if (!m) return;
+          const noteId = Number(m[1]);
+          try {
+            const snapshot = Y.encodeStateAsUpdate(ydoc);
+            await prisma.note.update({ where: { id: noteId }, data: { yData: Buffer.from(snapshot) } });
+          } catch (e) {
+            console.warn("Yjs final persist error:", e);
+          }
+        }
+      });
+      console.log("Yjs persistence enabled (DB-backed)");
+    } catch (err) {
+      console.warn("Failed to enable Yjs persistence:", err);
     }
 
     // DB health endpoint
@@ -81,8 +195,23 @@ async function start() {
     });
   }
 
-  app.listen(PORT, () => {
+  // Create HTTP server to attach WebSocket upgrade handler for Yjs
+  const server = http.createServer(app);
+  const wss = new WebSocketServer({ noServer: true });
+  server.on("upgrade", (request, socket, head) => {
+    // Only handle Yjs collaboration upgrades here; leave others (e.g., Vite HMR) alone
+    const { url } = request;
+    if (url && url.startsWith("/collab")) {
+      wss.handleUpgrade(request, socket as any, head, (ws) => {
+        setupWSConnection(ws, request);
+      });
+    }
+    // Do not destroy non-/collab upgrades so other listeners (like Vite) can handle them.
+  });
+
+  server.listen(PORT, () => {
     console.log(`FreemanNotes server running on http://localhost:${PORT} (dev=${isDev})`);
+    console.log(`Yjs WebSocket endpoint: ws://localhost:${PORT}/collab`);
   });
 }
 

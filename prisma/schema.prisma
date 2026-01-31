@@ -47,6 +47,7 @@ model Note {
   id            Int            @id @default(autoincrement())
   title         String?
   body          String?        @db.LongText
+  yData         Bytes?
   color         String?
   type          NoteType       @default(TEXT)
   ord           Int            @default(0)
@@ -67,7 +68,7 @@ model Note {
 model NoteItem {
   id      Int     @id @default(autoincrement())
   noteId  Int
-  content String
+  content String  @db.LongText
   checked Boolean @default(false)
   indent  Int     @default(0)
   ord     Int     @default(0)

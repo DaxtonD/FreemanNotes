@@ -1,10 +1,21 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useAuth } from '../authContext';
+import ChecklistItemRT from './ChecklistItemRT';
+import ColorPalette from './ColorPalette';
+import ReminderPicker from './ReminderPicker';
+import CollaboratorModal from './CollaboratorModal';
+import ImageDialog from './ImageDialog';
+import DOMPurify from 'dompurify';
+import * as Y from 'yjs';
+import { WebsocketProvider } from 'y-websocket';
 
 export default function ChecklistEditor({ note, onClose, onSaved, noteBg }:
   { note: any; onClose: () => void; onSaved?: (payload: { items: Array<{ id: number; content: string; checked: boolean; ord: number; indent: number }>; title: string }) => void; noteBg?: string }) {
   const { token } = useAuth();
+  // Track the currently-focused per-item rich-text editor to drive toolbar actions/state
+  const activeChecklistEditor = useRef<any>(null);
+  const [, setToolbarTick] = useState<number>(0);
   // Prevent immediate pointer interactions for a short time after mount
   const pointerSafeRef = useRef(false);
   React.useEffect(() => {
@@ -18,9 +29,24 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg }:
   const [dragging, setDragging] = useState<number | null>(null);
   const [hoverIndex, setHoverIndex] = useState<number | null>(null);
   const itemRefs = useRef<Array<HTMLTextAreaElement | null>>([]);
+  const [autoFocusIndex, setAutoFocusIndex] = useState<number | null>(null);
   const [title, setTitle] = useState<string>(note.title || '');
   // prefer explicit `noteBg` passed from the parent (NoteCard) which may have local unsaved color state
   const [bg, setBg] = useState<string>(noteBg ?? note.color ?? '');
+  const [showPalette, setShowPalette] = useState(false);
+  const [showReminderPicker, setShowReminderPicker] = useState(false);
+  const [showCollaborator, setShowCollaborator] = useState(false);
+  const [showImageDialog, setShowImageDialog] = useState(false);
+  const [imageUrl, setImageUrl] = useState<string | null>(null);
+  const [collaborators, setCollaborators] = useState<{ id:number; email:string }[]>([]);
+
+  // Yjs collaboration state for checklist items
+  const ydoc = React.useMemo(() => new Y.Doc(), [note.id]);
+  const providerRef = React.useRef<WebsocketProvider | null>(null);
+  const yarrayRef = React.useRef<Y.Array<Y.Map<any>> | null>(null);
+  const ymetaRef = React.useRef<Y.Map<any> | null>(null);
+  const debouncedSyncTimer = React.useRef<number | null>(null);
+  const syncedRef = React.useRef<boolean>(false);
 
   const rafRef = useRef<number | null>(null);
   const ghostRef = useRef<HTMLDivElement | null>(null);
@@ -34,6 +60,77 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg }:
   const pointerTrackRef = useRef<{ active: boolean; startX: number; startY: number; idx: number | null; draggedId?: number | null; pointerId?: number } | null>(null);
   const [previewItems, setPreviewItems] = useState<Array<any> | null>(null);
   const INDENT_THRESHOLD = 16; // px required to trigger indent/un-indent (was 30)
+  const genUid = React.useCallback(() => `u${Date.now().toString(36)}${Math.random().toString(36).slice(2,8)}`, []);
+  const getKey = React.useCallback((it: any) => (typeof it.id === 'number' ? it.id : (it.uid || `tmp-${Math.random().toString(36).slice(2,6)}`)), []);
+
+  // Setup Yjs provider and bind checklist CRDT
+  useEffect(() => {
+    const room = `note-${note.id}`;
+    const serverUrl = `ws://${window.location.host}/collab`;
+    const provider = new WebsocketProvider(serverUrl, room, ydoc);
+    providerRef.current = provider;
+    const yarr = ydoc.getArray<Y.Map<any>>('checklist');
+    yarrayRef.current = yarr;
+    const ymeta = ydoc.getMap<any>('meta');
+    ymetaRef.current = ymeta;
+
+    const onSync = (isSynced: boolean) => { if (!isSynced) return; syncedRef.current = true; };
+    provider.on('sync', onSync);
+
+    const updateFromY = () => {
+      try {
+        const arr = yarr.toArray().map((m, idx) => ({
+          id: (typeof m.get('id') === 'number' ? Number(m.get('id')) : undefined),
+          uid: (m.get('uid') ? String(m.get('uid')) : undefined),
+          content: String(m.get('content') || ''),
+          checked: !!m.get('checked'),
+          indent: Number(m.get('indent') || 0),
+          // Prefer uid for React key stability; fallback to id, then index
+          key: (m.get('uid') ? String(m.get('uid')) : (typeof m.get('id') === 'number' ? Number(m.get('id')) : `i${idx}`)),
+        }));
+        const isFocused = !!(activeChecklistEditor.current && activeChecklistEditor.current.isFocused);
+        if (!isFocused) setItems(arr);
+        if (syncedRef.current) {
+          if (debouncedSyncTimer.current) window.clearTimeout(debouncedSyncTimer.current);
+          debouncedSyncTimer.current = window.setTimeout(async () => {
+            try {
+              const ordered = arr.map((it, i) => {
+                const payload: any = { content: it.content, checked: !!it.checked, ord: i, indent: it.indent || 0 };
+                if (typeof it.id === 'number') payload.id = it.id;
+                return payload;
+              });
+              const res = await fetch(`/api/notes/${note.id}/items`, {
+                method: 'PUT', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+                body: JSON.stringify({ items: ordered })
+              });
+              if (res.ok) {
+                const data = await res.json();
+                const serverItems: Array<any> = Array.isArray(data.items) ? data.items : [];
+                const yarr2 = yarrayRef.current;
+                if (yarr2 && serverItems.length === yarr2.length) {
+                  for (let i = 0; i < yarr2.length; i++) {
+                    const m = yarr2.get(i) as Y.Map<any>;
+                    const idVal = m.get('id');
+                    const srvId = serverItems[i]?.id;
+                    if (typeof srvId === 'number' && typeof idVal !== 'number') {
+                      try { m.set('id', srvId); } catch {}
+                    }
+                  }
+                }
+              }
+            } catch {}
+          }, 800);
+        }
+      } catch {}
+    };
+    yarr.observeDeep(updateFromY);
+
+    return () => {
+      try { yarr.unobserveDeep(updateFromY as any); } catch {}
+      try { provider.off('sync', onSync as any); } catch {}
+      try { provider.destroy(); } catch {}
+    };
+  }, [note.id, token, ydoc]);
 
   function getBlockRange(list: any[], idx: number) {
     const start = idx;
@@ -62,7 +159,6 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg }:
   useEffect(() => {
     requestAnimationFrame(() => {
       itemRefs.current.forEach(el => {
-        if (!el) return;
         try {
           el.style.height = 'auto';
           el.style.height = Math.max(22, el.scrollHeight) + 'px';
@@ -72,30 +168,52 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg }:
   }, [items, previewItems]);
 
   function shiftClassForIndex(realIdx: number, list: any[]) {
-    if (dragging === null || hoverIndex === null) return '';
+    if (dragDirectionRef.current !== 'vertical') return '';
+    if (dragging === null) return '';
     const [sStart, sEnd] = getBlockRange(list, dragging);
-    if (sStart < 0) return '';
-    // insertion index is hoverIndex; if dragging < hoverIndex => moving down
+    if (hoverIndex === null) return '';
+    // Do not apply shift to items inside the dragged block
+    if (realIdx >= sStart && realIdx < sEnd) return '';
+    // Dragging down: neighbors between the block end and hover index shift up
     if (dragging < hoverIndex) {
-      // items after the dragged block up to hoverIndex should shift up
-      if (realIdx >= sEnd && realIdx <= hoverIndex) return 'shift-up';
-    } else if (dragging > hoverIndex) {
-      // items from hoverIndex up to before dragged block should shift down
+      if (realIdx > (sEnd - 1) && realIdx <= hoverIndex) return 'shift-up';
+      return '';
+    }
+    // Dragging up: neighbors between hover index and block start shift down
+    if (dragging > hoverIndex) {
       if (realIdx >= hoverIndex && realIdx < sStart) return 'shift-down';
+      return '';
     }
     return '';
   }
 
+  // Map between real list indices and DOM indices when the list is visually split
+  // into two groups (unchecked first, then checked). This avoids mismatches when
+  // computing hover/drag positions for pointer-driven vertical drag.
+  function getDisplayOrderIndices(list: any[]): number[] {
+    const order: number[] = [];
+    for (let i = 0; i < list.length; i++) { if (!list[i]?.checked) order.push(i); }
+    for (let i = 0; i < list.length; i++) { if (list[i]?.checked) order.push(i); }
+    return order;
+  }
+  function realToDomIndex(realIdx: number, list: any[]): number {
+    const order = getDisplayOrderIndices(list);
+    return order.indexOf(realIdx);
+  }
+  function domToRealIndex(domIdx: number, list: any[]): number {
+    const order = getDisplayOrderIndices(list);
+    return (domIdx >= 0 && domIdx < order.length) ? order[domIdx] : -1;
+  }
+
   function updateItem(idx: number, content: string) {
-    setItems(s => s.map((it, i) => i === idx ? { ...it, content } : it));
+    const yarr = yarrayRef.current; if (!yarr) return;
+    const m = yarr.get(idx) as Y.Map<any> | undefined; if (!m) return;
+    m.set('content', content); if (typeof m.get('id') === 'number') m.set('id', m.get('id'));
     // Autosize the edited textarea on next frame
     requestAnimationFrame(() => {
       const el = itemRefs.current[idx];
       if (el) {
-        try {
-          el.style.height = 'auto';
-          el.style.height = Math.max(22, el.scrollHeight) + 'px';
-        } catch {}
+        try { el.style.height = 'auto'; el.style.height = Math.max(22, el.scrollHeight) + 'px'; } catch {}
       }
     });
   }
@@ -103,7 +221,7 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg }:
   function handleInputKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>, realIdx: number) {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
-      addItemAt(realIdx + 1);
+      addItemAt(realIdx + 1); if (typeof items[realIdx].id === 'number') items[realIdx].id = items[realIdx].id;
     } else if (e.key === 'ArrowUp') {
       e.preventDefault();
       const prev = realIdx - 1;
@@ -137,48 +255,59 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg }:
   }
 
   function addItemAt(idx?: number) {
-    // Compute insertion index from the live previous state inside the updater
-    let insertedAt = 0;
-    setItems(prev => {
-      const c = [...prev];
-      const pos = typeof idx === 'number' ? idx : prev.length;
-      insertedAt = pos;
-      c.splice(pos, 0, { content: '', checked: false, indent: 0 });
-      return c;
-    });
-    // Focus the newly inserted input on next frame (allow DOM to update)
-    requestAnimationFrame(() => {
-      const el = itemRefs.current[insertedAt];
-      if (el) el.focus();
-    });
+    const yarr = yarrayRef.current; if (!yarr) return;
+    const pos = typeof idx === 'number' ? idx : yarr.length;
+    const m = new Y.Map<any>(); m.set('content', ''); m.set('checked', false); m.set('indent', 0);
+    m.set('uid', genUid());
+    yarr.insert(pos, [m]);
+    setAutoFocusIndex(pos);
   }
 
   function toggleChecked(idx: number) {
-    setItems(s => {
-      const copy = [...s];
-      const newChecked = !copy[idx].checked;
-      copy[idx] = { ...copy[idx], checked: newChecked };
-      // Cascade for parents (indent === 0)
-      if ((copy[idx].indent || 0) === 0) {
-        for (let i = idx + 1; i < copy.length; i++) {
-          if ((copy[i].indent || 0) > 0) copy[i] = { ...copy[i], checked: newChecked };
-          else break;
-        }
+    const yarr = yarrayRef.current; if (!yarr) return;
+    const m = yarr.get(idx) as Y.Map<any> | undefined; if (!m) return;
+    const newChecked = !m.get('checked'); if (typeof m.get('id') === 'number') m.set('id', m.get('id'));
+    m.set('checked', newChecked);
+    const indent = Number(m.get('indent') || 0);
+    if (indent === 0) {
+      for (let i = idx + 1; i < yarr.length; i++) {
+        const child = yarr.get(i) as Y.Map<any>;
+        const childIndent = Number(child.get('indent') || 0);
+        if (childIndent > 0) child.set('checked', newChecked); else break;
       }
-      // Keep incomplete first, completed after
-      const completed = copy.filter(x => x.checked);
-      const incomplete = copy.filter(x => !x.checked);
-      return [...incomplete, ...completed];
-    });
+    }
   }
 
   function moveItem(src: number, dst: number) {
-    setItems(s => {
-      const copy = [...s];
-      const [m] = copy.splice(src, 1);
-      copy.splice(dst, 0, m);
-      return copy;
-    });
+    const yarr = yarrayRef.current; if (!yarr) return;
+    if (src === dst || src < 0 || dst < 0 || src >= yarr.length || dst > yarr.length) return;
+    const elem = yarr.get(src) as Y.Map<any>;
+    yarr.delete(src, 1);
+    yarr.insert(dst, [elem]);
+  }
+
+  function moveBlockY(srcStart: number, srcEnd: number, dstIndex: number) {
+    const yarr = yarrayRef.current; if (!yarr) return;
+    const len = srcEnd - srcStart; if (len <= 0) return;
+    let insertAt = dstIndex;
+    if (insertAt > srcStart) insertAt = insertAt - len;
+    if (insertAt < 0) insertAt = 0;
+    if (insertAt > yarr.length) insertAt = yarr.length;
+    // snapshot plain values to avoid reinserting integrated Y.Map instances
+    const vals: Array<{ id?: number; uid?: string; content: string; checked: boolean; indent: number }> = [];
+    for (let i = 0; i < len; i++) {
+      const m = yarr.get(srcStart + i) as Y.Map<any>;
+      vals.push({
+        id: (typeof m.get('id') === 'number' ? Number(m.get('id')) : undefined),
+        uid: (m.get('uid') ? String(m.get('uid')) : undefined),
+        content: String(m.get('content') || ''),
+        checked: !!m.get('checked'),
+        indent: Number(m.get('indent') || 0),
+      });
+    }
+    yarr.delete(srcStart, len);
+    const clones = vals.map(v => { const m = new Y.Map<any>(); if (typeof v.id === 'number') m.set('id', v.id); if (v.uid) m.set('uid', v.uid); m.set('content', v.content); m.set('checked', v.checked); m.set('indent', v.indent); return m; });
+    yarr.insert(insertAt, clones as any);
   }
 
   function startDrag(e: React.DragEvent<HTMLElement>, realIdx: number) {
@@ -258,12 +387,11 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg }:
         const r1 = await fetch(`/api/notes/${note.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ title }) });
         if (!r1.ok) throw new Error(await r1.text());
       }
-      // remove empty items before saving
-      const filtered = items.filter(it => ((it.content || '').trim().length > 0));
-      // reflect cleaned list in the UI
-      setItems(filtered);
-      const ordered = [...filtered].sort((a, b) => (a.checked === b.checked) ? 0 : (a.checked ? 1 : -1));
-      const payloadItems = ordered.map((it, i) => ({ id: it.id, content: it.content, checked: !!it.checked, ord: i, indent: it.indent || 0 }));
+      // derive payload from Yjs state
+      const yarr = yarrayRef.current;
+      const arr = yarr ? yarr.toArray().map((m) => ({ id: (typeof m.get('id') === 'number' ? Number(m.get('id')) : undefined), content: String(m.get('content') || ''), checked: !!m.get('checked'), indent: Number(m.get('indent') || 0) })) : items;
+      const filtered = arr.filter(it => ((String(it.content || '').replace(/<[^>]+>/g, '').trim().length > 0)));
+      const payloadItems = filtered.map((it, i) => { const payload: any = { content: it.content, checked: !!it.checked, ord: i, indent: it.indent || 0 }; if (typeof it.id === 'number') payload.id = it.id; return payload; });
       const res = await fetch(`/api/notes/${note.id}/items`, { method: 'PUT', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ items: payloadItems }) });
       if (!res.ok) throw new Error(await res.text());
       onSaved && onSaved({ items: payloadItems, title });
@@ -307,12 +435,51 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg }:
     dialogStyle.background = bg;
     if (text) dialogStyle.color = text;
   }
+
+  function onPickColor(color: string) {
+    const next = color || '';
+    setBg(next);
+    (async () => {
+      try {
+        const res = await fetch(`/api/notes/${note.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ color: color || null }) });
+        if (!res.ok) throw new Error(await res.text());
+      } catch (err) {
+        console.error('Failed to save note color', err);
+      }
+    })();
+  }
+
+  function onAddImageUrl(url?: string | null) {
+    setShowImageDialog(false);
+    if (!url) return;
+    setImageUrl(url);
+    (async () => {
+      try {
+        const res = await fetch(`/api/notes/${note.id}/images`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ url }) });
+        if (!res.ok) throw new Error(await res.text());
+      } catch (err) {
+        console.error('Failed to attach image', err);
+        window.alert('Failed to attach image');
+      }
+    })();
+  }
+
+  function onCollaboratorSelect(u: { id:number; email:string }) {
+    setCollaborators(s => (s.find(x=>x.id===u.id)?s:[...s,u]));
+    setShowCollaborator(false);
+    (async () => {
+      try {
+        const res = await fetch(`/api/notes/${note.id}/collaborators`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ email: u.email }) });
+        if (!res.ok) throw new Error(await res.text());
+      } catch (err) {
+        console.error('Failed to add collaborator', err);
+        window.alert('Failed to add collaborator');
+      }
+    })();
+  }
   function deleteItemAt(idx: number) {
-    setItems(s => {
-      const copy = [...s];
-      if (idx >= 0 && idx < copy.length) copy.splice(idx, 1);
-      return copy;
-    });
+    const yarr = yarrayRef.current; if (!yarr) return;
+    if (idx >= 0 && idx < yarr.length) yarr.delete(idx, 1);
   }
 
   const dialog = (
@@ -326,11 +493,19 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg }:
         </div>
         <div className="dialog-body">
           <div style={{ display: 'flex', gap: 12, marginBottom: 8 }}>
-            <input placeholder="Checklist title" value={title} onChange={(e) => setTitle(e.target.value)} style={{ flex: 1, background: 'transparent', border: 'none', color: 'inherit', fontWeight: 600 }} />
-            <div style={{ display: 'flex', gap: 8 }}>
-              <button className="btn" onClick={() => addItemAt()} disabled={saving}>+ Item</button>
-            </div>
+            <input placeholder="Checklist title" value={title} onChange={(e) => setTitle(e.target.value)} style={{ flex: 1, background: 'transparent', border: 'none', color: 'inherit', fontWeight: 600, fontSize: 18 }} />
           </div>
+          <div className="rt-toolbar" style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 8 }}>
+            <button className="tiny" onClick={() => activeChecklistEditor.current?.chain().focus().toggleBold().run()} aria-pressed={activeChecklistEditor.current?.isActive?.('bold')}>B</button>
+            <button className="tiny" onClick={() => activeChecklistEditor.current?.chain().focus().toggleItalic().run()} aria-pressed={activeChecklistEditor.current?.isActive?.('italic')}>I</button>
+            <button className="tiny" onClick={() => activeChecklistEditor.current?.chain().focus().toggleUnderline().run()} aria-pressed={activeChecklistEditor.current?.isActive?.('underline')}>U</button>
+          </div>
+
+          {((previewItems ?? items).length === 0) && (
+            <div style={{ marginBottom: 8 }}>
+              <button className="btn" onClick={() => addItemAt(0)}>Add an item</button>
+            </div>
+          )}
 
 
                   {(previewItems ?? items).filter(it => !it.checked).map((it, idx) => {
@@ -338,7 +513,7 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg }:
                     const realIdx = currentList.indexOf(it);
                     const shiftClass = shiftClassForIndex(realIdx, currentList);
                     return (
-                      <div key={realIdx} className={`checklist-item ${shiftClass}`} style={{ display: 'flex', gap: 8, alignItems: 'flex-start', marginLeft: (it.indent || 0) * 18 }} draggable={false}
+                      <div key={it.key ?? realIdx} className={`checklist-item ${shiftClass}`} style={{ display: 'flex', gap: 8, alignItems: 'flex-start', marginLeft: (it.indent || 0) * 18 }} draggable={false}
                         onPointerCancel={() => { pointerTrackRef.current = null; }}
                         
                         onDragOver={(e) => {
@@ -373,58 +548,71 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg }:
                             const dx = dragStartRef.current ? ((e.clientX || 0) - dragStartRef.current.x) : 0;
                             const treatHorizontal = dragDirectionRef.current === 'horizontal' || Math.abs(dx) > INDENT_THRESHOLD;
                             if (treatHorizontal) {
-                              const draggedId = items[src]?.id;
-                              if (dx > INDENT_THRESHOLD) {
-                                // indent block: compute block for src and increase indent for whole block
-                                const [bStart, bEnd] = getBlockRange(items, src);
-                                // find previous top-level before original src
-                                let parentId: number | null = null;
-                                for (let j = src - 1; j >= 0; j--) {
-                                  if ((items[j].indent || 0) === 0) { parentId = items[j].id ?? null; break; }
-                                }
+                              const yarr = yarrayRef.current;
+                              if (yarr) {
+                                if (dx > INDENT_THRESHOLD) {
+                                  const [bStart, bEnd] = getBlockRange(items, src);
+                                  let parentIdx: number | null = null;
+                                  for (let j = src - 1; j >= 0; j--) {
+                                    if ((items[j].indent || 0) === 0) { parentIdx = j; break; }
+                                  }
                                   if (bStart >= 0) {
-                                    if (parentId != null) {
+                                    if (parentIdx != null) {
                                       if (bStart === dst) {
-                                        // set indent to 1 for the block in place
-                                        setItems(s => s.map((it, i) => (i >= bStart && i < bEnd) ? { ...it, indent: 1 } : it));
+                                        for (let i = bStart; i < bEnd; i++) {
+                                          const m = yarr.get(i) as Y.Map<any>; m.set('indent', 1);
+                                        }
                                       } else {
-                                        // remove block and insert after parent, setting indent to 1
-                                        setItems(s => {
-                                          const copy = [...s];
-                                          const block = copy.splice(bStart, bEnd - bStart);
-                                          const parentIdx = copy.findIndex(x => x.id === parentId);
-                                          let insertAt = parentIdx >= 0 ? parentIdx + 1 : Math.min(dst, copy.length);
-                                          while (insertAt < copy.length && (copy[insertAt].indent || 0) > 0) insertAt++;
-                                          const inc = block.map(it => ({ ...it, indent: 1 }));
-                                          copy.splice(insertAt, 0, ...inc);
-                                          return copy;
-                                        });
+                                        // snapshot values and reinsert as fresh maps to avoid reusing integrated types
+                                        const vals: Array<{ id?: number; uid?: string; content: string; checked: boolean; indent: number }> = [];
+                                        for (let i = bStart; i < bEnd; i++) {
+                                          const mm = yarr.get(i) as Y.Map<any>;
+                                          vals.push({ id: (typeof mm.get('id') === 'number' ? Number(mm.get('id')) : undefined), uid: (mm.get('uid') ? String(mm.get('uid')) : undefined), content: String(mm.get('content') || ''), checked: !!mm.get('checked'), indent: Number(mm.get('indent') || 0) });
+                                        }
+                                        yarr.delete(bStart, bEnd - bStart);
+                                        let insertAt = parentIdx + 1;
+                                        // adjust insertAt if parent was before removed range
+                                        if (parentIdx > bStart) insertAt = parentIdx - (bEnd - bStart) + 1;
+                                        while (insertAt < yarr.length) {
+                                          const ind = Number((yarr.get(insertAt) as Y.Map<any>).get('indent') || 0);
+                                          if (ind > 0) insertAt++; else break;
+                                        }
+                                        const clones = vals.map(v => { const nm = new Y.Map<any>(); if (typeof v.id === 'number') nm.set('id', v.id); if (v.uid) nm.set('uid', v.uid); nm.set('content', v.content); nm.set('checked', v.checked); nm.set('indent', 1); return nm; });
+                                        yarr.insert(insertAt, clones as any);
                                       }
-                                    } else if (bStart >= 0) {
-                                      // no previous top-level found: just set indent=1 for the block in place
-                                      setItems(s => s.map((it, i) => (i >= bStart && i < bEnd) ? { ...it, indent: 1 } : it));
+                                    } else {
+                                      for (let i = bStart; i < bEnd; i++) {
+                                        const m = yarr.get(i) as Y.Map<any>; m.set('indent', 1);
+                                      }
                                     }
-                                }
-                              } else if (dx < -INDENT_THRESHOLD) {
-                                // un-indent block: reduce indent by 1 for the block
-                                const [bStart, bEnd] = getBlockRange(items, src);
-                                if (bStart >= 0) {
-                                  setItems(s => s.map((it, i) => (i >= bStart && i < bEnd) ? { ...it, indent: Math.max(0, (it.indent || 0) - 1) } : it));
+                                  }
+                                } else if (dx < -INDENT_THRESHOLD) {
+                                  const [bStart, bEnd] = getBlockRange(items, src);
+                                  if (bStart >= 0) {
+                                    for (let i = bStart; i < bEnd && i < yarr.length; i++) {
+                                      const m = yarr.get(i) as Y.Map<any>;
+                                      const cur = Number(m.get('indent') || 0);
+                                      m.set('indent', Math.max(0, cur - 1));
+                                    }
+                                  }
                                 }
                               }
                             } else {
-                              if (src !== dst) moveItem(src, dst);
+                              if (src !== dst) {
+                                const [bStart, bEnd] = getBlockRange(items, src);
+                                moveBlockY(bStart, bEnd, dst);
+                              }
                             }
                           }
                           endDragCleanup();
                         }}
                         onDragLeave={() => { if (hoverIndex === realIdx) setHoverIndex(null); if (rafRef.current) { cancelAnimationFrame(rafRef.current); rafRef.current = null; } }}
                       >
-                        <div className="drag-handle" style={{ width: 20, cursor: 'grab', userSelect: 'none', WebkitUserSelect: 'none', MozUserSelect: 'none', msUserSelect: 'none' }} onMouseDown={(e) => { e.preventDefault(); }}
+                        <div className="drag-handle" style={{ width: 32, cursor: 'grab', userSelect: 'none', WebkitUserSelect: 'none', MozUserSelect: 'none', msUserSelect: 'none' }} onMouseDown={(e) => { e.preventDefault(); }}
                           onPointerDown={(e) => {
                             (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
                             const currentList = previewItems ?? items;
-                            const draggedId = currentList[realIdx]?.id ?? null;
+                            const draggedId = (typeof currentList[realIdx]?.id === 'number' ? currentList[realIdx].id : (currentList[realIdx]?.uid ?? null));
                             pointerTrackRef.current = { active: true, startX: e.clientX, startY: e.clientY, idx: realIdx, draggedId, pointerId: e.pointerId };
                             dragDirectionRef.current = null;
                             setPreviewItems(null);
@@ -443,8 +631,10 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg }:
                               // create ghost once
                               if (!ghostRef.current) {
                                 const nodes = Array.from(document.querySelectorAll('.image-dialog .checklist-item')) as HTMLElement[];
-                                const srcIdx = p.idx ?? -1;
-                                const srcEl = nodes[srcIdx];
+                                const srcRealIdx = p.idx ?? -1;
+                                const currentList = previewItems ?? items;
+                                const srcDomIdx = realToDomIndex(srcRealIdx, currentList);
+                                const srcEl = nodes[srcDomIdx];
                                 if (srcEl) {
                                   const rect = srcEl.getBoundingClientRect();
                                   const ghost = srcEl.cloneNode(true) as HTMLElement;
@@ -460,8 +650,8 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg }:
                                   ghostRef.current = ghost as HTMLDivElement;
                                   // mark source hidden
                                   try { srcEl.classList.add('drag-source'); } catch (err) {}
-                                  setDragging(srcIdx);
-                                  setHoverIndex(srcIdx);
+                                  setDragging(srcRealIdx);
+                                  setHoverIndex(srcRealIdx);
                                   // record source left for horizontal locking
                                   sourceLeftRef.current = rect.left;
                                   // set shift distance so neighbors occupy the dragged item's full height
@@ -479,16 +669,16 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg }:
                               // compute hover index using ghost overlap (>=50% of target height) to avoid jitter
                               const nodes = Array.from(document.querySelectorAll('.image-dialog .checklist-item')) as HTMLElement[];
                               if (nodes.length) {
-                                let chosen: number | null = null;
+                                let chosenDomIdx: number | null = null;
                                 const ghostRect = ghostRef.current ? ghostRef.current.getBoundingClientRect() : { top: e.clientY - 10, bottom: e.clientY + 10 };
                                 for (let i = 0; i < nodes.length; i++) {
                                   const r = nodes[i].getBoundingClientRect();
                                   const overlap = Math.max(0, Math.min(ghostRect.bottom, r.bottom) - Math.max(ghostRect.top, r.top));
                                   const frac = overlap / (r.height || 1);
-                                  if (frac >= 0.5) { chosen = i; break; }
+                                  if (frac >= 0.5) { chosenDomIdx = i; break; }
                                 }
                                 // if no strong overlap, fall back to nearest center without hysteresis
-                                if (chosen === null) {
+                                if (chosenDomIdx === null) {
                                   let closest = 0; let minDist = Infinity;
                                   for (let i = 0; i < nodes.length; i++) {
                                     const r = nodes[i].getBoundingClientRect();
@@ -496,9 +686,11 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg }:
                                     const d = Math.abs((e.clientY || 0) - center);
                                     if (d < minDist) { minDist = d; closest = i; }
                                   }
-                                  chosen = closest;
+                                  chosenDomIdx = closest;
                                 }
-                                if (chosen !== hoverIndex) setHoverIndex(chosen);
+                                const currentList = previewItems ?? items;
+                                const chosenRealIdx = domToRealIndex(chosenDomIdx!, currentList);
+                                if (chosenRealIdx !== hoverIndex) setHoverIndex(chosenRealIdx);
                               }
                               return;
                             }
@@ -507,7 +699,7 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg }:
                               const draggedId = p.draggedId ?? null;
                               if (draggedId == null) return;
                               const current = items;
-                              const src = current.findIndex(x => x.id === draggedId);
+                              const src = current.findIndex(x => (typeof draggedId === 'number' ? x.id === draggedId : x.uid === draggedId));
                               if (src < 0) return;
                               // don't preview if dragging the first item and no valid parent
                               if (src === 0 && dx > 0) { setPreviewItems(null); return; }
@@ -521,8 +713,8 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg }:
                                   if ((current[j].indent || 0) === 0) { parentIdx = j; break; }
                                 }
                                 if (parentIdx != null) {
-                                  const parentId = current[parentIdx].id;
-                                  const foundParentIdx = copy.findIndex(x => x.id === parentId);
+                                  const parentKey = (typeof current[parentIdx].id === 'number' ? current[parentIdx].id : current[parentIdx].uid);
+                                  const foundParentIdx = copy.findIndex(x => (typeof parentKey === 'number' ? x.id === parentKey : x.uid === parentKey));
                                   let insertAt = foundParentIdx >= 0 ? foundParentIdx + 1 : Math.min(bStart, copy.length);
                                   while (insertAt < copy.length && (copy[insertAt].indent || 0) > 0) insertAt++;
                                         const inc = block.map(it => ({ ...it, indent: 1 }));
@@ -549,21 +741,25 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg }:
                             const p = pointerTrackRef.current;
                             pointerTrackRef.current = null;
                             if (previewItems) {
-                              setItems(prev => {
-                                // commit using ids to avoid stale index issues
-                                return previewItems;
-                              });
+                              const yarr = yarrayRef.current;
+                              if (yarr) {
+                                try {
+                                  yarr.delete(0, yarr.length);
+                                  const toInsert = previewItems.map(it => { const m = new Y.Map<any>(); if (typeof it.id === 'number') m.set('id', it.id); if (it.uid) m.set('uid', it.uid); m.set('content', String(it.content || '')); m.set('checked', !!it.checked); m.set('indent', Number(it.indent || 0)); return m; });
+                                  yarr.insert(0, toInsert);
+                                } catch {}
+                              }
                               setPreviewItems(null);
                             }
                             // if pointer-driven vertical drag was active, commit block move
                             if (dragDirectionRef.current === 'vertical' && dragging !== null) {
-                              const srcIdx = dragging;
+                              const srcRealIdx = dragging;
                               const current = items;
-                              const [sStart, sEnd] = getBlockRange(current, srcIdx);
+                              const [sStart, sEnd] = getBlockRange(current, srcRealIdx);
                               if (hoverIndex !== null) {
                                 // when moving down, insert after the hovered item; when moving up, insert before
-                                const dstIdx = srcIdx < hoverIndex ? hoverIndex + 1 : hoverIndex;
-                                if (!(dstIdx >= sStart && dstIdx < sEnd)) moveBlock(sStart, sEnd, dstIdx);
+                                const dstRealIdx = srcRealIdx < hoverIndex ? hoverIndex + 1 : hoverIndex;
+                                if (!(dstRealIdx >= sStart && dstRealIdx < sEnd)) moveBlockY(sStart, sEnd, dstRealIdx);
                               } else {
                                 // no hover; no-op
                               }
@@ -574,8 +770,16 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg }:
                           }}
                         >≡</div>
                         <div className={`checkbox-visual ${it.checked ? 'checked' : ''}`} onClick={() => toggleChecked(realIdx)}>{it.checked && (<svg viewBox="0 0 24 24" fill="none" aria-hidden focusable="false"><path d="M20 6L9 17l-5-5" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" /></svg>)}</div>
-                        <textarea ref={el => itemRefs.current[realIdx] = el} value={it.content} onChange={e => updateItem(realIdx, (e.target as HTMLTextAreaElement).value)} onKeyDown={(e) => handleInputKeyDown(e as React.KeyboardEvent<HTMLTextAreaElement>, realIdx)} placeholder="List item" className="take-note-input" style={{ flex: 1, height: 'auto' }} rows={1} />
-                        <div className="move-controls"><button className="move-btn" onClick={() => moveItem(realIdx, Math.max(0, realIdx-1))} aria-label="Move up">↑</button><button className="move-btn" onClick={() => moveItem(realIdx, Math.min(items.length-1, realIdx+1))} aria-label="Move down">↓</button></div>
+                        <div style={{ flex: 1 }}>
+                          <ChecklistItemRT
+                            value={it.content || ''}
+                            onChange={(html) => updateItem(realIdx, html)}
+                            onEnter={() => addItemAt(realIdx + 1)}
+                            autoFocus={autoFocusIndex === realIdx}
+                            onFocus={(ed) => { activeChecklistEditor.current = ed; setToolbarTick(t => t + 1); if (autoFocusIndex === realIdx) setAutoFocusIndex(null); }}
+                          />
+                        </div>
+                        {/* up/down controls removed in favor of drag reorder */}
                         <button className="delete-item" onClick={(e) => { e.stopPropagation(); deleteItemAt(realIdx); }} aria-label="Delete item">✕</button>
                       </div>
                     );
@@ -593,15 +797,17 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg }:
                       const realIdx = currentList.indexOf(it);
                       const shiftClass = shiftClassForIndex(realIdx, previewItems ?? items);
                       return (
-                        <div key={realIdx} className={`checklist-item ${shiftClass}`} style={{ display: 'flex', gap: 8, alignItems: 'flex-start', marginLeft: (it.indent || 0) * 18 }} draggable={false}
+                        <div key={it.key ?? realIdx} className={`checklist-item ${shiftClass}`} style={{ display: 'flex', gap: 8, alignItems: 'flex-start', marginLeft: (it.indent || 0) * 18 }} draggable={false}
                           onDragOver={(e) => { e.preventDefault(); const target = e.currentTarget as HTMLElement; const rect = target.getBoundingClientRect(); const y = (e as unknown as React.DragEvent<HTMLElement>).clientY; const height = rect.height || 40; if (rafRef.current) cancelAnimationFrame(rafRef.current); rafRef.current = requestAnimationFrame(() => { if (dragging === null) return; let shouldHover = false; if (dragging < realIdx) { shouldHover = (y - rect.top < height * 0.28); } else if (dragging > realIdx) { shouldHover = (rect.bottom - y < height * 0.28); } setHoverIndex(prev => shouldHover ? (prev === realIdx ? prev : realIdx) : (prev === realIdx ? null : prev)); }); }}
-                          onDrop={(e) => { e.preventDefault(); const src = dragging !== null ? dragging : parseInt(e.dataTransfer.getData('text/plain') || '-1', 10); const dst = realIdx; if (src >= 0 && src !== dst) moveItem(src, dst); endDragCleanup(); }}
+                          onDrop={(e) => { e.preventDefault(); const src = dragging !== null ? dragging : parseInt(e.dataTransfer.getData('text/plain') || '-1', 10); const dst = realIdx; if (src >= 0 && src !== dst) { const [bStart, bEnd] = getBlockRange(items, src); moveBlockY(bStart, bEnd, dst); } endDragCleanup(); }}
                           onDragLeave={() => { if (hoverIndex === realIdx) setHoverIndex(null); if (rafRef.current) { cancelAnimationFrame(rafRef.current); rafRef.current = null; } }}
                         >
                           <div style={{ width: 20 }} />
                           <div className={`checkbox-visual ${it.checked ? 'checked' : ''}`} onClick={() => toggleChecked(realIdx)}>{it.checked && (<svg viewBox="0 0 24 24" fill="none" aria-hidden focusable="false"><path d="M20 6L9 17l-5-5" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" /></svg>)}</div>
-                          <textarea ref={el => itemRefs.current[realIdx] = el} value={it.content} onChange={e => updateItem(realIdx, (e.target as HTMLTextAreaElement).value)} onKeyDown={(e) => handleInputKeyDown(e as React.KeyboardEvent<HTMLTextAreaElement>, realIdx)} placeholder="List item" className="take-note-input" style={{ flex: 1, height: 'auto' }} rows={1} />
-                          <div className="move-controls"><button className="move-btn" onClick={() => moveItem(realIdx, Math.max(0, realIdx-1))} aria-label="Move up">↑</button><button className="move-btn" onClick={() => moveItem(realIdx, Math.min(items.length-1, realIdx+1))} aria-label="Move down">↓</button></div>
+                          <div style={{ flex: 1, textDecoration: 'line-through', display: 'flex', alignItems: 'center' }}>
+                            <div className="rt-html" dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(String(it.content || ''), { USE_PROFILES: { html: true } }) }} />
+                          </div>
+                          {/* up/down controls removed in favor of drag reorder */}
                           <button className="delete-item" onClick={(e) => { e.stopPropagation(); deleteItemAt(realIdx); }} aria-label="Delete item">✕</button>
                         </div>
                       );
@@ -609,8 +815,26 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg }:
                   </div>
                 </div>
               <div className="dialog-footer">
-                <div style={{ display: 'flex', gap: 8 }}>
-                  <button className="btn" onClick={() => addItemAt()} disabled={saving}>+ Item</button>
+                <div className="note-actions" style={{ marginRight: 'auto', display: 'inline-flex', gap: 8, justifyContent: 'flex-start' }}>
+                  <button className="tiny palette" onClick={() => setShowPalette(true)} aria-label="Change color" title="Change color">🎨</button>
+                  <button className="tiny" onClick={() => setShowReminderPicker(true)} aria-label="Reminder" title="Reminder">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+                      <path d="M12 22c1.1 0 2-.9 2-2h-4a2 2 0 0 0 2 2z"/>
+                      <path d="M18 8V7a6 6 0 1 0-12 0v1c0 3.5-2 5-2 5h16s-2-1.5-2-5z"/>
+                    </svg>
+                  </button>
+                  <button className="tiny" onClick={() => setShowCollaborator(true)} aria-label="Collaborators" title="Collaborators">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+                      <path d="M15 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4z"/>
+                      <path d="M6 14c-1.66 0-3 1.34-3 3v1h9.5c-.2-.63-.5-1.23-.9-1.76C11.7 15.6 9.9 14 6 14z"/>
+                      <path d="M20 16v2h-2v2h-2v-2h-2v-2h2v-2h2v2z" />
+                    </svg>
+                  </button>
+                  <button className="tiny" onClick={() => setShowImageDialog(true)} aria-label="Add image" title="Add image">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+                      <path d="M21 19V5c0-1.1-.9-2-2-2H5C3.9 3 3 3.9 3 5v14h18zM8.5 13.5l2.5 3L14.5 12l4.5 7H5l3.5-5.5z"/>
+                    </svg>
+                  </button>
                 </div>
                 <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
                   <button className="btn" onClick={onClose}>Cancel</button>
@@ -621,7 +845,15 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg }:
           </div>
           );
 
-          if (typeof document !== 'undefined') return createPortal(dialog, document.body);
+          if (typeof document !== 'undefined') {
+            const portal = createPortal(dialog, document.body);
+            return (<>{portal}
+              {showPalette && <ColorPalette anchorRef={undefined as any} onPick={onPickColor} onClose={() => setShowPalette(false)} />}
+              {showReminderPicker && <ReminderPicker onClose={() => setShowReminderPicker(false)} onSet={(iso) => { setShowReminderPicker(false); if (iso) window.alert(`Reminder set (UI-only): ${iso}`); }} />}
+              {showCollaborator && <CollaboratorModal onClose={() => setShowCollaborator(false)} onSelect={onCollaboratorSelect} />}
+              {showImageDialog && <ImageDialog onClose={() => setShowImageDialog(false)} onAdd={onAddImageUrl} />}
+            </>);
+          }
           return dialog;
         }
 

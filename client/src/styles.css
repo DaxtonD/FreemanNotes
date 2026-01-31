@@ -130,6 +130,8 @@ body{
 .rt-toolbar .tiny text { font-weight: 600; }
 .rt-toolbar .tiny[aria-pressed="true"] { background: rgba(255,255,255,0.08); color: #fff; }
 .rt-editor { min-height: 300px; padding: 12px 14px; border-radius: 8px; background: var(--card); color: inherit; }
+.rt-item { min-height: 22px; padding: 4px 6px; border-radius: 4px; background: transparent; color: inherit; }
+.rt-item p { margin: 0; font-size: var(--checklist-text-size); }
 .rt-editor h1, .rt-editor h2, .rt-editor h3 { margin: 8px 0; font-weight: 700; }
 .rt-editor p { margin: 6px 0; font-size: var(--checklist-text-size); }
 .rt-editor ul, .rt-editor ol { margin: 8px 0 8px 20px; }
@@ -182,6 +184,10 @@ body{
 .note-body .note-item { font-size: var(--checklist-text-size); }
 /* Ensure note preview items use the same spacing as the checklist editor */
 .note-item { margin-bottom: var(--checklist-gap); }
+/* Normalize paragraph spacing inside checklist item HTML so preferences control spacing */
+.note-item p { margin: 0; }
+/* Reset margins inside rendered rich-text fragments so alignment is centered */
+.rt-html p { margin: 0; }
 
 /* drag animation */
 .checklist-item{
@@ -284,15 +290,20 @@ body{
 /* Palette emoji is a text glyph (not an SVG) — ensure it visibly grows on hover */
 .note-footer .tiny.palette,
 .note-actions .tiny.palette {
-  font-size: 18px; /* baseline */
-  transition: font-size 120ms ease, transform 140ms cubic-bezier(.2,0,0,1);
+  font-size: 18px; /* fixed to avoid reflow */
+  width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  transition: transform 140ms cubic-bezier(.2,0,0,1);
 }
 .note-footer .tiny.palette:hover,
 .note-actions .tiny.palette:hover,
 .note-footer .tiny.palette:focus,
 .note-actions .tiny.palette:focus {
-  font-size: 22px; /* visibly larger emoji */
-  transform: translateY(-2px) scale(1.14); /* keep consistent with other icons */
+  transform: translateY(-2px) scale(1.14); /* match other icons without changing layout */
 }
 
 /* Chips */
@@ -374,6 +385,7 @@ body{
 /* dialog body (scrollable) and footer (sticky) */
 .dialog-body{ padding:12px; overflow:auto; flex:1 1 auto; }
 .dialog-footer{ padding:12px; border-top:1px solid rgba(255,255,255,0.03); display:flex; gap:8px; align-items:center; }
+.image-dialog .dialog-footer .note-actions{ justify-content: flex-start; }
 .delete-item{ background:transparent;border:none;color:var(--muted);cursor:pointer;opacity:0; transition:opacity 140ms; padding:4px 6px;border-radius:6px }
 .checklist-item:hover .delete-item{ opacity:1 }
 .btn{background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.03);padding:8px 10px;border-radius:6px;color:#fff;cursor:pointer}
@@ -591,4 +603,20 @@ body{
   .sidebar{display:none}
   .search{max-width:40vw}
   .notes-grid{column-width:220px}
+}
+
+/* Ensure quick-create dialog shows its footer icons (visible, inline layout) */
+.take-note-expanded .note-footer {
+  position: static;
+  height: auto;
+  background: transparent;
+  box-shadow: none;
+  opacity: 1;
+  transform: none;
+  pointer-events: auto;
+  padding: 0;
+}
+.take-note-expanded .note-actions {
+  justify-content: flex-end;
+  gap: 8px;
 }
