@@ -10,7 +10,7 @@ RUN npm run build
 FROM node:20-alpine AS runner
 WORKDIR /app
 ENV NODE_ENV=production
-COPY package.json ./
+COPY package.json package-lock.json* ./
 # Install all deps at runtime so prisma CLI is available for migrations/generate
 RUN npm ci --production=false
 # Copy built server and client-dist from builder
