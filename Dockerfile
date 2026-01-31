@@ -2,6 +2,8 @@
 FROM node:20-alpine AS builder
 WORKDIR /app
 COPY package.json package-lock.json* ./
+# Ensure postinstall script exists before npm ci runs
+COPY scripts ./scripts
 RUN npm ci --production=false
 COPY . .
 RUN npm run build
