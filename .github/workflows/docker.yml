@@ -33,7 +33,11 @@ jobs:
         with:
           images: ghcr.io/daxtond/freemannotes
           tags: |
+            # Tag on Git refs (e.g., v0.2.0)
             type=ref,event=tag
+            # Also publish semver tags without the leading 'v' (e.g., 0.2.0, 0.2)
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
             # For main branch pushes, also tag as latest
             type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
 
