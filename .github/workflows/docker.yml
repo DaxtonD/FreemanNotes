@@ -10,6 +10,8 @@ on:
 jobs:
   build-and-push:
     runs-on: ubuntu-latest
+    env:
+      GHCR_PAT: ${{ secrets.GHCR_PAT }}
     permissions:
       contents: read
       packages: write
