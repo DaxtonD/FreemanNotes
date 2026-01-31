@@ -1,6 +1,26 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import path from "path";
+import dotenv from "dotenv";
+
+dotenv.config();
+
+function collectAllowedHosts(): string[] {
+  const hosts = new Set<string>();
+  const add = (h?: string | null) => { if (h) hosts.add(h.toLowerCase()); };
+  const parseHost = (u?: string | null) => {
+    if (!u) return;
+    try { const url = new URL(u); add(url.hostname); } catch { add(u); }
+  };
+  // From explicit list
+  (process.env.ALLOWED_HOSTS || "").split(",").map(s => s.trim()).filter(Boolean).forEach(add);
+  // Derive from base/prod URLs
+  parseHost(process.env.APP_BASE_URL || process.env.APP_URL);
+  parseHost(process.env.PRODUCTION_URL);
+  // Always allow localhost variants
+  ["localhost", "127.0.0.1"].forEach(add);
+  return Array.from(hosts);
+}
 
 export default defineConfig({
   root: path.resolve(__dirname),
@@ -13,6 +33,8 @@ export default defineConfig({
     }
   },
   server: {
-    port: 5173
+    port: 5173,
+    host: true,
+    allowedHosts: collectAllowedHosts()
   }
 });

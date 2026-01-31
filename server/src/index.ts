@@ -179,9 +179,22 @@ async function start() {
   if (isDev) {
     // Use Vite dev server as middleware so one process serves front+api in dev.
     const { createServer: createViteServer } = await import("vite");
+    const collectAllowedHosts = (): string[] => {
+      const hosts = new Set<string>();
+      const add = (h?: string | null) => { if (h) hosts.add(h.toLowerCase()); };
+      const parseHost = (u?: string | null) => {
+        if (!u) return;
+        try { const url = new URL(u); add(url.hostname); } catch { add(u); }
+      };
+      (process.env.ALLOWED_HOSTS || "").split(",").map(s => s.trim()).filter(Boolean).forEach(add);
+      parseHost(process.env.APP_BASE_URL || process.env.APP_URL);
+      parseHost(process.env.PRODUCTION_URL);
+      ["localhost", "127.0.0.1"].forEach(add);
+      return Array.from(hosts);
+    };
     const vite = await createViteServer({
       root: clientRoot,
-      server: { middlewareMode: "ssr", hmr: { protocol: "ws" } }
+      server: { middlewareMode: "ssr", hmr: { protocol: "ws" }, host: true, allowedHosts: collectAllowedHosts() }
     } as any);
     app.use(vite.middlewares);
     console.log("Vite dev middleware enabled");
