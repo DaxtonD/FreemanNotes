@@ -19,7 +19,6 @@ COPY --from=builder /app/node_modules ./node_modules
 # Copy built server and client-dist from builder
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/client-dist ./client-dist
-COPY --from=builder /app/server/package.json ./server/package.json
 COPY prisma ./prisma
 COPY server/scripts ./server/scripts
 RUN chmod +x server/scripts/docker-entrypoint.sh
