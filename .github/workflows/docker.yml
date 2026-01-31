@@ -13,6 +13,7 @@ jobs:
     permissions:
       contents: read
       packages: write
+      id-token: write
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -31,7 +32,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ghcr.io/daxtond/freemannotes
+          images: ghcr.io/${{ github.repository_owner }}/freemannotes
           tags: |
             # Tag on Git refs (e.g., v0.2.0)
             type=ref,event=tag
