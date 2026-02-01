@@ -15,6 +15,7 @@
   --note-card-width: 288px; /* fixed card width; change this to experiment (or via prefs) */
   --note-card-max-width: 420px; /* optional max width preference placeholder */
   --app-font-family: Inter, system-ui, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --header-height: 120px;
 }
 *{box-sizing:border-box}
 html,body,#root{height:100%;margin:0;font-family:var(--app-font-family)}
@@ -26,7 +27,7 @@ body{
 
 /* Header */
 .app-header{
-  height:64px;
+  height: var(--header-height);
   display:flex;
   align-items:center;
   justify-content:space-between;
@@ -38,15 +39,15 @@ body{
   z-index:50;
 }
 .header-left{display:flex;align-items:center;gap:12px}
-.app-icon{ width:28px; height:28px; display:inline-block; filter: drop-shadow(0 2px 6px rgba(0,0,0,0.6)) saturate(110%) contrast(105%) brightness(98%); border-radius:6px; }
-.app-icon:hover{ filter: drop-shadow(0 3px 8px rgba(0,0,0,0.7)) saturate(118%) contrast(110%) brightness(100%); }
-.brand{font-weight:600;font-size:18px}
+.app-icon{ width:112px; height:112px; display:inline-block; filter: drop-shadow(0 2px 10px rgba(0,0,0,0.7)) saturate(115%) contrast(108%) brightness(100%); border-radius:14px; }
+.app-icon:hover{ filter: drop-shadow(0 4px 14px rgba(0,0,0,0.75)) saturate(122%) contrast(112%) brightness(102%); }
+.brand{font-weight:400;font-size:12px; opacity:0.85; letter-spacing:0.2px}
 .search{width:520px;max-width:60vw;padding:8px 12px;border-radius:8px;background:#2b2b2b;border:1px solid rgba(255,255,255,0.04);color:#fff}
 .icon-btn{background:transparent;border:none;color:var(--muted);font-size:18px;margin-left:8px}
 .avatar{width:32px;height:32px;border-radius:50%;background:linear-gradient(90deg,#2ea7ff,#9b59ff);display:flex;align-items:center;justify-content:center}
 
 /* Layout */
-.app-body{display:flex;height:calc(100vh - 64px)}
+.app-body{display:flex;height:calc(100vh - var(--header-height))}
 .sidebar{width:var(--sidebar-width);padding:20px;border-right:1px solid rgba(255,255,255,0.03);background:transparent; transition: width 200ms cubic-bezier(.2,0,.2,1);}
 .sidebar.collapsed{ width: 64px; padding: 16px 10px; }
 .sidebar .sidebar-item { display:flex; align-items:center; gap:8px; transition: transform 140ms cubic-bezier(.2,0,.2,1), color 120ms ease; }
