@@ -43,7 +43,7 @@ export default function Header({ onToggleSidebar }: { onToggleSidebar?: () => vo
     <header className="app-header">
       <div className="header-left">
         <button className="menu-btn" aria-label="menu" onClick={() => onToggleSidebar && onToggleSidebar()}>☰</button>
-        <img src="/icons/freemannotes-dark.svg" alt="FreemanNotes icon" className="app-icon" />
+        <img src="/icons/darkicon.png" alt="FreemanNotes icon" className="app-icon" />
         <div className="brand">FreemanNotes</div>
       </div>
       <div className="header-center">
