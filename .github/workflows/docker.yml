@@ -47,7 +47,7 @@ jobs:
           context: .
           file: ./Dockerfile
           target: runner
-          # Note: Multi-platform builds are slow; this is correct but takes time
+          # Note: Multi-platform builds are slower but preferred for parity
           platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ steps.meta.outputs.tags }}
