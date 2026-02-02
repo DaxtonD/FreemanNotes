@@ -180,17 +180,9 @@ export default function NotesGrid({ selectedLabelIds = [], searchQuery = '' }: {
         if (prev !== gridCols) {
           g.style.setProperty('--cols', String(gridCols));
           g.dataset.__cols = String(gridCols);
-          // Set both standard and WebKit-prefixed column-count
-          g.style.setProperty('column-count', String(gridCols));
-          g.style.setProperty('-webkit-column-count', String(gridCols));
-          // Shorthand also, to ensure engines apply both values consistently
-          g.style.setProperty('columns', `${gridCols} ${cardWidth}px`);
-          g.style.setProperty('-webkit-columns', `${gridCols} ${cardWidth}px`);
           anyColsChanged = true;
         }
-        // Explicitly set column-width to card width to ensure consistent column sizing
-        g.style.setProperty('column-width', `${cardWidth}px`);
-        g.style.setProperty('-webkit-column-width', `${cardWidth}px`);
+        // Grid uses fixed track width via CSS var; no column-width needed
         g.style.width = `${gridTotal}px`;
       }
       // FLIP: animate items from old positions to new after column changes
@@ -400,6 +392,7 @@ export default function NotesGrid({ selectedLabelIds = [], searchQuery = '' }: {
               const globalIdx = notes.findIndex(x => x.id === n.id);
               return (
                 <div key={n.id}
+                  style={{ gridColumn: `span ${Math.max(1, Math.min(3, Number((n as any).cardSpan || 1)))}` }}
                   ref={(el) => { if (el) itemRefs.current.set(n.id, el); else itemRefs.current.delete(n.id); }}
                   draggable
                   onDragStart={(e) => {
@@ -474,6 +467,7 @@ export default function NotesGrid({ selectedLabelIds = [], searchQuery = '' }: {
             const globalIdx = notes.findIndex(x => x.id === n.id);
               return (
               <div key={n.id}
+                style={{ gridColumn: `span ${Math.max(1, Math.min(3, Number((n as any).cardSpan || 1)))}` }}
                 ref={(el) => { if (el) itemRefs.current.set(n.id, el); else itemRefs.current.delete(n.id); }}
                 draggable
                 onDragStart={(e) => {

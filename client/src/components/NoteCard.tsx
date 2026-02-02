@@ -36,6 +36,7 @@ type Note = {
   viewerColor?: string | null;
   noteLabels?: Array<{ id: number; label?: { id: number; name: string } }>;
   images?: Array<{ id: number; url: string }>
+  cardSpan?: number;
 };
 
 /** choose '#000' or '#fff' based on best WCAG contrast vs provided hex color */
@@ -417,6 +418,23 @@ export default function NoteCard({ note, onChange }: { note: Note, onChange?: ()
     }
   }
 
+  async function onSetCardWidth(span: 1 | 2 | 3) {
+    try {
+      const res = await fetch(`/api/notes/${note.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', Authorization: token ? `Bearer ${token}` : '' },
+        body: JSON.stringify({ cardSpan: span })
+      });
+      if (!res.ok) throw new Error(await res.text());
+      // Ask grid to recalc columns/width and prompt a soft reload
+      try { window.dispatchEvent(new Event('notes-grid:recalc')); } catch {}
+      onChange && onChange();
+    } catch (err) {
+      console.error('Failed to set card width', err);
+      window.alert('Failed to set card width');
+    }
+  }
+
   // compute chip background so it's visible against selected background/text color
   const chipBg = (textColor === "#ffffff" || textColor === "var(--muted)")
     ? "rgba(0,0,0,0.12)"
@@ -641,6 +659,7 @@ export default function NoteCard({ note, onChange }: { note: Note, onChange?: ()
           onAddLabel={onAddLabel}
           onUncheckAll={onUncheckAll}
           onCheckAll={onCheckAll}
+          onSetWidth={onSetCardWidth}
         />
       )}
       {showLabels && (

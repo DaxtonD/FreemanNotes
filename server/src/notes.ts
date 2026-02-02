@@ -226,7 +226,7 @@ router.patch('/api/notes/:id', async (req: Request, res: Response) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id)) return res.status(400).json({ error: 'invalid note id' });
   const data: any = {};
-    const allowed = ['title', 'body', 'pinned', 'archived', 'type'];
+    const allowed = ['title', 'body', 'pinned', 'archived', 'type', 'cardSpan'];
   for (const k of allowed) if (k in req.body) data[k] = req.body[k];
   try {
     const note = await prisma.note.findUnique({ where: { id } });

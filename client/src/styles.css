@@ -73,12 +73,12 @@ body{
 .notes-area{display:block}
 .section-title{color:var(--muted);font-weight:600;margin:0 0 8px 0;padding-left:6px;font-size:13px}
 .notes-grid{
-  /* Masonry-style layout via CSS columns. JS sets column-count to increase
-     when a new card fits. Cards stack top-to-bottom per column, keeping
-     vertical alignment consistent without row holes. */
-  display: block;
-  column-gap: var(--gap);
-  column-fill: balance;
+  /* Grid layout with fixed track width; items can span multiple columns.
+     JS sets --cols based on available width and global card width. */
+  display: grid;
+  grid-template-columns: repeat(var(--cols, 1), var(--note-card-width));
+  grid-auto-flow: dense;
+  gap: var(--gap);
   margin: 0;
   transition: width 180ms ease;
 }
@@ -243,7 +243,7 @@ body{
   transition: transform 300ms cubic-bezier(.2,.9,.2,1), opacity 260ms ease;
   will-change: transform, opacity;
 }
-.notes-grid > div { display: block; width: 100%; margin: 0 0 var(--gap); transition: transform 300ms cubic-bezier(.2,.9,.2,1); will-change: transform; break-inside: avoid; }
+.notes-grid > div { display: block; width: 100%; margin: 0; transition: transform 300ms cubic-bezier(.2,.9,.2,1); will-change: transform; }
 .note-title{font-weight:600;margin-bottom:8px;color: inherit;}
 .note-body{color:inherit;white-space:pre-wrap;font-size:14px;line-height:1.35; overflow:hidden; max-height: calc(var(--note-card-max-height, 570px) - 120px); flex: 1 1 auto;} 
 .note-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:12px;opacity:0.95}

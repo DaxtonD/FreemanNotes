@@ -9,7 +9,8 @@ export default function MoreMenu({
   onDelete,
   onAddLabel,
   onUncheckAll,
-  onCheckAll
+  onCheckAll,
+  onSetWidth
 }: {
   anchorRef?: React.RefObject<HTMLElement | null>;
   anchorPoint?: { x: number; y: number } | null;
@@ -19,6 +20,7 @@ export default function MoreMenu({
   onAddLabel: () => void;
   onUncheckAll: () => void;
   onCheckAll: () => void;
+  onSetWidth: (span: 1 | 2 | 3) => void;
 }) {
   const rootRef = useRef<HTMLDivElement | null>(null);
   const [style, setStyle] = useState<React.CSSProperties>({ position: "fixed", visibility: "hidden", left: 0, top: 0, zIndex: 10000 });
@@ -92,6 +94,12 @@ export default function MoreMenu({
       <button className="more-item" onClick={() => { onAddLabel(); onClose(); }}>Add label</button>
       <button className="more-item" onClick={() => { onUncheckAll(); onClose(); }}>Uncheck all</button>
       <button className="more-item" onClick={() => { onCheckAll(); onClose(); }}>Check all</button>
+      <hr style={{ border: 'none', borderTop: '1px solid rgba(255,255,255,0.06)', margin: '6px 0' }} />
+      <div style={{ display: 'grid', gap: 6 }}>
+        <button className="more-item" onClick={() => { onSetWidth(1); onClose(); }}>Card width: Regular</button>
+        <button className="more-item" onClick={() => { onSetWidth(2); onClose(); }}>Card width: Double</button>
+        <button className="more-item" onClick={() => { onSetWidth(3); onClose(); }}>Card width: Triple</button>
+      </div>
     </div>
   );
 
