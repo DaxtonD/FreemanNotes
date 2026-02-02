@@ -1,3 +1,4 @@
+LABEL org.opencontainers.image.source="https://github.com/daxtond/freemannotes"
 # Stage 1: build client
 FROM node:20-bookworm-slim AS builder
 WORKDIR /app
