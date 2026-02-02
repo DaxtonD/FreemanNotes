@@ -117,6 +117,11 @@ docker compose up --build
 
 - **Fix: Grid packing after filters** — Recalculates masonry row spans when label filters or search change, ensuring notes snap back to the correct layout after clearing filters. Implemented by dispatching `notes-grid:recalc` in `client/src/components/NotesGrid.tsx` whenever `selectedLabelIds`, `searchQuery`, or `notes` change.
 
+### v0.3.2
+
+- **OCR: PaddleOCR integration** — Added a swappable OCR module with PaddleOCR (`lang="en"`, `use_angle_cls=True`), deterministic preprocessing (RGB, remove alpha, resize max dimension ≈ 1800px), single-pass OCR, and structured JSON output `{ text, lines: [{ text, confidence }], avgConfidence }`. Returns `{ status: "low_confidence" }` if the average confidence is below threshold; no retries or tuning.
+- **Docker support for OCR** — Runtime image installs Python 3 and PaddleOCR dependencies, making OCR work out-of-the-box in Docker.
+
 ## API Summary
 
 - `POST /api/auth/register` — Register (invite required if registration disabled).
