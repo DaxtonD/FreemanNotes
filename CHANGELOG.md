@@ -4,6 +4,30 @@ All notable changes to this project will be documented in this file.
 
 Adheres to Semantic Versioning (MAJOR.MINOR.PATCH).
 
+## [0.3.0] - 2026-02-01
+
+### Added
+- Preferences hub with submenus: Appearance, Colors, Drag & Animation, Collaborators.
+- User profile photos: client upload (data URL) → server resize/compress via Sharp → stored under `/uploads/users/{id}.jpg` and served statically.
+- Real-time photo propagation: broadcast `user-photo-updated` to note participants; clients update owner/collab images inline.
+- Collaborator chips display preference (`chipDisplayMode`): persisted per-user; rendering honors Image + Text | Image only | Text only.
+- Per-user note color via `NotePref` and `viewerColor`; GET `/api/notes` includes viewer-specific color.
+- Events channel updates: `note-shared`, `note-unshared`, `collab-removed`, `user-photo-updated`; `NotesGrid` subscribes for immediate UI refresh.
+
+### Changed
+- Preferences consolidated into submenus; Save applies changes immediately (chip display mode via `authContext.updateMe`).
+- Header simplified: avatar opens Preferences; Sign out moved into Preferences.
+- Header avatar and Preferences preview standardized to 55×55.
+- Collaborators section label updated from "Collaborator Chips" to "Collaborators".
+
+### Fixed
+- Collaborator chips persist across refresh; rollback on failure.
+- First opener of checklist sees live changes (Yjs gating fixed).
+- Immediate photo refresh via cache-busting query `?v=timestamp` appended to `userImageUrl` post-upload.
+
+### Removed
+- Legacy OCR implementation: tesseract code, env vars, and references removed.
+
 ## [0.2.0] - 2026-01-31
 
 ### Collaboration & Live Updates
