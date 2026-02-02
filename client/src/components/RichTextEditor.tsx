@@ -12,17 +12,19 @@ import ColorPalette from './ColorPalette';
 import ReminderPicker from './ReminderPicker';
 import CollaboratorModal from './CollaboratorModal';
 import ImageDialog from './ImageDialog';
+import ImageLightbox from './ImageLightbox';
 
-export default function RichTextEditor({ note, onClose, onSaved, noteBg }:
-  { note: any; onClose: () => void; onSaved?: (payload: { title: string; body: string }) => void; noteBg?: string }) {
-  const { token } = useAuth();
+export default function RichTextEditor({ note, onClose, onSaved, noteBg, onImagesUpdated }:
+  { note: any; onClose: () => void; onSaved?: (payload: { title: string; body: string }) => void; noteBg?: string; onImagesUpdated?: (images: Array<{ id:number; url:string }>) => void }) {
+  const { token, user } = useAuth();
   const [title, setTitle] = React.useState<string>(note.title || '');
   const [maximized, setMaximized] = React.useState<boolean>(false);
   const [showPalette, setShowPalette] = React.useState(false);
   const [showReminderPicker, setShowReminderPicker] = React.useState(false);
   const [showCollaborator, setShowCollaborator] = React.useState(false);
   const [showImageDialog, setShowImageDialog] = React.useState(false);
-  const [imageUrl, setImageUrl] = React.useState<string | null>(null);
+  const [images, setImages] = React.useState<Array<{ id:number; url:string }>>(((note as any).images || []).map((i:any)=>({ id:Number(i.id), url:String(i.url) })));
+  const [lightboxUrl, setLightboxUrl] = React.useState<string | null>(null);
   const [collaborators, setCollaborators] = React.useState<{ id:number; email:string }[]>([]);
   const seededOnceRef = React.useRef<boolean>(false);
 
@@ -46,6 +48,14 @@ export default function RichTextEditor({ note, onClose, onSaved, noteBg }:
     ],
     editorProps: { attributes: { class: 'rt-editor' } },
   });
+
+  React.useEffect(() => {
+    try {
+      const next = (((note as any).images || []).map((i:any)=>({ id:Number(i.id), url:String(i.url) })));
+      setImages(next);
+      onImagesUpdated && onImagesUpdated(next);
+    } catch {}
+  }, [ (note as any).images ]);
 
   // Server is authoritative; clients never seed initial content.
 
@@ -120,45 +130,55 @@ export default function RichTextEditor({ note, onClose, onSaved, noteBg }:
     return contrastWithWhite >= contrastWithBlack ? '#ffffff' : '#000000';
   }
 
-  // Match note color in dialog if provided, and set text color accordingly
+  // Match note color in dialog; prefer viewer-specific color, and set text color accordingly
   const dialogStyle: React.CSSProperties = {} as any;
-  const bg = noteBg ?? note.color ?? '';
+  const [bg, setBg] = React.useState<string>(noteBg ?? ((note as any).viewerColor || note.color || ''));
   const textColor = bg ? (contrastColor(bg) || 'var(--muted)') : undefined;
+  React.useEffect(() => { setBg(noteBg ?? ((note as any).viewerColor || note.color || '')); }, [noteBg, (note as any).viewerColor, note.color]);
   if (bg) {
     (dialogStyle as any)['--checkbox-bg'] = bg;
     dialogStyle.background = bg;
     if (textColor) dialogStyle.color = textColor;
   }
 
-  function onPickColor(color: string) {
+  async function onPickColor(color: string) {
     const nextBg = color || '';
-    // persist to server
-    (async () => {
-      try {
-        const res = await fetch(`/api/notes/${note.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ color: color || null }) });
-        if (!res.ok) throw new Error(await res.text());
-      } catch (err) {
-        console.error('Failed to save note color', err);
-      }
-    })();
+    try {
+      const res = await fetch(`/api/notes/${note.id}/prefs`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ color: nextBg })
+      });
+      if (!res.ok) throw new Error(await res.text());
+    } catch (err) {
+      console.error('Failed to save color preference', err);
+      window.alert('Failed to save color preference');
+    }
+    setBg(nextBg);
   }
 
   function onAddImageUrl(url?: string | null) {
     setShowImageDialog(false);
     if (!url) return;
-    setImageUrl(url);
     (async () => {
       try {
         const res = await fetch(`/api/notes/${note.id}/images`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ url }) });
         if (!res.ok) throw new Error(await res.text());
+        const data = await res.json();
+        const img = data.image || null;
+        if (img && img.id && img.url) {
+          setImages(s => { const exists = s.some(x => Number(x.id) === Number(img.id)); const next = exists ? s : [...s, { id: Number(img.id), url: String(img.url) }]; onImagesUpdated && onImagesUpdated(next); return next; });
+        }
       } catch (err) {
         console.error('Failed to attach image', err);
         window.alert('Failed to attach image');
+        // Fallback: display locally
+        setImages(s => { const exists = s.some(x => String(x.url) === String(url)); const next = exists ? s : [...s, { id: Date.now(), url }]; onImagesUpdated && onImagesUpdated(next); return next; });
       }
     })();
   }
 
-  function onCollaboratorSelect(u: { id:number; email:string }) {
+  function onCollaboratorSelect(u: { id:number; email:string; name?: string }) {
     setCollaborators(s => (s.find(x=>x.id===u.id)?s:[...s,u]));
     setShowCollaborator(false);
     (async () => {
@@ -170,6 +190,26 @@ export default function RichTextEditor({ note, onClose, onSaved, noteBg }:
         window.alert('Failed to add collaborator');
       }
     })();
+  }
+  async function onRemoveCollaborator(collabId: number) {
+    try {
+      const res = await fetch(`/api/notes/${note.id}/collaborators/${collabId}`, { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } });
+      if (!res.ok) throw new Error(await res.text());
+    } catch (err) {
+      console.error('Failed to remove collaborator', err);
+      window.alert('Failed to remove collaborator');
+    }
+  }
+
+  async function deleteImage(imageId: number) {
+    try {
+      const res = await deleteImageFromServer(note.id, imageId, token);
+      if (!res.ok) throw new Error(await res.text());
+      setImages(s => { const next = s.filter(i => i.id !== imageId); onImagesUpdated && onImagesUpdated(next); return next; });
+    } catch (err) {
+      console.error('Failed to delete image', err);
+      window.alert('Failed to delete image');
+    }
   }
 
   const dialog = (
@@ -205,6 +245,32 @@ export default function RichTextEditor({ note, onClose, onSaved, noteBg }:
             <button className="tiny" onClick={() => editor?.chain().focus().setTextAlign('justify').run()} aria-pressed={editor?.isActive({ textAlign: 'justify' })} aria-label="Justify" title="Justify"><svg viewBox="0 0 24 24" aria-hidden focusable="false"><rect x="5" y="5" width="14" height="2" rx="1" /><rect x="5" y="9" width="14" height="2" rx="1" /><rect x="5" y="13" width="14" height="2" rx="1" /><rect x="5" y="17" width="14" height="2" rx="1" /></svg></button>
             <button className="tiny" onClick={applyLink} aria-label="Insert link" title="Insert link"><svg viewBox="0 0 24 24" aria-hidden focusable="false"><path d="M9.17 14.83a3 3 0 0 1 0-4.24l2.83-2.83a3 3 0 1 1 4.24 4.24l-.88.88" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/><path d="M14.83 9.17a3 3 0 0 1 0 4.24l-2.83 2.83a3 3 0 1 1-4.24-4.24l.88-.88" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg></button>
           </div>
+          {images && images.length > 0 && (
+            <div className="note-images" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: 8, marginBottom: 8 }}>
+              {images.map(img => (
+                <div
+                  key={img.id}
+                  className="note-image"
+                  role="button"
+                  tabIndex={0}
+                  style={{ cursor: 'zoom-in', position: 'relative' }}
+                  onClick={() => setLightboxUrl(img.url)}
+                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setLightboxUrl(img.url); } }}
+                >
+                  <img src={img.url} alt="note image" style={{ width: '100%', height: 'auto', borderRadius: 6, display: 'block' }} />
+                  <button
+                    className="image-delete"
+                    aria-label="Delete image"
+                    title="Delete image"
+                    onClick={(e) => { e.stopPropagation(); deleteImage(img.id); }}
+                    style={{ position: 'absolute', right: 6, bottom: 6 }}
+                  >
+                    🗑️
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
           <div
             onKeyDown={(e) => {
               if (!editor) return;
@@ -258,7 +324,35 @@ export default function RichTextEditor({ note, onClose, onSaved, noteBg }:
 
   {showPalette && <ColorPalette anchorRef={undefined as any} onPick={onPickColor} onClose={() => setShowPalette(false)} />}
   {showReminderPicker && <ReminderPicker onClose={() => setShowReminderPicker(false)} onSet={(iso) => { setShowReminderPicker(false); if (iso) window.alert(`Reminder set (UI-only): ${iso}`); }} />}
-  {showCollaborator && <CollaboratorModal onClose={() => setShowCollaborator(false)} onSelect={onCollaboratorSelect} />}
+  {showCollaborator && (
+    <CollaboratorModal
+      onClose={() => setShowCollaborator(false)}
+      onSelect={onCollaboratorSelect}
+      current={((): Array<{ collabId?: number; userId: number; email: string; name?: string }> => {
+        const arr: Array<{ collabId?: number; userId: number; email: string; name?: string }> = [];
+        try {
+          const currentUserId = (user && (user as any).id) ? Number((user as any).id) : undefined;
+          const owner = (note as any).owner || null;
+          if (owner && typeof owner.id === 'number' && owner.id !== currentUserId) {
+            arr.push({ userId: Number(owner.id), email: String(owner.email || ''), name: (typeof owner.name === 'string' ? owner.name : undefined) });
+          }
+          const cols = ((note as any).collaborators || []) as Array<any>;
+          for (const c of cols) {
+            const u = (c && (c.user || {}));
+            const uid = typeof u.id === 'number' ? Number(u.id) : (typeof c.userId === 'number' ? Number(c.userId) : undefined);
+            const email = (typeof u.email === 'string' ? String(u.email) : undefined);
+            const nm = (typeof u.name === 'string' ? String(u.name) : undefined);
+            if (uid && email) {
+              arr.push({ collabId: Number(c.id), userId: uid, email, name: nm });
+            }
+          }
+        } catch {}
+        return arr;
+      })()}
+      ownerId={(typeof (note as any).owner?.id === 'number' ? Number((note as any).owner.id) : ((user as any)?.id))}
+      onRemove={onRemoveCollaborator}
+    />
+  )}
   {showImageDialog && <ImageDialog onClose={() => setShowImageDialog(false)} onAdd={onAddImageUrl} />}
 
   if (typeof document !== 'undefined') {
@@ -266,9 +360,45 @@ export default function RichTextEditor({ note, onClose, onSaved, noteBg }:
     return (<>{portal}
       {showPalette && <ColorPalette anchorRef={undefined as any} onPick={onPickColor} onClose={() => setShowPalette(false)} />}
       {showReminderPicker && <ReminderPicker onClose={() => setShowReminderPicker(false)} onSet={(iso) => { setShowReminderPicker(false); if (iso) window.alert(`Reminder set (UI-only): ${iso}`); }} />}
-      {showCollaborator && <CollaboratorModal onClose={() => setShowCollaborator(false)} onSelect={onCollaboratorSelect} />}
+      {showCollaborator && (
+        <CollaboratorModal
+          onClose={() => setShowCollaborator(false)}
+          onSelect={onCollaboratorSelect}
+          current={((): Array<{ collabId?: number; userId: number; email: string; name?: string }> => {
+            const arr: Array<{ collabId?: number; userId: number; email: string; name?: string }> = [];
+            try {
+              const currentUserId = (user && (user as any).id) ? Number((user as any).id) : undefined;
+              const owner = (note as any).owner || null;
+              if (owner && typeof owner.id === 'number' && owner.id !== currentUserId) {
+                arr.push({ userId: Number(owner.id), email: String(owner.email || ''), name: (typeof owner.name === 'string' ? owner.name : undefined) });
+              }
+              const cols = ((note as any).collaborators || []) as Array<any>;
+              for (const c of cols) {
+                const u = (c && (c.user || {}));
+                const uid = typeof u.id === 'number' ? Number(u.id) : (typeof c.userId === 'number' ? Number(c.userId) : undefined);
+                const email = (typeof u.email === 'string' ? String(u.email) : undefined);
+                const nm = (typeof u.name === 'string' ? String(u.name) : undefined);
+                if (uid && email) {
+                  arr.push({ collabId: Number(c.id), userId: uid, email, name: nm });
+                }
+              }
+            } catch {}
+            return arr;
+          })()}
+          ownerId={(typeof (note as any).owner?.id === 'number' ? Number((note as any).owner.id) : ((user as any)?.id))}
+          onRemove={onRemoveCollaborator}
+        />
+      )}
       {showImageDialog && <ImageDialog onClose={() => setShowImageDialog(false)} onAdd={onAddImageUrl} />}
+      {lightboxUrl && <ImageLightbox url={lightboxUrl} onClose={() => setLightboxUrl(null)} />}
     </>);
   }
   return dialog;
+}
+
+function deleteImageFromServer(noteId: number, imageId: number, token: string) {
+  return fetch(`/api/notes/${noteId}/images/${imageId}`, {
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+  });
 }

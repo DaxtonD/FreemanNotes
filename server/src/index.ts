@@ -4,6 +4,8 @@ import dotenv from "dotenv";
 import { ensureDatabaseReady } from "./dbSetup";
 import http from "http";
 import { WebSocketServer } from "ws";
+import jwt from "jsonwebtoken";
+import { registerConnection, removeConnection } from "./events";
 // y-websocket util sets up Yjs collaboration rooms over WebSocket
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore
@@ -24,7 +26,19 @@ dotenv.config();
 const PORT = process.env.PORT ? Number(process.env.PORT) : 4000;
 const app = express();
 
-app.use(express.json());
+// Increase JSON body limit to support data URL image uploads.
+// Configurable via env MAX_IMAGE_UPLOAD_MB (default 10MB).
+const imgLimitMb = (() => {
+  const raw = process.env.MAX_IMAGE_UPLOAD_MB;
+  const n = raw ? Number(raw) : 10;
+  return Number.isFinite(n) && n > 0 ? n : 10;
+})();
+app.use(express.json({ limit: `${imgLimitMb}mb` }));
+// Serve uploaded files (e.g., user photos)
+try {
+  const uploadsDir = path.resolve(__dirname, "..", "..", "uploads");
+  app.use('/uploads', express.static(uploadsDir));
+} catch {}
 
 async function start() {
   const isDev = process.env.NODE_ENV !== "production";
@@ -217,6 +231,22 @@ async function start() {
     if (url && url.startsWith("/collab")) {
       wss.handleUpgrade(request, socket as any, head, (ws) => {
         setupWSConnection(ws, request);
+      });
+    } else if (url && url.startsWith("/events")) {
+      // Lightweight events channel: authenticate via JWT token in query string
+      wss.handleUpgrade(request, socket as any, head, (ws) => {
+        try {
+          const u = new URL(url, `http://localhost:${PORT}`);
+          const token = u.searchParams.get('token') || '';
+          const secret = process.env.JWT_SECRET || '';
+          const payload = token && secret ? (jwt.verify(token, secret) as any) : null;
+          const userId = payload?.userId ? Number(payload.userId) : null;
+          if (!userId || !Number.isFinite(userId)) { try { ws.close(); } catch {}; return; }
+          registerConnection(userId, ws);
+          ws.on('close', () => { try { removeConnection(userId, ws); } catch {} });
+        } catch {
+          try { ws.close(); } catch {}
+        }
       });
     }
     // Do not destroy non-/collab upgrades so other listeners (like Vite) can handle them.

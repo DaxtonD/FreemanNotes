@@ -1,6 +1,6 @@
 {
   "name": "freemannotes",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "private": true,
   "type": "commonjs",
   "scripts": {
@@ -35,6 +35,7 @@
     "nodemailer": "^6.9.3",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
+    "sharp": "^0.34.5",
     "vite": "^5.0.0",
     "ws": "^8.16.0",
     "y-websocket": "^1.5.0",

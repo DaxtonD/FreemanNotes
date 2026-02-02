@@ -22,12 +22,15 @@ model User {
   checklistTextSize Int?        @default(17)
   dragBehavior   String?        @default("swap")
   animationSpeed String?        @default("normal")
+  chipDisplayMode String?       @default("image+text")
+  userImageUrl   String?
   createdAt      DateTime       @default(now())
   updatedAt      DateTime       @updatedAt
   collaborations Collaborator[]
   invitesSent    Invite[]       @relation("InvitesSent")
   labels         Label[]
   notes          Note[]         @relation("OwnerNotes")
+  notePrefs      NotePref[]
 }
 
 model Invite {
@@ -61,6 +64,7 @@ model Note {
   images        NoteImage[]
   items         NoteItem[]
   noteLabels    NoteLabel[]
+  notePrefs     NotePref[]
 
   @@index([ownerId])
 }
@@ -80,8 +84,8 @@ model NoteItem {
 model NoteImage {
   id        Int      @id @default(autoincrement())
   noteId    Int
-  url       String
-  ocrText   String?
+  url       String   @db.LongText
+  ocrText   String?  @db.LongText
   createdAt DateTime @default(now())
   note      Note     @relation(fields: [noteId], references: [id])
 
@@ -119,6 +123,21 @@ model Collaborator {
   note    Note     @relation(fields: [noteId], references: [id])
   user    User     @relation(fields: [userId], references: [id])
 
+  @@index([noteId])
+  @@index([userId])
+}
+
+model NotePref {
+  id        Int      @id @default(autoincrement())
+  noteId    Int
+  userId    Int
+  color     String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  note      Note     @relation(fields: [noteId], references: [id])
+  user      User     @relation(fields: [userId], references: [id])
+
+  @@unique([noteId, userId])
   @@index([noteId])
   @@index([userId])
 }

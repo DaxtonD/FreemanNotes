@@ -2,6 +2,7 @@ import { Router, Request, Response } from "express";
 import prisma from "./prismaClient";
 import jwt from "jsonwebtoken";
 import * as Y from "yjs";
+import { notifyUser } from "./events";
 
 const router = Router();
 
@@ -33,23 +34,29 @@ router.get('/api/notes', async (req: Request, res: Response) => {
   const user = await getUserFromToken(req);
   if (!user) return res.status(401).json({ error: 'unauthenticated' });
   try {
-    const notes = await prisma.note.findMany({
+    const notes = await (prisma as any).note.findMany({
       where: {
         OR: [
           { ownerId: user.id },
           { collaborators: { some: { userId: user.id } } }
         ]
       },
-      include: {
+        include: {
         collaborators: { include: { user: true } },
+        owner: true,
         items: true,
         images: true,
-        noteLabels: { include: { label: true } }
+          noteLabels: { where: { label: { ownerId: user.id } }, include: { label: true } },
+          notePrefs: { where: { userId: user.id } }
       },
       orderBy: [{ ord: 'asc' }, { updatedAt: 'desc' }]
     });
     // ensure checklist items are returned in ord order
-    const normalized = notes.map(n => ({ ...n, items: (n.items || []).slice().sort((a, b) => (a.ord || 0) - (b.ord || 0)) }));
+      const normalized = (notes as any[]).map((n: any) => ({
+        ...n,
+        items: (n.items || []).slice().sort((a, b) => (a.ord || 0) - (b.ord || 0)),
+        viewerColor: (Array.isArray(n.notePrefs) && n.notePrefs[0]?.color) ? String(n.notePrefs[0].color) : null
+      }));
     res.json({ notes: normalized });
   } catch (err) {
     res.status(500).json({ error: String(err) });
@@ -150,7 +157,29 @@ router.post('/api/notes/:id/images', async (req: Request, res: Response) => {
     if (!note) return res.status(404).json({ error: 'not found' });
     if (note.ownerId !== user.id) return res.status(403).json({ error: 'forbidden' });
     const img = await prisma.noteImage.create({ data: { noteId: id, url } });
+    // OCR functionality removed — return created image immediately
     res.status(201).json({ image: img });
+  } catch (err) {
+    res.status(500).json({ error: String(err) });
+  }
+});
+
+// delete image from a note (owner only)
+router.delete('/api/notes/:id/images/:imageId', async (req: Request, res: Response) => {
+  const user = await getUserFromToken(req);
+  if (!user) return res.status(401).json({ error: 'unauthenticated' });
+  const id = Number(req.params.id);
+  const imageId = Number(req.params.imageId);
+  if (!Number.isInteger(id) || !Number.isInteger(imageId)) return res.status(400).json({ error: 'invalid ids' });
+  try {
+    const note = await prisma.note.findUnique({ where: { id } });
+    if (!note) return res.status(404).json({ error: 'not found' });
+    if (note.ownerId !== user.id) return res.status(403).json({ error: 'forbidden' });
+    // ensure image belongs to this note
+    const img = await prisma.noteImage.findUnique({ where: { id: imageId } });
+    if (!img || img.noteId !== id) return res.status(404).json({ error: 'image not found' });
+    await prisma.noteImage.delete({ where: { id: imageId } });
+    res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: String(err) });
   }
@@ -166,7 +195,11 @@ router.post('/api/notes/:id/labels', async (req: Request, res: Response) => {
   try {
     const note = await prisma.note.findUnique({ where: { id } });
     if (!note) return res.status(404).json({ error: 'not found' });
-    if (note.ownerId !== user.id) return res.status(403).json({ error: 'forbidden' });
+    // Allow owner or collaborators to attach labels (labels are per-user via ownerId)
+    if (note.ownerId !== user.id) {
+      const collab = await prisma.collaborator.findFirst({ where: { noteId: id, userId: user.id } });
+      if (!collab) return res.status(403).json({ error: 'forbidden' });
+    }
 
     // upsert label for this user (unique on ownerId+name)
     const label = await prisma.label.upsert({
@@ -174,7 +207,7 @@ router.post('/api/notes/:id/labels', async (req: Request, res: Response) => {
       update: {},
       create: { ownerId: user.id, name }
     });
-    // link label to note (unique on noteId+labelId)
+    // link label to note (unique on noteId+labelId); since label.ownerId is current user, this remains per-user
     await prisma.noteLabel.upsert({
       where: { noteId_labelId: { noteId: id, labelId: label.id } },
       update: {},
@@ -193,7 +226,7 @@ router.patch('/api/notes/:id', async (req: Request, res: Response) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id)) return res.status(400).json({ error: 'invalid note id' });
   const data: any = {};
-  const allowed = ['title', 'body', 'pinned', 'archived', 'type', 'color'];
+    const allowed = ['title', 'body', 'pinned', 'archived', 'type'];
   for (const k of allowed) if (k in req.body) data[k] = req.body[k];
   try {
     const note = await prisma.note.findUnique({ where: { id } });
@@ -209,6 +242,37 @@ router.patch('/api/notes/:id', async (req: Request, res: Response) => {
     res.status(500).json({ error: String(err) });
   }
 });
+
+  // set per-user note preferences (e.g., color)
+  router.patch('/api/notes/:id/prefs', async (req: Request, res: Response) => {
+    const user = await getUserFromToken(req);
+    if (!user) return res.status(401).json({ error: 'unauthenticated' });
+    const noteId = Number(req.params.id);
+    if (!Number.isInteger(noteId)) return res.status(400).json({ error: 'invalid note id' });
+    const color = (typeof req.body?.color === 'string' ? String(req.body.color) : null);
+    try {
+        const note = await (prisma as any).note.findUnique({ where: { id: noteId } });
+      if (!note) return res.status(404).json({ error: 'not found' });
+      // Ensure user has access
+      if (note.ownerId !== user.id) {
+        const collab = await prisma.collaborator.findFirst({ where: { noteId, userId: user.id } });
+        if (!collab) return res.status(403).json({ error: 'forbidden' });
+      }
+      if (color && color.length) {
+          const pref = await (prisma as any).notePref.upsert({
+          where: { noteId_userId: { noteId, userId: user.id } },
+          update: { color },
+          create: { noteId, userId: user.id, color }
+        });
+        return res.json({ prefs: pref });
+      }
+      // delete preference if color null/empty
+        await (prisma as any).notePref.deleteMany({ where: { noteId, userId: user.id } });
+      return res.json({ ok: true });
+    } catch (err) {
+      res.status(500).json({ error: String(err) });
+    }
+  });
 
 // update note item (checked/content)
 router.patch('/api/notes/:noteId/items/:itemId', async (req: Request, res: Response) => {
@@ -251,18 +315,23 @@ router.put('/api/notes/:id/items', async (req: Request, res: Response) => {
       if (!collab) return res.status(403).json({ error: 'forbidden' });
     }
 
-    // sync: for simplicity, delete items not present and upsert provided items
-    const idsToKeep = items.filter(i => i.id).map(i => Number(i.id));
-    await prisma.$transaction([
-      prisma.noteItem.deleteMany({ where: { noteId, id: { notIn: idsToKeep.length ? idsToKeep : [0] } } }),
-      // then upsert each provided item
-      ...items.map((it, idx) => {
+    // Safety: if client sends an empty array unexpectedly (e.g., transient sync), do not delete
+    if (items.length === 0) {
+      const current = await prisma.note.findUnique({ where: { id: noteId }, include: { items: true } });
+      const ordered = (current?.items || []).slice().sort((a, b) => (a.ord || 0) - (b.ord || 0));
+      return res.json({ items: ordered });
+    }
+
+    // sync: upsert provided items only; do NOT delete missing here to avoid accidental wipe during transient states
+    await prisma.$transaction(
+      items.map((it, idx) => {
+        const base = { content: String(it.content || ''), checked: !!it.checked, ord: typeof it.ord === 'number' ? it.ord : idx, indent: typeof it.indent === 'number' ? it.indent : 0 };
         if (it.id) {
-          return prisma.noteItem.update({ where: { id: Number(it.id) }, data: { content: String(it.content || ''), checked: !!it.checked, ord: typeof it.ord === 'number' ? it.ord : idx, indent: typeof it.indent === 'number' ? it.indent : 0 } });
+          return prisma.noteItem.update({ where: { id: Number(it.id) }, data: base });
         }
-        return prisma.noteItem.create({ data: { noteId, content: String(it.content || ''), checked: !!it.checked, ord: typeof it.ord === 'number' ? it.ord : idx, indent: typeof it.indent === 'number' ? it.indent : 0 } });
+        return prisma.noteItem.create({ data: { noteId, ...base } });
       })
-    ]);
+    );
 
     const updated = await prisma.note.findUnique({ where: { id: noteId }, include: { items: true } });
     const ordered = (updated?.items || []).slice().sort((a, b) => (a.ord || 0) - (b.ord || 0));
@@ -308,6 +377,8 @@ router.post('/api/notes/:id/collaborators', async (req: Request, res: Response) 
     const u = await prisma.user.findUnique({ where: { email } });
     if (!u) return res.status(404).json({ error: 'user not found' });
     const collab = await prisma.collaborator.create({ data: { noteId: id, userId: u.id, role: role || 'editor' } });
+    // Notify the collaborator immediately so the note appears
+    try { notifyUser(u.id, 'note-shared', { noteId: id }); } catch {}
     res.status(201).json({ collaborator: collab });
   } catch (err) {
     res.status(500).json({ error: String(err) });
@@ -323,8 +394,23 @@ router.delete('/api/notes/:id/collaborators/:collabId', async (req: Request, res
   try {
     const note = await prisma.note.findUnique({ where: { id } });
     if (!note) return res.status(404).json({ error: 'not found' });
-    if (note.ownerId !== user.id) return res.status(403).json({ error: 'forbidden' });
+    // Allow owner to remove anyone; allow collaborators to remove themselves
+    const collab = await prisma.collaborator.findUnique({ where: { id: collabId } });
+    if (!collab || collab.noteId !== id) return res.status(404).json({ error: 'collaborator not found' });
+    const isOwner = note.ownerId === user.id;
+    const isSelf = collab.userId === user.id;
+    if (!isOwner && !isSelf) return res.status(403).json({ error: 'forbidden' });
     await prisma.collaborator.delete({ where: { id: collabId } });
+    // Notify participants (owner + remaining collaborators) and the removed user
+    try {
+      const { notifyUser } = await import('./events');
+      const remaining = await prisma.collaborator.findMany({ where: { noteId: id } });
+      const participantIds = new Set<number>([note.ownerId, ...remaining.map(c => c.userId)]);
+      participantIds.delete(collab.userId); // exclude removed user from 'remaining' broadcast
+      for (const uid of participantIds) notifyUser(uid, 'collab-removed', { noteId: id, userId: collab.userId });
+      // Tell removed user to drop the note
+      notifyUser(collab.userId, 'note-unshared', { noteId: id });
+    } catch {}
     res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: String(err) });
@@ -337,8 +423,8 @@ router.get('/api/users', async (req: Request, res: Response) => {
   const user = await getUserFromToken(req);
   if (!user) return res.status(401).json({ error: 'unauthenticated' });
   try {
-    const users = await prisma.user.findMany({ select: { id: true, email: true, name: true }, orderBy: { email: 'asc' } });
-    res.json({ users });
+    const users = await (prisma as any).user.findMany({ orderBy: { email: 'asc' } });
+    res.json({ users: (users || []).map((u: any) => ({ id: u.id, email: u.email, name: u.name, userImageUrl: u.userImageUrl })) });
   } catch (err) {
     res.status(500).json({ error: String(err) });
   }
@@ -364,7 +450,13 @@ router.delete('/api/notes/:id/labels/:labelId', async (req: Request, res: Respon
   try {
     const note = await prisma.note.findUnique({ where: { id } });
     if (!note) return res.status(404).json({ error: 'not found' });
-    if (note.ownerId !== user.id) return res.status(403).json({ error: 'forbidden' });
+    // Permit owner or collaborators to detach labels, but only for labels they own
+    if (note.ownerId !== user.id) {
+      const collab = await prisma.collaborator.findFirst({ where: { noteId: id, userId: user.id } });
+      if (!collab) return res.status(403).json({ error: 'forbidden' });
+    }
+    const label = await prisma.label.findUnique({ where: { id: labelId } });
+    if (!label || label.ownerId !== user.id) return res.status(403).json({ error: 'forbidden' });
     await prisma.noteLabel.deleteMany({ where: { noteId: id, labelId } });
     res.json({ ok: true });
   } catch (err) {

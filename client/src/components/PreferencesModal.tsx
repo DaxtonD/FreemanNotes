@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useAuth } from '../authContext';
-import { updateMe } from '../lib/authApi';
+import SettingsModal from './SettingsModal';
 
 export default function PreferencesModal({ onClose }: { onClose: () => void }) {
   const auth = (() => { try { return useAuth(); } catch { return null as any; } })();
@@ -61,6 +61,9 @@ export default function PreferencesModal({ onClose }: { onClose: () => void }) {
   const [pendingAnimSpeed, setPendingAnimSpeed] = useState<string>(() => {
     try { return localStorage.getItem('prefs.animationSpeed') || 'normal'; } catch { return 'normal'; }
   });
+  const [pendingChipDisplayMode, setPendingChipDisplayMode] = useState<string>(() => {
+    try { return (auth && (auth.user as any)?.chipDisplayMode) || 'image+text'; } catch { return 'image+text'; }
+  });
 
   // when the modal mounts, reflect current saved value into the slider
   useEffect(() => {
@@ -82,9 +85,13 @@ export default function PreferencesModal({ onClose }: { onClose: () => void }) {
       const as = localStorage.getItem('prefs.animationSpeed') || (auth && (auth.user as any)?.animationSpeed) || 'normal';
       if (as) setPendingAnimSpeed(as);
     } catch {}
+    try {
+      const cdm = (auth && (auth.user as any)?.chipDisplayMode) || 'image+text';
+      if (cdm) setPendingChipDisplayMode(cdm);
+    } catch {}
   }, []);
 
-  function onSave() {
+  async function onSave() {
     document.documentElement.style.setProperty('--checklist-gap', `${pending}px`);
     document.documentElement.style.setProperty('--checklist-checkbox-size', `${pendingCheckboxSize}px`);
     document.documentElement.style.setProperty('--checklist-text-size', `${pendingTextSize}px`);
@@ -115,26 +122,24 @@ export default function PreferencesModal({ onClose }: { onClose: () => void }) {
     } catch {}
     // if authenticated, persist to server
     try {
-      const token = auth?.token;
-      if (token) {
-        const payload: any = {
-          fontFamily: pendingFont,
-          noteWidth: pendingNoteWidth,
-          dragBehavior: pendingDragBehavior,
-          animationSpeed: pendingAnimSpeed,
-          checklistSpacing: pending,
-          checkboxSize: pendingCheckboxSize,
-          checklistTextSize: pendingTextSize
-        };
-        if (resetColors) {
-          payload.checkboxBg = null;
-          payload.checkboxBorder = null;
-        } else {
-          payload.checkboxBg = pendingCheckboxBg;
-          payload.checkboxBorder = pendingCheckboxBorder;
-        }
-        updateMe(token, payload).catch(() => {});
+      const payload: any = {
+        fontFamily: pendingFont,
+        noteWidth: pendingNoteWidth,
+        dragBehavior: pendingDragBehavior,
+        animationSpeed: pendingAnimSpeed,
+        checklistSpacing: pending,
+        checkboxSize: pendingCheckboxSize,
+        checklistTextSize: pendingTextSize,
+        chipDisplayMode: pendingChipDisplayMode
+      };
+      if (resetColors) {
+        payload.checkboxBg = null;
+        payload.checkboxBorder = null;
+      } else {
+        payload.checkboxBg = pendingCheckboxBg;
+        payload.checkboxBorder = pendingCheckboxBorder;
       }
+      await (auth?.updateMe?.(payload));
     } catch {}
     try {
       if (resetColors) {
@@ -163,6 +168,28 @@ export default function PreferencesModal({ onClose }: { onClose: () => void }) {
     }
   }
   function onCancel() { onClose(); }
+  const [showInvite, setShowInvite] = useState(false);
+  const [photoFile, setPhotoFile] = useState<File | null>(null);
+  const [activeSection, setActiveSection] = useState<string | null>(null);
+  async function onUploadPhoto() {
+    try {
+      if (!photoFile) { window.alert('Select a photo first'); return; }
+      const dataUrl = await fileToDataUrl(photoFile);
+      await (auth?.uploadPhoto?.(dataUrl));
+      window.alert('Photo updated');
+    } catch (err) {
+      console.error('Failed to upload photo', err);
+      window.alert('Failed to upload photo');
+    }
+  }
+  function fileToDataUrl(file: File): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result || ''));
+      reader.onerror = (e) => reject(e);
+      reader.readAsDataURL(file);
+    });
+  }
   return (
     <div className="image-dialog-backdrop">
       <div className="prefs-dialog" role="dialog" aria-modal>
@@ -171,92 +198,166 @@ export default function PreferencesModal({ onClose }: { onClose: () => void }) {
           <button className="icon-close" onClick={onClose}>✕</button>
         </div>
         <div style={{ padding: 12 }}>
-          <div style={{ display: 'block' }}>
-            <h4>Appearance</h4>
-            <div style={{ display: 'flex', gap: 12, alignItems: 'center', justifyContent: 'flex-start' }}>
-              <label style={{ color: 'var(--muted)', minWidth: 120 }}>Item spacing</label>
-              <input aria-label="checklist spacing" type="range" min={2} max={24} value={pending} onChange={(e) => setPending(Number(e.target.value))} />
-              <div style={{ width: 48, textAlign: 'left' }}>{pending}px</div>
+          {activeSection == null ? (
+            <div>
+              <div style={{ display: 'grid', gap: 10 }}>
+                <button className="btn" onClick={() => setActiveSection('appearance')}>Appearance</button>
+                <button className="btn" onClick={() => setActiveSection('colors')}>Colors</button>
+                <button className="btn" onClick={() => setActiveSection('drag')}>Drag & Animation</button>
+                <button className="btn" onClick={() => setActiveSection('collaborators')}>Collaborators</button>
+              </div>
+              <div style={{ marginTop: 16, display: 'flex', gap: 8, justifyContent: 'flex-start' }}>
+                <button className="btn" onClick={onCancel}>Close</button>
+                <span style={{ flex: 1 }} />
+                { (auth?.user as any)?.role === 'admin' && <button className="btn" onClick={() => setShowInvite(true)}>Send Invite</button> }
+                <button className="btn" onClick={() => auth?.logout?.()}>Sign out</button>
+              </div>
             </div>
-            <div style={{ height: 10 }} />
-            <div style={{ display: 'flex', gap: 12, alignItems: 'center', justifyContent: 'flex-start' }}>
-              <label style={{ color: 'var(--muted)', minWidth: 120 }}>Checkbox size</label>
-              <input aria-label="checkbox size" type="range" min={10} max={36} value={pendingCheckboxSize} onChange={(e) => setPendingCheckboxSize(Number(e.target.value))} />
-              <div style={{ width: 48, textAlign: 'left' }}>{pendingCheckboxSize}px</div>
+          ) : activeSection === 'appearance' ? (
+            <div>
+              <button className="btn" onClick={() => setActiveSection(null)} aria-label="Back">← Back</button>
+              <div style={{ height: 8 }} />
+              <h4>Appearance</h4>
+              <div style={{ marginBottom: 16 }}>
+                <h5 style={{ margin: 0, color: 'var(--muted)' }}>Profile Photo</h5>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                  { (auth?.user as any)?.userImageUrl ? (
+                    <img src={(auth?.user as any).userImageUrl} alt="Profile" style={{ width: 55, height: 55, borderRadius: '50%', objectFit: 'cover' }} />
+                  ) : (
+                    <div className="avatar" style={{ width: 55, height: 55, borderRadius: '50%', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
+                      {((auth?.user as any)?.name || (auth?.user as any)?.email || 'U')[0]}
+                    </div>
+                  )}
+                  <input type="file" accept="image/*" onChange={(e) => setPhotoFile(e.target.files?.[0] || null)} />
+                  <button className="btn" onClick={onUploadPhoto}>Upload</button>
+                </div>
+              </div>
+              <div style={{ display: 'block' }}>
+                <div style={{ display: 'flex', gap: 12, alignItems: 'center', justifyContent: 'flex-start' }}>
+                  <label style={{ color: 'var(--muted)', minWidth: 120 }}>Item spacing</label>
+                  <input aria-label="checklist spacing" type="range" min={2} max={24} value={pending} onChange={(e) => setPending(Number(e.target.value))} />
+                  <div style={{ width: 48, textAlign: 'left' }}>{pending}px</div>
+                </div>
+                <div style={{ height: 10 }} />
+                <div style={{ display: 'flex', gap: 12, alignItems: 'center', justifyContent: 'flex-start' }}>
+                  <label style={{ color: 'var(--muted)', minWidth: 120 }}>Checkbox size</label>
+                  <input aria-label="checkbox size" type="range" min={10} max={36} value={pendingCheckboxSize} onChange={(e) => setPendingCheckboxSize(Number(e.target.value))} />
+                  <div style={{ width: 48, textAlign: 'left' }}>{pendingCheckboxSize}px</div>
+                </div>
+                <div style={{ height: 10 }} />
+                <div style={{ display: 'flex', gap: 12, alignItems: 'center', justifyContent: 'flex-start' }}>
+                  <label style={{ color: 'var(--muted)', minWidth: 120 }}>Text size</label>
+                  <input aria-label="checklist text size" type="range" min={12} max={20} value={pendingTextSize} onChange={(e) => setPendingTextSize(Number(e.target.value))} />
+                  <div style={{ width: 48, textAlign: 'left' }}>{pendingTextSize}px</div>
+                </div>
+                <div style={{ height: 10 }} />
+                <div style={{ display: 'flex', gap: 12, alignItems: 'center', justifyContent: 'flex-start' }}>
+                  <label style={{ color: 'var(--muted)', minWidth: 120 }}>Note width</label>
+                  <input aria-label="note width" type="range" min={180} max={520} value={pendingNoteWidth} onChange={(e) => setPendingNoteWidth(Number(e.target.value))} />
+                  <div style={{ width: 64, textAlign: 'left' }}>{pendingNoteWidth}px</div>
+                </div>
+                <div style={{ height: 10 }} />
+                <div style={{ display: 'flex', gap: 12, alignItems: 'center', justifyContent: 'flex-start' }}>
+                  <label style={{ color: 'var(--muted)', minWidth: 120 }}>App font</label>
+                  <select value={pendingFont} onChange={(e) => setPendingFont(e.target.value)}>
+                    <option value={'Inter, system-ui, "Segoe UI", Roboto, "Helvetica Neue", Arial'}>Inter</option>
+                    <option value={'Calibri, system-ui, Arial, sans-serif'}>Calibri</option>
+                    <option value={'Segoe UI, system-ui, Arial, sans-serif'}>Segoe UI</option>
+                    <option value={'Roboto, system-ui, Arial, sans-serif'}>Roboto</option>
+                    <option value={'Helvetica Neue, Helvetica, Arial, sans-serif'}>Helvetica Neue</option>
+                    <option value={'Arial, Helvetica, sans-serif'}>Arial</option>
+                    <option value={'Verdana, Geneva, sans-serif'}>Verdana</option>
+                    <option value={'Tahoma, Geneva, sans-serif'}>Tahoma</option>
+                    <option value={'Trebuchet MS, Helvetica, sans-serif'}>Trebuchet MS</option>
+                    <option value={'Gill Sans, Calibri, sans-serif'}>Gill Sans</option>
+                  </select>
+                </div>
+              </div>
+              <div style={{ marginTop: 16, display: 'flex', gap: 8, justifyContent: 'flex-start' }}>
+                <button className="btn" onClick={() => setActiveSection(null)}>Back</button>
+                <button className="btn" onClick={onSave}>Save</button>
+                <span style={{ flex: 1 }} />
+                { (auth?.user as any)?.role === 'admin' && <button className="btn" onClick={() => setShowInvite(true)}>Send Invite</button> }
+                <button className="btn" onClick={() => auth?.logout?.()}>Sign out</button>
+              </div>
             </div>
-            <div style={{ height: 10 }} />
-            <div style={{ display: 'flex', gap: 12, alignItems: 'center', justifyContent: 'flex-start' }}>
-              <label style={{ color: 'var(--muted)', minWidth: 120 }}>Text size</label>
-              <input aria-label="checklist text size" type="range" min={12} max={20} value={pendingTextSize} onChange={(e) => setPendingTextSize(Number(e.target.value))} />
-              <div style={{ width: 48, textAlign: 'left' }}>{pendingTextSize}px</div>
+          ) : activeSection === 'colors' ? (
+            <div>
+              <button className="btn" onClick={() => setActiveSection(null)} aria-label="Back">← Back</button>
+              <div style={{ height: 8 }} />
+              <h4>Colors</h4>
+              <div style={{ display: 'flex', gap: 12, alignItems: 'center', justifyContent: 'flex-start' }}>
+                <label style={{ color: 'var(--muted)', minWidth: 120 }}>Checkbox background</label>
+                <input aria-label="checkbox bg" type="color" value={pendingCheckboxBg} onChange={(e) => setPendingCheckboxBg(e.target.value)} style={{ width: 44, height: 28, padding: 0 }} />
+              </div>
+              <div style={{ height: 10 }} />
+              <div style={{ display: 'flex', gap: 12, alignItems: 'center', justifyContent: 'flex-start' }}>
+                <label style={{ color: 'var(--muted)', minWidth: 120 }}>Checkbox border</label>
+                <input aria-label="checkbox border" type="color" value={pendingCheckboxBorder} onChange={(e) => setPendingCheckboxBorder(e.target.value)} style={{ width: 44, height: 28, padding: 0 }} />
+              </div>
+              <div style={{ marginTop: 16, display: 'flex', gap: 8, justifyContent: 'flex-start' }}>
+                <button className="btn" onClick={() => setActiveSection(null)}>Back</button>
+                <button className="btn" onClick={onResetColors} title="Reset colors to defaults">Reset colors</button>
+                <button className="btn" onClick={onSave}>Save</button>
+                <span style={{ flex: 1 }} />
+                { (auth?.user as any)?.role === 'admin' && <button className="btn" onClick={() => setShowInvite(true)}>Send Invite</button> }
+                <button className="btn" onClick={() => auth?.logout?.()}>Sign out</button>
+              </div>
             </div>
-            <div style={{ height: 10 }} />
-            <div style={{ display: 'flex', gap: 12, alignItems: 'center', justifyContent: 'flex-start' }}>
-              <label style={{ color: 'var(--muted)', minWidth: 120 }}>Note width</label>
-              <input aria-label="note width" type="range" min={180} max={520} value={pendingNoteWidth} onChange={(e) => setPendingNoteWidth(Number(e.target.value))} />
-              <div style={{ width: 64, textAlign: 'left' }}>{pendingNoteWidth}px</div>
+          ) : activeSection === 'drag' ? (
+            <div>
+              <button className="btn" onClick={() => setActiveSection(null)} aria-label="Back">← Back</button>
+              <div style={{ height: 8 }} />
+              <h4>Drag & Animation</h4>
+              <div style={{ display: 'flex', gap: 12, alignItems: 'center', justifyContent: 'flex-start' }}>
+                <label style={{ color: 'var(--muted)', minWidth: 120 }}>Behavior</label>
+                <label style={{ color: 'var(--muted)' }}>Swap</label>
+                <input aria-label="drag swap" type="radio" name="dragBehavior" checked={pendingDragBehavior === 'swap'} onChange={() => setPendingDragBehavior('swap')} />
+                <label style={{ color: 'var(--muted)' }}>Rearrange</label>
+                <input aria-label="drag rearrange" type="radio" name="dragBehavior" checked={pendingDragBehavior === 'rearrange'} onChange={() => setPendingDragBehavior('rearrange')} />
+              </div>
+              <div style={{ height: 10 }} />
+              <div style={{ display: 'flex', gap: 12, alignItems: 'center', justifyContent: 'flex-start' }}>
+                <label style={{ color: 'var(--muted)', minWidth: 120 }}>Speed</label>
+                <select aria-label="animation speed" value={pendingAnimSpeed} onChange={(e) => setPendingAnimSpeed(e.target.value)}>
+                  <option value="fast">Fast</option>
+                  <option value="normal">Normal</option>
+                  <option value="slow">Slow</option>
+                </select>
+              </div>
+              <div style={{ marginTop: 16, display: 'flex', gap: 8, justifyContent: 'flex-start' }}>
+                <button className="btn" onClick={() => setActiveSection(null)}>Back</button>
+                <button className="btn" onClick={onSave}>Save</button>
+                <span style={{ flex: 1 }} />
+                { (auth?.user as any)?.role === 'admin' && <button className="btn" onClick={() => setShowInvite(true)}>Send Invite</button> }
+                <button className="btn" onClick={() => auth?.logout?.()}>Sign out</button>
+              </div>
             </div>
-            <div style={{ height: 10 }} />
-            <div style={{ display: 'flex', gap: 12, alignItems: 'center', justifyContent: 'flex-start' }}>
-              <label style={{ color: 'var(--muted)', minWidth: 120 }}>App font</label>
-              <select value={pendingFont} onChange={(e) => setPendingFont(e.target.value)}>
-                <option value={'Inter, system-ui, "Segoe UI", Roboto, "Helvetica Neue", Arial'}>Inter</option>
-                <option value={'Calibri, system-ui, Arial, sans-serif'}>Calibri</option>
-                <option value={'Segoe UI, system-ui, Arial, sans-serif'}>Segoe UI</option>
-                <option value={'Roboto, system-ui, Arial, sans-serif'}>Roboto</option>
-                <option value={'Helvetica Neue, Helvetica, Arial, sans-serif'}>Helvetica Neue</option>
-                <option value={'Arial, Helvetica, sans-serif'}>Arial</option>
-                <option value={'Verdana, Geneva, sans-serif'}>Verdana</option>
-                <option value={'Tahoma, Geneva, sans-serif'}>Tahoma</option>
-                <option value={'Trebuchet MS, Helvetica, sans-serif'}>Trebuchet MS</option>
-                <option value={'Gill Sans, Calibri, sans-serif'}>Gill Sans</option>
-              </select>
+          ) : (
+            <div>
+              <button className="btn" onClick={() => setActiveSection(null)} aria-label="Back">← Back</button>
+              <div style={{ height: 8 }} />
+              <h4>Collaborators</h4>
+              <div style={{ display: 'flex', gap: 12, alignItems: 'center', justifyContent: 'flex-start' }}>
+                <label style={{ color: 'var(--muted)', minWidth: 120 }}>Display</label>
+                <select aria-label="collaborator chip display" value={pendingChipDisplayMode} onChange={(e) => setPendingChipDisplayMode(e.target.value)}>
+                  <option value="image+text">Image + Text</option>
+                  <option value="image">Image only</option>
+                  <option value="text">Text only</option>
+                </select>
+              </div>
+              <div style={{ marginTop: 16, display: 'flex', gap: 8, justifyContent: 'flex-start' }}>
+                <button className="btn" onClick={() => setActiveSection(null)}>Back</button>
+                <button className="btn" onClick={onSave}>Save</button>
+                <span style={{ flex: 1 }} />
+                { (auth?.user as any)?.role === 'admin' && <button className="btn" onClick={() => setShowInvite(true)}>Send Invite</button> }
+                <button className="btn" onClick={() => auth?.logout?.()}>Sign out</button>
+              </div>
             </div>
-          </div>
-
-          {/* Layout auto-fit removed */}
-
-          <div style={{ height: 16 }} />
-          <h4>Colors</h4>
-          <div style={{ display: 'flex', gap: 12, alignItems: 'center', justifyContent: 'flex-start' }}>
-            <label style={{ color: 'var(--muted)', minWidth: 120 }}>Checkbox background</label>
-            <input aria-label="checkbox bg" type="color" value={pendingCheckboxBg} onChange={(e) => setPendingCheckboxBg(e.target.value)} style={{ width: 44, height: 28, padding: 0 }} />
-          </div>
-          <div style={{ height: 10 }} />
-          <div style={{ display: 'flex', gap: 12, alignItems: 'center', justifyContent: 'flex-start' }}>
-            <label style={{ color: 'var(--muted)', minWidth: 120 }}>Checkbox border</label>
-            <input aria-label="checkbox border" type="color" value={pendingCheckboxBorder} onChange={(e) => setPendingCheckboxBorder(e.target.value)} style={{ width: 44, height: 28, padding: 0 }} />
-          </div>
-
-          <div style={{ height: 16 }} />
-          <h4>Drag & Animation</h4>
-          <div style={{ display: 'flex', gap: 12, alignItems: 'center', justifyContent: 'flex-start' }}>
-            <label style={{ color: 'var(--muted)', minWidth: 120 }}>Behavior</label>
-            <label style={{ color: 'var(--muted)' }}>Swap</label>
-            <input aria-label="drag swap" type="radio" name="dragBehavior" checked={pendingDragBehavior === 'swap'} onChange={() => setPendingDragBehavior('swap')} />
-            <label style={{ color: 'var(--muted)' }}>Rearrange</label>
-            <input aria-label="drag rearrange" type="radio" name="dragBehavior" checked={pendingDragBehavior === 'rearrange'} onChange={() => setPendingDragBehavior('rearrange')} />
-          </div>
-          <div style={{ height: 10 }} />
-          <div style={{ display: 'flex', gap: 12, alignItems: 'center', justifyContent: 'flex-start' }}>
-            <label style={{ color: 'var(--muted)', minWidth: 120 }}>Speed</label>
-            <select aria-label="animation speed" value={pendingAnimSpeed} onChange={(e) => setPendingAnimSpeed(e.target.value)}>
-              <option value="fast">Fast</option>
-              <option value="normal">Normal</option>
-              <option value="slow">Slow</option>
-            </select>
-          </div>
-
-          <div style={{ height: 16 }} />
-          
-
-          <div style={{ marginTop: 16, display: 'flex', gap: 8, justifyContent: 'flex-start' }}>
-            <button className="btn" onClick={onCancel}>Cancel</button>
-            <button className="btn" onClick={onResetColors} title="Reset colors to defaults">Reset colors</button>
-            <button className="btn" onClick={onSave}>Save</button>
-          </div>
+          )}
         </div>
       </div>
+      {showInvite && <SettingsModal onClose={() => setShowInvite(false)} />}
     </div>
   );
 }

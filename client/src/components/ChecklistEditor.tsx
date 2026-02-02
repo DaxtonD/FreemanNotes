@@ -6,13 +6,14 @@ import ColorPalette from './ColorPalette';
 import ReminderPicker from './ReminderPicker';
 import CollaboratorModal from './CollaboratorModal';
 import ImageDialog from './ImageDialog';
+import ImageLightbox from './ImageLightbox';
 import DOMPurify from 'dompurify';
 import * as Y from 'yjs';
 import { WebsocketProvider } from 'y-websocket';
 
-export default function ChecklistEditor({ note, onClose, onSaved, noteBg }:
-  { note: any; onClose: () => void; onSaved?: (payload: { items: Array<{ id: number; content: string; checked: boolean; ord: number; indent: number }>; title: string }) => void; noteBg?: string }) {
-  const { token } = useAuth();
+export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImagesUpdated }:
+  { note: any; onClose: () => void; onSaved?: (payload: { items: Array<{ id: number; content: string; checked: boolean; ord: number; indent: number }>; title: string }) => void; noteBg?: string; onImagesUpdated?: (images: Array<{ id:number; url:string }>) => void }) {
+  const { token, user } = useAuth();
   // Track the currently-focused per-item rich-text editor to drive toolbar actions/state
   const activeChecklistEditor = useRef<any>(null);
   const [, setToolbarTick] = useState<number>(0);
@@ -31,13 +32,15 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg }:
   const itemRefs = useRef<Array<HTMLTextAreaElement | null>>([]);
   const [autoFocusIndex, setAutoFocusIndex] = useState<number | null>(null);
   const [title, setTitle] = useState<string>(note.title || '');
-  // prefer explicit `noteBg` passed from the parent (NoteCard) which may have local unsaved color state
-  const [bg, setBg] = useState<string>(noteBg ?? note.color ?? '');
+  // prefer explicit `noteBg` passed from the parent (NoteCard); fallback to viewer-specific color
+  const [bg, setBg] = useState<string>(noteBg ?? ((note as any).viewerColor || note.color || ''));
   const [showPalette, setShowPalette] = useState(false);
   const [showReminderPicker, setShowReminderPicker] = useState(false);
   const [showCollaborator, setShowCollaborator] = useState(false);
   const [showImageDialog, setShowImageDialog] = useState(false);
-  const [imageUrl, setImageUrl] = useState<string | null>(null);
+  const [images, setImages] = useState<Array<{ id:number; url:string }>>(((note as any).images || []).map((i:any)=>({ id:Number(i.id), url:String(i.url) })));
+  React.useEffect(() => { try { const next = (((note as any).images || []).map((i:any)=>({ id:Number(i.id), url:String(i.url) }))); setImages(next); onImagesUpdated && onImagesUpdated(next); } catch {} }, [ (note as any).images ]);
+  const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
   const [collaborators, setCollaborators] = useState<{ id:number; email:string }[]>([]);
 
   // Yjs collaboration state for checklist items
@@ -59,7 +62,19 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg }:
   const nestedPendingRef = useRef<{ parentId: number | null; makeNested: boolean }>({ parentId: null, makeNested: false });
   const pointerTrackRef = useRef<{ active: boolean; startX: number; startY: number; idx: number | null; draggedId?: number | null; pointerId?: number } | null>(null);
   const [previewItems, setPreviewItems] = useState<Array<any> | null>(null);
-  const INDENT_THRESHOLD = 16; // px required to trigger indent/un-indent (was 30)
+  // Hardwired drag/hover thresholds
+  const DRAG = {
+    hoverDownPct: 0.7,
+    hoverUpPct: 0.7,
+    indentPx: 16,
+    ghostOverlapPct: 0.7,
+    ghostOverlapUpPct: 0.7,
+    ghostOverlapDownPct: 0.7,
+    hoverClearMs: 80,
+    directionLockPx: 6,
+  } as const;
+  const lastPointerYRef = useRef<number>(0);
+  const lastDragYRef = useRef<number>(0);
   const genUid = React.useCallback(() => `u${Date.now().toString(36)}${Math.random().toString(36).slice(2,8)}`, []);
   const getKey = React.useCallback((it: any) => (typeof it.id === 'number' ? it.id : (it.uid || `tmp-${Math.random().toString(36).slice(2,6)}`)), []);
 
@@ -74,7 +89,28 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg }:
     const ymeta = ydoc.getMap<any>('meta');
     ymetaRef.current = ymeta;
 
-    const onSync = (isSynced: boolean) => { if (!isSynced) return; syncedRef.current = true; };
+    const seededRef = { current: false } as { current: boolean };
+    const onSync = (isSynced: boolean) => {
+      if (!isSynced) return;
+      syncedRef.current = true;
+      // Seed Yjs array from existing items if empty on first sync
+      try {
+        const yarr2 = yarrayRef.current;
+        if (yarr2 && yarr2.length === 0 && !seededRef.current) {
+          const initial = (note.items || []).map((it: any) => {
+            const m = new Y.Map<any>();
+            if (typeof it.id === 'number') m.set('id', it.id);
+            m.set('uid', (it.uid || `u${Math.random().toString(36).slice(2,8)}`));
+            m.set('content', String(it.content || ''));
+            m.set('checked', !!it.checked);
+            m.set('indent', Number(it.indent || 0));
+            return m;
+          });
+          if (initial.length) yarr2.insert(0, initial as any);
+          seededRef.current = true;
+        }
+      } catch {}
+    };
     provider.on('sync', onSync);
 
     const updateFromY = () => {
@@ -89,7 +125,22 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg }:
           key: (m.get('uid') ? String(m.get('uid')) : (typeof m.get('id') === 'number' ? Number(m.get('id')) : `i${idx}`)),
         }));
         const isFocused = !!(activeChecklistEditor.current && activeChecklistEditor.current.isFocused);
-        if (!isFocused) setItems(arr);
+        const structuralChanged = (() => {
+          try {
+            if (arr.length !== items.length) return true;
+            for (let i = 0; i < arr.length; i++) {
+              const a = arr[i];
+              const b = items[i];
+              if (!b) return true;
+              const aKey = (typeof a.uid === 'string' && a.uid) ? `u:${a.uid}` : (typeof a.id === 'number' ? `i:${a.id}` : `p:${i}`);
+              const bKey = (typeof (b as any).uid === 'string' && (b as any).uid) ? `u:${(b as any).uid}` : (typeof b.id === 'number' ? `i:${b.id}` : `p:${i}`);
+              if (aKey !== bKey) return true;
+            }
+            return false;
+          } catch { return true; }
+        })();
+        // Always apply structural changes (insert/delete) even if focused; defer content-only updates while editing
+        if (structuralChanged || !isFocused) setItems(arr);
         if (syncedRef.current) {
           if (debouncedSyncTimer.current) window.clearTimeout(debouncedSyncTimer.current);
           debouncedSyncTimer.current = window.setTimeout(async () => {
@@ -131,6 +182,12 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg }:
       try { provider.destroy(); } catch {}
     };
   }, [note.id, token, ydoc]);
+
+  useEffect(() => {
+    try {
+      setImages((((note as any).images || []).map((i:any)=>({ id:Number(i.id), url:String(i.url) }))));
+    } catch {}
+  }, [ (note as any).images ]);
 
   function getBlockRange(list: any[], idx: number) {
     const start = idx;
@@ -205,10 +262,29 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg }:
     return (domIdx >= 0 && domIdx < order.length) ? order[domIdx] : -1;
   }
 
+  // Unchecked-only mapping helpers (exclude checked items from vertical drag)
+  function getUncheckedOrderIndices(list: any[]): number[] {
+    const order: number[] = [];
+    for (let i = 0; i < list.length; i++) { if (!list[i]?.checked) order.push(i); }
+    return order;
+  }
+  function realToDomIndexUnchecked(realIdx: number, list: any[]): number {
+    const order = getUncheckedOrderIndices(list);
+    return order.indexOf(realIdx);
+  }
+  function domToRealIndexUnchecked(domIdx: number, list: any[]): number {
+    const order = getUncheckedOrderIndices(list);
+    return (domIdx >= 0 && domIdx < order.length) ? order[domIdx] : -1;
+  }
+
   function updateItem(idx: number, content: string) {
-    const yarr = yarrayRef.current; if (!yarr) return;
-    const m = yarr.get(idx) as Y.Map<any> | undefined; if (!m) return;
-    m.set('content', content); if (typeof m.get('id') === 'number') m.set('id', m.get('id'));
+    const yarr = yarrayRef.current;
+    if (yarr) {
+      const m = yarr.get(idx) as Y.Map<any> | undefined; if (!m) return;
+      m.set('content', content); if (typeof m.get('id') === 'number') m.set('id', m.get('id'));
+    } else {
+      setItems(s => s.map((it, i) => i === idx ? { ...it, content } : it));
+    }
     // Autosize the edited textarea on next frame
     requestAnimationFrame(() => {
       const el = itemRefs.current[idx];
@@ -255,26 +331,61 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg }:
   }
 
   function addItemAt(idx?: number) {
-    const yarr = yarrayRef.current; if (!yarr) return;
-    const pos = typeof idx === 'number' ? idx : yarr.length;
-    const m = new Y.Map<any>(); m.set('content', ''); m.set('checked', false); m.set('indent', 0);
-    m.set('uid', genUid());
-    yarr.insert(pos, [m]);
-    setAutoFocusIndex(pos);
+    const yarr = yarrayRef.current;
+    if (yarr) {
+      const pos = typeof idx === 'number' ? Math.max(0, Math.min(idx, yarr.length)) : yarr.length;
+      const m = new Y.Map<any>(); m.set('content', ''); m.set('checked', false); m.set('indent', 0);
+      m.set('uid', genUid());
+      yarr.insert(pos, [m]);
+      setAutoFocusIndex(pos);
+    } else {
+      // Fallback when collaboration doc isn't ready yet: update local state
+      setItems(s => {
+        const pos = typeof idx === 'number' ? Math.max(0, Math.min(idx, s.length)) : s.length;
+        const uid = genUid();
+        const next = [...s];
+        next.splice(pos, 0, { uid, content: '', checked: false, indent: 0 });
+        return next;
+      });
+      setAutoFocusIndex(typeof idx === 'number' ? idx : (items.length + 1));
+    }
   }
 
   function toggleChecked(idx: number) {
-    const yarr = yarrayRef.current; if (!yarr) return;
-    const m = yarr.get(idx) as Y.Map<any> | undefined; if (!m) return;
-    const newChecked = !m.get('checked'); if (typeof m.get('id') === 'number') m.set('id', m.get('id'));
-    m.set('checked', newChecked);
-    const indent = Number(m.get('indent') || 0);
-    if (indent === 0) {
-      for (let i = idx + 1; i < yarr.length; i++) {
-        const child = yarr.get(i) as Y.Map<any>;
-        const childIndent = Number(child.get('indent') || 0);
-        if (childIndent > 0) child.set('checked', newChecked); else break;
+    const yarr = yarrayRef.current;
+    if (yarr) {
+      const m = yarr.get(idx) as Y.Map<any> | undefined; if (!m) return;
+      const newChecked = !m.get('checked'); if (typeof m.get('id') === 'number') m.set('id', m.get('id'));
+      m.set('checked', newChecked);
+      const indent = Number(m.get('indent') || 0);
+      if (indent === 0) {
+        for (let i = idx + 1; i < yarr.length; i++) {
+          const child = yarr.get(i) as Y.Map<any>;
+          const childIndent = Number(child.get('indent') || 0);
+          if (childIndent > 0) child.set('checked', newChecked); else break;
+        }
       }
+    } else {
+      // Local fallback if collaboration doc is not ready
+      setItems(s => s.map((it, i) => {
+        if (i === idx) {
+          const newChecked = !it.checked;
+          const baseIndent = Number(it.indent || 0);
+          const next = { ...it, checked: newChecked };
+          if (baseIndent === 0) {
+            // cascade to children until indent decreases back to 0
+            const out = [...s];
+            out[i] = next;
+            for (let j = i + 1; j < out.length; j++) {
+              const childIndent = Number(out[j].indent || 0);
+              if (childIndent > 0) out[j] = { ...out[j], checked: newChecked }; else break;
+            }
+            return out[i];
+          }
+          return next;
+        }
+        return it;
+      }));
     }
   }
 
@@ -288,15 +399,18 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg }:
 
   function moveBlockY(srcStart: number, srcEnd: number, dstIndex: number) {
     const yarr = yarrayRef.current; if (!yarr) return;
-    const len = srcEnd - srcStart; if (len <= 0) return;
-    let insertAt = dstIndex;
-    if (insertAt > srcStart) insertAt = insertAt - len;
+    // Clamp ranges to current Y.Array length to avoid out-of-bounds when preview/state diverge
+    const start = Math.max(0, Math.min(srcStart, yarr.length));
+    const end = Math.max(start, Math.min(srcEnd, yarr.length));
+    const len = end - start; if (len <= 0) return;
+    let insertAt = Math.max(0, Math.min(dstIndex, yarr.length));
+    if (insertAt > start) insertAt = insertAt - len;
     if (insertAt < 0) insertAt = 0;
     if (insertAt > yarr.length) insertAt = yarr.length;
     // snapshot plain values to avoid reinserting integrated Y.Map instances
     const vals: Array<{ id?: number; uid?: string; content: string; checked: boolean; indent: number }> = [];
     for (let i = 0; i < len; i++) {
-      const m = yarr.get(srcStart + i) as Y.Map<any>;
+      const m = yarr.get(start + i) as Y.Map<any>;
       vals.push({
         id: (typeof m.get('id') === 'number' ? Number(m.get('id')) : undefined),
         uid: (m.get('uid') ? String(m.get('uid')) : undefined),
@@ -305,7 +419,7 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg }:
         indent: Number(m.get('indent') || 0),
       });
     }
-    yarr.delete(srcStart, len);
+    yarr.delete(start, len);
     const clones = vals.map(v => { const m = new Y.Map<any>(); if (typeof v.id === 'number') m.set('id', v.id); if (v.uid) m.set('uid', v.uid); m.set('content', v.content); m.set('checked', v.checked); m.set('indent', v.indent); return m; });
     yarr.insert(insertAt, clones as any);
   }
@@ -346,7 +460,7 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg }:
       if (dragDirectionRef.current === null && dragStartRef.current) {
         const dx = Math.abs((ev.clientX || 0) - dragStartRef.current.x);
         const dy = Math.abs((ev.clientY || 0) - dragStartRef.current.y);
-        const THRESH = 6;
+        const THRESH = DRAG.directionLockPx;
         if (dx > THRESH || dy > THRESH) dragDirectionRef.current = dx > dy ? 'horizontal' : 'vertical';
       }
       if (dragDirectionRef.current === 'vertical') {
@@ -390,8 +504,7 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg }:
       // derive payload from Yjs state
       const yarr = yarrayRef.current;
       const arr = yarr ? yarr.toArray().map((m) => ({ id: (typeof m.get('id') === 'number' ? Number(m.get('id')) : undefined), content: String(m.get('content') || ''), checked: !!m.get('checked'), indent: Number(m.get('indent') || 0) })) : items;
-      const filtered = arr.filter(it => ((String(it.content || '').replace(/<[^>]+>/g, '').trim().length > 0)));
-      const payloadItems = filtered.map((it, i) => { const payload: any = { content: it.content, checked: !!it.checked, ord: i, indent: it.indent || 0 }; if (typeof it.id === 'number') payload.id = it.id; return payload; });
+      const payloadItems = arr.map((it, i) => { const payload: any = { content: it.content, checked: !!it.checked, ord: i, indent: it.indent || 0 }; if (typeof it.id === 'number') payload.id = it.id; return payload; });
       const res = await fetch(`/api/notes/${note.id}/items`, { method: 'PUT', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ items: payloadItems }) });
       if (!res.ok) throw new Error(await res.text());
       onSaved && onSaved({ items: payloadItems, title });
@@ -436,35 +549,41 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg }:
     if (text) dialogStyle.color = text;
   }
 
-  function onPickColor(color: string) {
+  async function onPickColor(color: string) {
     const next = color || '';
+    try {
+      const res = await fetch(`/api/notes/${note.id}/prefs`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ color: next })
+      });
+      if (!res.ok) throw new Error(await res.text());
+    } catch (err) {
+      console.error('Failed to save color preference', err);
+      window.alert('Failed to save color preference');
+    }
     setBg(next);
-    (async () => {
-      try {
-        const res = await fetch(`/api/notes/${note.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ color: color || null }) });
-        if (!res.ok) throw new Error(await res.text());
-      } catch (err) {
-        console.error('Failed to save note color', err);
-      }
-    })();
   }
 
   function onAddImageUrl(url?: string | null) {
     setShowImageDialog(false);
     if (!url) return;
-    setImageUrl(url);
     (async () => {
       try {
         const res = await fetch(`/api/notes/${note.id}/images`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ url }) });
         if (!res.ok) throw new Error(await res.text());
+        const data = await res.json();
+        const img = data.image || null;
+        if (img && img.id && img.url) setImages(s => { const exists = s.some(x => Number(x.id) === Number(img.id)); const next = exists ? s : [...s, { id: Number(img.id), url: String(img.url) }]; onImagesUpdated && onImagesUpdated(next); return next; });
       } catch (err) {
         console.error('Failed to attach image', err);
         window.alert('Failed to attach image');
+        setImages(s => { const exists = s.some(x => String(x.url) === String(url)); const next = exists ? s : [...s, { id: Date.now(), url }]; onImagesUpdated && onImagesUpdated(next); return next; });
       }
     })();
   }
 
-  function onCollaboratorSelect(u: { id:number; email:string }) {
+  function onCollaboratorSelect(u: { id:number; email:string; name?: string }) {
     setCollaborators(s => (s.find(x=>x.id===u.id)?s:[...s,u]));
     setShowCollaborator(false);
     (async () => {
@@ -477,16 +596,37 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg }:
       }
     })();
   }
+  async function onRemoveCollaborator(collabId: number) {
+    try {
+      const res = await fetch(`/api/notes/${note.id}/collaborators/${collabId}`, { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } });
+      if (!res.ok) throw new Error(await res.text());
+    } catch (err) {
+      console.error('Failed to remove collaborator', err);
+      window.alert('Failed to remove collaborator');
+    }
+  }
+  async function deleteImage(imageId: number) {
+    try {
+      const res = await fetch(`/api/notes/${note.id}/images/${imageId}`, { method: 'DELETE', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` } });
+      if (!res.ok) throw new Error(await res.text());
+      setImages(s => { const next = s.filter(i => i.id !== imageId); onImagesUpdated && onImagesUpdated(next); return next; });
+    } catch (err) {
+      console.error('Failed to delete image', err);
+      window.alert('Failed to delete image');
+    }
+  }
   function deleteItemAt(idx: number) {
-    const yarr = yarrayRef.current; if (!yarr) return;
-    if (idx >= 0 && idx < yarr.length) yarr.delete(idx, 1);
+    const yarr = yarrayRef.current;
+    if (yarr) {
+      if (idx >= 0 && idx < yarr.length) yarr.delete(idx, 1);
+    } else {
+      setItems(s => s.filter((_, i) => i !== idx));
+    }
   }
 
   const dialog = (
     <div className="image-dialog-backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget) { save(); } }}>
-      <div className="image-dialog" role="dialog" aria-modal style={{ width: 'min(1000px, 86vw)', ...dialogStyle }}
-        onPointerDownCapture={(e) => { if (!pointerSafeRef.current) { e.preventDefault(); e.stopPropagation(); } }}
-      >
+      <div className="image-dialog" role="dialog" aria-modal style={{ width: 'min(1000px, 86vw)', ...dialogStyle }}>
         <div className="dialog-header">
           <strong>Edit checklist</strong>
           <button className="icon-close" onClick={onClose}>✕</button>
@@ -495,6 +635,32 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg }:
           <div style={{ display: 'flex', gap: 12, marginBottom: 8 }}>
             <input placeholder="Checklist title" value={title} onChange={(e) => setTitle(e.target.value)} style={{ flex: 1, background: 'transparent', border: 'none', color: 'inherit', fontWeight: 600, fontSize: 18 }} />
           </div>
+          {images && images.length > 0 && (
+            <div className="note-images" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: 8, marginBottom: 8 }}>
+              {images.map(img => (
+                <div
+                  key={img.id}
+                  className="note-image"
+                  role="button"
+                  tabIndex={0}
+                  style={{ cursor: 'zoom-in', position: 'relative' }}
+                  onClick={() => setLightboxUrl(img.url)}
+                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setLightboxUrl(img.url); } }}
+                >
+                  <img src={img.url} alt="note image" style={{ width: '100%', height: 'auto', borderRadius: 6, display: 'block' }} />
+                  <button
+                    className="image-delete"
+                    aria-label="Delete image"
+                    title="Delete image"
+                    onClick={(e) => { e.stopPropagation(); deleteImage(img.id); }}
+                    style={{ position: 'absolute', right: 6, bottom: 6 }}
+                  >
+                    🗑️
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
           <div className="rt-toolbar" style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 8 }}>
             <button className="tiny" onClick={() => activeChecklistEditor.current?.chain().focus().toggleBold().run()} aria-pressed={activeChecklistEditor.current?.isActive?.('bold')}>B</button>
             <button className="tiny" onClick={() => activeChecklistEditor.current?.chain().focus().toggleItalic().run()} aria-pressed={activeChecklistEditor.current?.isActive?.('italic')}>I</button>
@@ -517,27 +683,36 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg }:
                         onPointerCancel={() => { pointerTrackRef.current = null; }}
                         
                         onDragOver={(e) => {
-                          e.preventDefault(); const target = e.currentTarget as HTMLElement; const rect = target.getBoundingClientRect(); const y = (e as unknown as React.DragEvent<HTMLElement>).clientY; const height = rect.height || 40;
+                          e.preventDefault(); const target = e.currentTarget as HTMLElement; const rect = target.getBoundingClientRect();
                           if (rafRef.current) cancelAnimationFrame(rafRef.current);
                           rafRef.current = requestAnimationFrame(() => {
                             if (dragging === null) return;
                             if (dragDirectionRef.current === 'horizontal' && dragStartRef.current) {
                               const dx = ((e as unknown as React.DragEvent<HTMLElement>).clientX || 0) - dragStartRef.current.x;
-                              if (dx > INDENT_THRESHOLD && realIdx > 0) {
-                                // find nearest previous top-level (indent === 0) to be the parent
+                              if (dx > DRAG.indentPx && realIdx > 0) {
                                 let pId: number | null = null;
                                 for (let j = realIdx - 1; j >= 0; j--) {
                                   if ((items[j].indent || 0) === 0) { pId = items[j].id ?? null; break; }
                                 }
                                 nestedPendingRef.current = { parentId: pId, makeNested: true };
                               }
-                              else if (dx < -INDENT_THRESHOLD) nestedPendingRef.current = { parentId: null, makeNested: false };
+                              else if (dx < -DRAG.indentPx) nestedPendingRef.current = { parentId: null, makeNested: false };
                               else nestedPendingRef.current = { parentId: null, makeNested: false };
                               return;
                             }
-                            let shouldHover = false; if (dragging < realIdx) shouldHover = (y - rect.top < height * 0.28); else if (dragging > realIdx) shouldHover = (rect.bottom - y < height * 0.28);
+                            // Use ghost overlap with directional thresholds
+                            let shouldHover = false;
+                            const ghost = ghostRef.current ? ghostRef.current.getBoundingClientRect() : null;
+                            if (ghost) {
+                              const overlap = Math.max(0, Math.min(ghost.bottom, rect.bottom) - Math.max(ghost.top, rect.top));
+                              const frac = overlap / (rect.height || 1);
+                              const movingDown = ((e as unknown as React.DragEvent<HTMLElement>).clientY || 0) > (lastDragYRef.current || ((e as unknown as React.DragEvent<HTMLElement>).clientY || 0));
+                              lastDragYRef.current = (e as unknown as React.DragEvent<HTMLElement>).clientY || 0;
+                              const thresh = movingDown ? DRAG.ghostOverlapDownPct : DRAG.ghostOverlapUpPct;
+                              shouldHover = frac >= thresh;
+                            }
                             if (shouldHover) { if (clearHoverTimeoutRef.current) { clearTimeout(clearHoverTimeoutRef.current); clearHoverTimeoutRef.current = null; } setHoverIndex(prev => (prev === realIdx ? prev : realIdx)); }
-                            else { if (hoverIndex === realIdx && clearHoverTimeoutRef.current === null) { clearHoverTimeoutRef.current = window.setTimeout(() => { setHoverIndex(prev => (prev === realIdx ? null : prev)); clearHoverTimeoutRef.current = null; }, 80); } }
+                            else { if (hoverIndex === realIdx && clearHoverTimeoutRef.current === null) { clearHoverTimeoutRef.current = window.setTimeout(() => { setHoverIndex(prev => (prev === realIdx ? null : prev)); clearHoverTimeoutRef.current = null; }, Math.max(0, DRAG.hoverClearMs)); } }
                           });
                         }}
                         onDrop={(e) => {
@@ -546,11 +721,11 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg }:
                           const dst = realIdx;
                           if (src >= 0) {
                             const dx = dragStartRef.current ? ((e.clientX || 0) - dragStartRef.current.x) : 0;
-                            const treatHorizontal = dragDirectionRef.current === 'horizontal' || Math.abs(dx) > INDENT_THRESHOLD;
+                            const treatHorizontal = dragDirectionRef.current === 'horizontal' || Math.abs(dx) > DRAG.indentPx;
                             if (treatHorizontal) {
                               const yarr = yarrayRef.current;
                               if (yarr) {
-                                if (dx > INDENT_THRESHOLD) {
+                                if (dx > DRAG.indentPx) {
                                   const [bStart, bEnd] = getBlockRange(items, src);
                                   let parentIdx: number | null = null;
                                   for (let j = src - 1; j >= 0; j--) {
@@ -586,7 +761,7 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg }:
                                       }
                                     }
                                   }
-                                } else if (dx < -INDENT_THRESHOLD) {
+                                } else if (dx < -DRAG.indentPx) {
                                   const [bStart, bEnd] = getBlockRange(items, src);
                                   if (bStart >= 0) {
                                     for (let i = bStart; i < bEnd && i < yarr.length; i++) {
@@ -622,7 +797,7 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg }:
                             if (!p || !p.active) return;
                             const dx = e.clientX - p.startX;
                             const dy = e.clientY - p.startY;
-                            const TH = 6;
+                            const TH = DRAG.directionLockPx;
                             if (dragDirectionRef.current === null && (Math.abs(dx) > TH || Math.abs(dy) > TH)) {
                               dragDirectionRef.current = Math.abs(dx) > Math.abs(dy) ? 'horizontal' : 'vertical';
                             }
@@ -630,10 +805,10 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg }:
                             if (dragDirectionRef.current === 'vertical') {
                               // create ghost once
                               if (!ghostRef.current) {
-                                const nodes = Array.from(document.querySelectorAll('.image-dialog .checklist-item')) as HTMLElement[];
+                                const nodes = Array.from(document.querySelectorAll('.image-dialog .checklist-item:not(.completed)')) as HTMLElement[];
                                 const srcRealIdx = p.idx ?? -1;
                                 const currentList = previewItems ?? items;
-                                const srcDomIdx = realToDomIndex(srcRealIdx, currentList);
+                                const srcDomIdx = realToDomIndexUnchecked(srcRealIdx, currentList);
                                 const srcEl = nodes[srcDomIdx];
                                 if (srcEl) {
                                   const rect = srcEl.getBoundingClientRect();
@@ -666,35 +841,31 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg }:
                                 ghostRef.current.style.left = sourceLeftRef.current + 'px';
                                 ghostRef.current.style.top = (e.clientY - (dragOffsetRef.current.y || 0)) + 'px';
                               }
-                              // compute hover index using ghost overlap (>=50% of target height) to avoid jitter
-                              const nodes = Array.from(document.querySelectorAll('.image-dialog .checklist-item')) as HTMLElement[];
+                              // compute hover index using ghost overlap to avoid jitter
+                              const nodes = Array.from(document.querySelectorAll('.image-dialog .checklist-item:not(.completed)')) as HTMLElement[];
                               if (nodes.length) {
                                 let chosenDomIdx: number | null = null;
                                 const ghostRect = ghostRef.current ? ghostRef.current.getBoundingClientRect() : { top: e.clientY - 10, bottom: e.clientY + 10 };
+                                const movingDown = e.clientY > (lastPointerYRef.current || e.clientY);
+                                lastPointerYRef.current = e.clientY;
+                                const overlapThreshold = (typeof DRAG.ghostOverlapUpPct === 'number' && typeof DRAG.ghostOverlapDownPct === 'number')
+                                  ? (movingDown ? DRAG.ghostOverlapDownPct : DRAG.ghostOverlapUpPct)
+                                  : DRAG.ghostOverlapPct;
                                 for (let i = 0; i < nodes.length; i++) {
                                   const r = nodes[i].getBoundingClientRect();
                                   const overlap = Math.max(0, Math.min(ghostRect.bottom, r.bottom) - Math.max(ghostRect.top, r.top));
                                   const frac = overlap / (r.height || 1);
-                                  if (frac >= 0.5) { chosenDomIdx = i; break; }
-                                }
-                                // if no strong overlap, fall back to nearest center without hysteresis
-                                if (chosenDomIdx === null) {
-                                  let closest = 0; let minDist = Infinity;
-                                  for (let i = 0; i < nodes.length; i++) {
-                                    const r = nodes[i].getBoundingClientRect();
-                                    const center = r.top + r.height / 2;
-                                    const d = Math.abs((e.clientY || 0) - center);
-                                    if (d < minDist) { minDist = d; closest = i; }
-                                  }
-                                  chosenDomIdx = closest;
+                                  if (frac >= overlapThreshold) { chosenDomIdx = i; break; }
                                 }
                                 const currentList = previewItems ?? items;
-                                const chosenRealIdx = domToRealIndex(chosenDomIdx!, currentList);
-                                if (chosenRealIdx !== hoverIndex) setHoverIndex(chosenRealIdx);
+                                if (chosenDomIdx != null) {
+                                  const chosenRealIdx = domToRealIndexUnchecked(chosenDomIdx, currentList);
+                                  if (chosenRealIdx !== hoverIndex) setHoverIndex(chosenRealIdx);
+                                }
                               }
                               return;
                             }
-                            const INDENT_TH = INDENT_THRESHOLD;
+                            const INDENT_TH = DRAG.indentPx;
                             if (dragDirectionRef.current === 'horizontal') {
                               const draggedId = p.draggedId ?? null;
                               if (draggedId == null) return;
@@ -744,12 +915,32 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg }:
                               const yarr = yarrayRef.current;
                               if (yarr) {
                                 try {
-                                  yarr.delete(0, yarr.length);
-                                  const toInsert = previewItems.map(it => { const m = new Y.Map<any>(); if (typeof it.id === 'number') m.set('id', it.id); if (it.uid) m.set('uid', it.uid); m.set('content', String(it.content || '')); m.set('checked', !!it.checked); m.set('indent', Number(it.indent || 0)); return m; });
-                                  yarr.insert(0, toInsert);
+                                  // Commit only indent changes to existing items, keeping order intact
+                                  for (let i = 0; i < previewItems.length; i++) {
+                                    const it = previewItems[i];
+                                    // Find matching Y item by id or uid
+                                    const idx = yarr.toArray().findIndex(m => {
+                                      const idVal = m.get('id');
+                                      const uidVal = m.get('uid');
+                                      if (typeof it.id === 'number' && typeof idVal === 'number') return Number(it.id) === Number(idVal);
+                                      if (it.uid && uidVal) return String(it.uid) === String(uidVal);
+                                      return false;
+                                    });
+                                    if (idx >= 0) {
+                                      const m = yarr.get(idx) as Y.Map<any>;
+                                      try { m.set('indent', Number(it.indent || 0)); } catch {}
+                                      // also sync checked/content if preview has changes
+                                      try { m.set('checked', !!it.checked); } catch {}
+                                      try { m.set('content', String(it.content || '')); } catch {}
+                                    }
+                                  }
                                 } catch {}
                               }
                               setPreviewItems(null);
+                              // If horizontal preview was applied, skip vertical commit to avoid index mismatch
+                              dragDirectionRef.current = null;
+                              endDragCleanup();
+                              return;
                             }
                             // if pointer-driven vertical drag was active, commit block move
                             if (dragDirectionRef.current === 'vertical' && dragging !== null) {
@@ -795,13 +986,9 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg }:
                     {completedOpen && (previewItems ?? items).filter(it => it.checked).map((it, idx) => {
                       const currentList = previewItems ?? items;
                       const realIdx = currentList.indexOf(it);
-                      const shiftClass = shiftClassForIndex(realIdx, previewItems ?? items);
+                      const shiftClass = '';
                       return (
-                        <div key={it.key ?? realIdx} className={`checklist-item ${shiftClass}`} style={{ display: 'flex', gap: 8, alignItems: 'flex-start', marginLeft: (it.indent || 0) * 18 }} draggable={false}
-                          onDragOver={(e) => { e.preventDefault(); const target = e.currentTarget as HTMLElement; const rect = target.getBoundingClientRect(); const y = (e as unknown as React.DragEvent<HTMLElement>).clientY; const height = rect.height || 40; if (rafRef.current) cancelAnimationFrame(rafRef.current); rafRef.current = requestAnimationFrame(() => { if (dragging === null) return; let shouldHover = false; if (dragging < realIdx) { shouldHover = (y - rect.top < height * 0.28); } else if (dragging > realIdx) { shouldHover = (rect.bottom - y < height * 0.28); } setHoverIndex(prev => shouldHover ? (prev === realIdx ? prev : realIdx) : (prev === realIdx ? null : prev)); }); }}
-                          onDrop={(e) => { e.preventDefault(); const src = dragging !== null ? dragging : parseInt(e.dataTransfer.getData('text/plain') || '-1', 10); const dst = realIdx; if (src >= 0 && src !== dst) { const [bStart, bEnd] = getBlockRange(items, src); moveBlockY(bStart, bEnd, dst); } endDragCleanup(); }}
-                          onDragLeave={() => { if (hoverIndex === realIdx) setHoverIndex(null); if (rafRef.current) { cancelAnimationFrame(rafRef.current); rafRef.current = null; } }}
-                        >
+                        <div key={it.key ?? realIdx} className={`checklist-item completed ${shiftClass}`} style={{ display: 'flex', gap: 8, alignItems: 'flex-start', marginLeft: (it.indent || 0) * 18 }} draggable={false}>
                           <div style={{ width: 20 }} />
                           <div className={`checkbox-visual ${it.checked ? 'checked' : ''}`} onClick={() => toggleChecked(realIdx)}>{it.checked && (<svg viewBox="0 0 24 24" fill="none" aria-hidden focusable="false"><path d="M20 6L9 17l-5-5" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" /></svg>)}</div>
                           <div style={{ flex: 1, textDecoration: 'line-through', display: 'flex', alignItems: 'center' }}>
@@ -814,6 +1001,8 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg }:
                     })}
                   </div>
                 </div>
+
+
               <div className="dialog-footer">
                 <div className="note-actions" style={{ marginRight: 'auto', display: 'inline-flex', gap: 8, justifyContent: 'flex-start' }}>
                   <button className="tiny palette" onClick={() => setShowPalette(true)} aria-label="Change color" title="Change color">🎨</button>
@@ -835,6 +1024,7 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg }:
                       <path d="M21 19V5c0-1.1-.9-2-2-2H5C3.9 3 3 3.9 3 5v14h18zM8.5 13.5l2.5 3L14.5 12l4.5 7H5l3.5-5.5z"/>
                     </svg>
                   </button>
+
                 </div>
                 <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
                   <button className="btn" onClick={onClose}>Cancel</button>
@@ -850,8 +1040,37 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg }:
             return (<>{portal}
               {showPalette && <ColorPalette anchorRef={undefined as any} onPick={onPickColor} onClose={() => setShowPalette(false)} />}
               {showReminderPicker && <ReminderPicker onClose={() => setShowReminderPicker(false)} onSet={(iso) => { setShowReminderPicker(false); if (iso) window.alert(`Reminder set (UI-only): ${iso}`); }} />}
-              {showCollaborator && <CollaboratorModal onClose={() => setShowCollaborator(false)} onSelect={onCollaboratorSelect} />}
+              {showCollaborator && (
+                <CollaboratorModal
+                  onClose={() => setShowCollaborator(false)}
+                  onSelect={onCollaboratorSelect}
+                  current={((): Array<{ collabId?: number; userId: number; email: string; name?: string }> => {
+                    const arr: Array<{ collabId?: number; userId: number; email: string; name?: string }> = [];
+                    try {
+                      const currentUserId = (user && (user as any).id) ? Number((user as any).id) : undefined;
+                      const owner = (note as any).owner || null;
+                      if (owner && typeof owner.id === 'number' && owner.id !== currentUserId) {
+                        arr.push({ userId: Number(owner.id), email: String(owner.email || ''), name: (typeof owner.name === 'string' ? owner.name : undefined) });
+                      }
+                      const cols = ((note as any).collaborators || []) as Array<any>;
+                      for (const c of cols) {
+                        const u = (c && (c.user || {}));
+                        const uid = typeof u.id === 'number' ? Number(u.id) : (typeof c.userId === 'number' ? Number(c.userId) : undefined);
+                        const email = (typeof u.email === 'string' ? String(u.email) : undefined);
+                        const nm = (typeof u.name === 'string' ? String(u.name) : undefined);
+                        if (uid && email) {
+                          arr.push({ collabId: Number(c.id), userId: uid, email, name: nm });
+                        }
+                      }
+                    } catch {}
+                    return arr;
+                  })()}
+                  ownerId={(typeof (note as any).owner?.id === 'number' ? Number((note as any).owner.id) : ((user as any)?.id))}
+                  onRemove={onRemoveCollaborator}
+                />
+              )}
               {showImageDialog && <ImageDialog onClose={() => setShowImageDialog(false)} onAdd={onAddImageUrl} />}
+              {lightboxUrl && <ImageLightbox url={lightboxUrl} onClose={() => setLightboxUrl(null)} />}
             </>);
           }
           return dialog;

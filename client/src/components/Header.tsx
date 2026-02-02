@@ -1,17 +1,13 @@
 import React, { useState, useEffect, useRef } from "react";
 import RegisterModal from "./RegisterModal";
 import LoginModal from "./LoginModal";
-import SettingsModal from "./SettingsModal";
 import PreferencesModal from "./PreferencesModal";
 import { useAuth } from "../authContext";
 
-export default function Header({ onToggleSidebar }: { onToggleSidebar?: () => void }) {
+export default function Header({ onToggleSidebar, searchQuery, onSearchChange }: { onToggleSidebar?: () => void, searchQuery?: string, onSearchChange?: (q: string) => void }) {
   const [showRegister, setShowRegister] = useState(false);
   const [showLogin, setShowLogin] = useState(false);
-  const [showSettings, setShowSettings] = useState(false);
   const [showPrefs, setShowPrefs] = useState(false);
-  const [showDropdown, setShowDropdown] = useState(false);
-  const dropdownRef = useRef<HTMLDivElement | null>(null);
   const [registrationEnabled, setRegistrationEnabled] = useState<boolean | null>(null);
   const { user, logout } = useAuth();
 
@@ -19,50 +15,33 @@ export default function Header({ onToggleSidebar }: { onToggleSidebar?: () => vo
     fetch('/api/config').then(r => r.json()).then((d) => setRegistrationEnabled(Boolean(d.userRegistrationEnabled))).catch(() => setRegistrationEnabled(false));
   }, []);
 
-  // close dropdown on click-away or ESC
-  useEffect(() => {
-    function onDocClick(e: MouseEvent) {
-      if (!showDropdown) return;
-      const el = dropdownRef.current;
-      if (el && !el.contains(e.target as Node)) {
-        setShowDropdown(false);
-      }
-    }
-    function onKey(e: KeyboardEvent) {
-      if (e.key === 'Escape') setShowDropdown(false);
-    }
-    document.addEventListener('mousedown', onDocClick);
-    document.addEventListener('keydown', onKey);
-    return () => {
-      document.removeEventListener('mousedown', onDocClick);
-      document.removeEventListener('keydown', onKey);
-    };
-  }, [showDropdown]);
+  // dropdown removed; preferences open via avatar click
 
   return (
     <header className="app-header">
       <div className="header-left">
         <button className="menu-btn" aria-label="menu" onClick={() => onToggleSidebar && onToggleSidebar()}>☰</button>
-        <img src="/icons/darkicon.png" alt="FreemanNotes icon" className="app-icon" />
-        <div className="brand">FreemanNotes</div>
+        <div className="brand-inline">
+          <img src="/icons/darkicon.png" alt="FreemanNotes icon" className="app-icon" />
+          <div className="brand">Freeman Notes</div>
+        </div>
       </div>
       <div className="header-center">
-        <input className="search" placeholder="Search" />
+        <input
+          className="search"
+          placeholder="Search"
+          value={searchQuery ?? ''}
+          onChange={(e) => onSearchChange && onSearchChange(e.target.value)}
+        />
       </div>
       <div className="header-right" style={{ position: 'relative' }}>
         {user ? (
           <>
-            <div className="avatar">{(user.name && user.name[0]) || user.email[0]}</div>
-            <button className="icon-btn" onClick={logout}>Sign out</button>
-            <button className="icon-btn" onClick={(e) => { e.stopPropagation(); setShowDropdown(d => !d); }}>⚙️</button>
-            {showDropdown && (
-              <div ref={dropdownRef} className="settings-dropdown">
-                <button className="settings-item" onClick={() => { setShowPrefs(true); setShowDropdown(false); }}>Preferences ⚙️</button>
-                {user.role === 'admin' && (
-                  <button className="settings-item" onClick={() => { setShowSettings(true); setShowDropdown(false); }}>Send Invite</button>
-                )}
-              </div>
-            )}
+            { (user as any).userImageUrl ? (
+              <img src={(user as any).userImageUrl} alt="User" className="avatar" style={{ width: 55, height: 55, borderRadius: '50%', objectFit: 'cover', cursor: 'pointer' }} onClick={() => setShowPrefs(true)} />
+            ) : (
+              <div className="avatar" style={{ width: 55, height: 55, borderRadius: '50%', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }} onClick={() => setShowPrefs(true)}>{(user.name && user.email ? (user.name || user.email)[0] : '')}</div>
+            ) }
           </>
         ) : (
           <>
@@ -73,7 +52,6 @@ export default function Header({ onToggleSidebar }: { onToggleSidebar?: () => vo
       </div>
       {showRegister && <RegisterModal onClose={() => setShowRegister(false)} />}
       {showLogin && <LoginModal onClose={() => setShowLogin(false)} />}
-      {showSettings && <SettingsModal onClose={() => setShowSettings(false)} />}
       {showPrefs && <PreferencesModal onClose={() => setShowPrefs(false)} />}
     </header>
   );

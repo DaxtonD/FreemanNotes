@@ -14,7 +14,7 @@ import CollaboratorModal from './CollaboratorModal';
 import ImageDialog from './ImageDialog';
 
 export default function TakeNoteBar({ onCreated }: { onCreated?: () => void }): JSX.Element {
-  const { token } = useAuth();
+  const { token, user } = useAuth();
   const [expanded, setExpanded] = useState(false);
   const [mode, setMode] = useState<'text' | 'checklist'>('text');
   const [title, setTitle] = useState('');
@@ -452,7 +452,20 @@ export default function TakeNoteBar({ onCreated }: { onCreated?: () => void }): 
 
       {showPalette && <ColorPalette anchorRef={rootRef} onPick={(c) => { setBg(c); /* keep palette open */ }} onClose={() => setShowPalette(false)} />}
       {showReminderPicker && <ReminderPicker onClose={() => setShowReminderPicker(false)} onSet={(iso) => { setShowReminderPicker(false); /* TODO: persist reminder when supported */ }} />}
-      {showCollaborator && <CollaboratorModal onClose={() => setShowCollaborator(false)} onSelect={(u) => { setSelectedCollaborators(s => (s.find(x=>x.id===u.id)?s:[...s,u])); setShowCollaborator(false); }} />}
+      {showCollaborator && (
+        <CollaboratorModal
+          onClose={() => setShowCollaborator(false)}
+          onSelect={(u) => { setSelectedCollaborators(s => (s.find(x=>x.id===u.id)?s:[...s,u])); setShowCollaborator(false); }}
+          current={(() => {
+            const currentUserId = (user && (user as any).id) ? Number((user as any).id) : undefined;
+            return selectedCollaborators
+              .filter(u => (typeof u.id === 'number' ? u.id !== currentUserId : true))
+              .map(u => ({ userId: u.id, email: u.email }));
+          })()}
+          ownerId={(user as any)?.id}
+          onRemove={() => { /* no-op: creation dialog selections have no collabId yet */ }}
+        />
+      )}
       {showImageDialog && <ImageDialog onClose={() => setShowImageDialog(false)} onAdd={(url) => setImageUrl(url || null)} />}
     </div>
   );

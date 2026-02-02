@@ -3,6 +3,10 @@ import prisma from "./prismaClient";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import { sendInviteEmail } from "./mail";
+import fs from 'fs';
+import path from 'path';
+import sharp from 'sharp';
+import { notifyUser } from './events';
 
 const router = Router();
 
@@ -122,7 +126,7 @@ router.patch('/api/auth/me', async (req: Request, res: Response) => {
   const user = await getUserFromToken(req);
   if (!user) return res.status(401).json({ error: 'unauthenticated' });
   const body = req.body || {};
-  const { name, fontFamily, noteWidth, dragBehavior, animationSpeed, checklistSpacing, checkboxSize, checklistTextSize } = body as any;
+  const { name, fontFamily, noteWidth, dragBehavior, animationSpeed, checklistSpacing, checkboxSize, checklistTextSize, chipDisplayMode } = body as any;
   const data: any = {};
   if (typeof name === 'string') data.name = name;
   if (typeof fontFamily === 'string') data.fontFamily = fontFamily;
@@ -132,6 +136,7 @@ router.patch('/api/auth/me', async (req: Request, res: Response) => {
   if (typeof checklistSpacing === 'number') data.checklistSpacing = checklistSpacing;
   if (typeof checkboxSize === 'number') data.checkboxSize = checkboxSize;
   if (typeof checklistTextSize === 'number') data.checklistTextSize = checklistTextSize;
+  if (typeof chipDisplayMode === 'string') data.chipDisplayMode = chipDisplayMode;
   // allow setting checkbox colors to string values or null to clear
   if ('checkboxBg' in body) data.checkboxBg = (body as any).checkboxBg;
   if ('checkboxBorder' in body) data.checkboxBorder = (body as any).checkboxBorder;
@@ -176,3 +181,54 @@ router.post('/api/invite', async (req: Request, res: Response) => {
 });
 
 export default router;
+
+// upload/update current user's photo (expects JSON { dataUrl: string })
+router.post('/api/auth/me/photo', async (req: Request, res: Response) => {
+  const user = await getUserFromToken(req);
+  if (!user) return res.status(401).json({ error: 'unauthenticated' });
+  const dataUrl = String((req.body || {}).dataUrl || '');
+  if (!dataUrl.startsWith('data:image/')) return res.status(400).json({ error: 'invalid image data' });
+  try {
+    const commaIdx = dataUrl.indexOf(',');
+    const b64 = dataUrl.slice(commaIdx + 1);
+    const buf = Buffer.from(b64, 'base64');
+    // Resize and compress to avatar size
+    const out = await sharp(buf)
+      .resize({ width: 256, height: 256, fit: 'cover' })
+      .jpeg({ quality: 80 })
+      .toBuffer();
+    // Ensure uploads directory exists
+    const uploadsDir = path.resolve(__dirname, '..', '..', 'uploads');
+    const usersDir = path.join(uploadsDir, 'users');
+    try { fs.mkdirSync(usersDir, { recursive: true }); } catch {}
+    const filename = `${user.id}.jpg`;
+    const filePath = path.join(usersDir, filename);
+    fs.writeFileSync(filePath, out);
+    const publicUrl = `/uploads/users/${filename}?v=${Date.now()}`;
+    const updated = await prisma.user.update({ where: { id: user.id }, data: { userImageUrl: publicUrl } });
+    // Broadcast to all participants who share notes with this user
+    try {
+      const notes = await prisma.note.findMany({
+        where: {
+          OR: [
+            { ownerId: user.id },
+            { collaborators: { some: { userId: user.id } } }
+          ]
+        },
+        select: { ownerId: true, collaborators: { select: { userId: true } } }
+      });
+      const ids = new Set<number>();
+      for (const n of notes) {
+        ids.add(n.ownerId);
+        for (const c of n.collaborators) ids.add(c.userId);
+      }
+      ids.delete(user.id);
+      for (const uid of ids) notifyUser(uid, 'user-photo-updated', { userId: user.id, userImageUrl: publicUrl });
+    } catch {}
+    // @ts-ignore
+    delete updated.passwordHash;
+    res.json({ user: updated });
+  } catch (err) {
+    res.status(500).json({ error: String(err) });
+  }
+});

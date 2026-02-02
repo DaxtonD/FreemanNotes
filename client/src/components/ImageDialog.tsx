@@ -1,4 +1,5 @@
 import React, { useRef, useState } from "react";
+import { createPortal } from "react-dom";
 
 export default function ImageDialog({ onClose, onAdd }: { onClose: () => void; onAdd: (url?: string | null) => void }) {
   const [url, setUrl] = useState("");
@@ -26,7 +27,7 @@ export default function ImageDialog({ onClose, onAdd }: { onClose: () => void; o
     onClose();
   }
 
-  return (
+  const content = (
     <div className="image-dialog-backdrop" onClick={onClose}>
       <div className="image-dialog" onClick={(e) => e.stopPropagation()}>
         <div className="dialog-header">
@@ -44,4 +45,6 @@ export default function ImageDialog({ onClose, onAdd }: { onClose: () => void; o
       </div>
     </div>
   );
+  if (typeof document !== 'undefined') return createPortal(content, document.body);
+  return content;
 }

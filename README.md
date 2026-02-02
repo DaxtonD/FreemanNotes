@@ -1,3 +1,8 @@
+<!-- OCR feature removed -->
+
+## Image Upload Limits
+
+- **MAX_IMAGE_UPLOAD_MB**: Controls Express JSON body limit for image data URLs. Increase if you see `PayloadTooLargeError`.
 # FreemanNotes
 
 Modern, fast notes app with a minimalist UI, responsive grid, and collaboration-ready backend. Built with React + Vite on the client and Express + Prisma (MySQL) on the server.

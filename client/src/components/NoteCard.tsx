@@ -33,7 +33,9 @@ type Note = {
   items?: NoteItem[];
   type?: string;
   color?: string;
+  viewerColor?: string | null;
   noteLabels?: Array<{ id: number; label?: { id: number; name: string } }>;
+  images?: Array<{ id: number; url: string }>
 };
 
 /** choose '#000' or '#fff' based on best WCAG contrast vs provided hex color */
@@ -60,15 +62,15 @@ function contrastColorForBackground(hex?: string | null): string | undefined {
 export default function NoteCard({ note, onChange }: { note: Note, onChange?: () => void }) {
   const noteRef = useRef<HTMLElement | null>(null);
 
-  const [bg, setBg] = useState<string>(note.color || ""); // empty = theme card color
+  const [bg, setBg] = useState<string>((note as any).viewerColor || note.color || ""); // empty = theme card color
   // default text color for "Default" palette will use CSS var --muted so it matches original layout
-  const [textColor, setTextColor] = useState<string | undefined>(note.color ? contrastColorForBackground(note.color) : undefined);
+  const [textColor, setTextColor] = useState<string | undefined>(((note as any).viewerColor || note.color) ? contrastColorForBackground(((note as any).viewerColor || note.color) as string) : undefined);
   const [archived, setArchived] = useState(false);
-  const [imageUrl, setImageUrl] = useState<string | null>(null);
+  const [images, setImages] = useState<Array<{ id:number; url:string }>>((note.images as any) || []);
   const [noteItems, setNoteItems] = useState<any[]>(note.items || []);
   const [title, setTitle] = useState<string>(note.title || '');
   const [showCollaborator, setShowCollaborator] = useState(false);
-  const [collaborators, setCollaborators] = useState<{ id: number; email: string }[]>([]);
+  const [collaborators, setCollaborators] = useState<Array<{ collabId?: number; userId: number; email: string; name?: string; userImageUrl?: string }>>([]);
   const [labels, setLabels] = useState<Array<{ id: number; name: string }>>(() => (note.noteLabels || []).map((nl:any) => nl.label).filter((l:any) => l && typeof l.id === 'number' && typeof l.name === 'string'));
   const [showMore, setShowMore] = useState(false);
   const [moreAnchorPoint, setMoreAnchorPoint] = useState<{ x:number; y:number } | null>(null);
@@ -81,7 +83,7 @@ export default function NoteCard({ note, onChange }: { note: Note, onChange?: ()
   const [showCompleted, setShowCompleted] = useState<boolean>(true);
 
   const fileRef = useRef<HTMLInputElement | null>(null);
-  const { token } = useAuth();
+  const { token, user } = useAuth();
   // Subscribe to Yjs checklist for live card updates
   const ydoc = React.useMemo(() => new Y.Doc(), [note.id]);
   const providerRef = React.useRef<WebsocketProvider | null>(null);
@@ -198,48 +200,86 @@ export default function NoteCard({ note, onChange }: { note: Note, onChange?: ()
 
   // keep local bg/textColor in sync when the parent reloads the note (e.g., after page refresh)
   React.useEffect(() => {
-    setBg(note.color || '');
-    setTextColor(note.color ? contrastColorForBackground(note.color) : undefined);
-  }, [note.color]);
+    const base = ((note as any).viewerColor || note.color || '') as string;
+    setBg(base || '');
+    setTextColor(base ? contrastColorForBackground(base) : undefined);
+  }, [note.id, (note as any).viewerColor, note.color]);
   React.useEffect(() => {
     setLabels((note.noteLabels || []).map((nl:any) => nl.label).filter((l:any) => l && typeof l.id === 'number' && typeof l.name === 'string'));
   }, [note.noteLabels]);
   React.useEffect(() => { setTitle(note.title || ''); }, [note.title]);
+  React.useEffect(() => { setImages(((note as any).images || []).map((i:any)=>({ id:Number(i.id), url:String(i.url) }))); }, [(note as any).images]);
+  // Keep collaborators in sync with server-provided data on note reloads
+  React.useEffect(() => {
+    try {
+      const arr = ((note as any).collaborators || []).map((c:any) => {
+        const u = (c && (c.user || {}));
+        if (u && typeof u.id === 'number' && typeof u.email === 'string') {
+          return { collabId: Number(c.id), userId: Number(u.id), email: String(u.email), name: (typeof u.name === 'string' ? String(u.name) : undefined), userImageUrl: (typeof (u as any).userImageUrl === 'string' ? String((u as any).userImageUrl) : undefined) };
+        }
+        return null;
+      }).filter(Boolean);
+      setCollaborators(arr as any);
+    } catch {}
+  }, [(note as any).collaborators]);
 
   // track pointer down/up to distinguish clicks from small drags (prevents accidental reflows)
   const pointerStartRef = React.useRef<{ x: number; y: number } | null>(null);
   const pointerMovedRef = React.useRef(false);
 
-  function onPickColor(color: string) {
+  async function onPickColor(color: string) {
     // first palette entry is the "Default" swatch (empty string).
     // Selecting it restores the app's default background and sets text to the original muted color.
-    if (!color) {
-      setBg("");
-      // use CSS variable so the note inherits the theme muted color defined in styles
-      setTextColor("var(--muted)");
+    const next = color || '';
+    try {
+      const res = await fetch(`/api/notes/${note.id}/prefs`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', Authorization: token ? `Bearer ${token}` : '' },
+        body: JSON.stringify({ color: next })
+      });
+      if (!res.ok) throw new Error(await res.text());
+    } catch (err) {
+      console.error('Failed to save color preference', err);
+      window.alert('Failed to save color preference');
+    }
+    if (!next) {
+      setBg('');
+      setTextColor('var(--muted)');
     } else {
-      setBg(color);
-      setTextColor(contrastColorForBackground(color));
+      setBg(next);
+      setTextColor(contrastColorForBackground(next));
     }
     setShowPalette(false);
-    // persist color to server (store null when selecting default)
-    (async () => {
-      try {
-        const res = await fetch(`/api/notes/${note.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ color: color || null }) });
-        if (!res.ok) throw new Error(await res.text());
-        // update local state from saved color
-        setBg(color || '');
-      } catch (err) {
-        console.error('Failed to save note color', err);
-        // fallback to local only
-        setBg(color || '');
-      }
-    })();
   }
 
   function onAddImageUrl(url?: string | null) {
     setShowImageDialog(false);
-    if (url) setImageUrl(url);
+    if (!url) return;
+    // Persist to server and update local images list
+    (async () => {
+      try {
+        const res = await fetch(`/api/notes/${note.id}/images`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: token ? `Bearer ${token}` : '' }, body: JSON.stringify({ url }) });
+        if (!res.ok) throw new Error(await res.text());
+        const data = await res.json();
+        const img = data.image || null;
+        if (img && img.id && img.url) {
+          setImages(s => {
+            const exists = s.some(x => Number(x.id) === Number(img.id));
+            if (exists) return s;
+            return [...s, { id: Number(img.id), url: String(img.url) }];
+          });
+        }
+      } catch (err) {
+        console.error('Failed to attach image', err);
+        // Fallback: show locally even if save fails
+        setImages(s => {
+          const exists = s.some(x => String(x.url) === String(url));
+          if (exists) return s;
+          return [...s, { id: Date.now(), url }];
+        });
+        window.alert('Failed to attach image to server; showing locally');
+      }
+    })();
   }
 
   async function toggleItemChecked(itemId: number, checked: boolean) {
@@ -286,12 +326,27 @@ export default function NoteCard({ note, onChange }: { note: Note, onChange?: ()
   }
   async function onDeleteNote() {
     try {
+      const ownerId = (typeof (note as any).owner?.id === 'number' ? Number((note as any).owner.id) : undefined);
+      const currentUserId = (user && (user as any).id) ? Number((user as any).id) : undefined;
+      if (ownerId && currentUserId && ownerId !== currentUserId) {
+        // Collaborator: remove self from this note
+        const self = collaborators.find(c => typeof c.userId === 'number' && c.userId === currentUserId);
+        if (self && typeof self.collabId === 'number') {
+          const res = await fetch(`/api/notes/${note.id}/collaborators/${self.collabId}`, { method: 'DELETE', headers: { Authorization: token ? `Bearer ${token}` : '' } });
+          if (!res.ok) throw new Error(await res.text());
+          onChange && onChange();
+          return;
+        }
+        window.alert('You are not the owner and could not find your collaborator entry to remove.');
+        return;
+      }
+      // Owner: delete note for everyone
       const res = await fetch(`/api/notes/${note.id}`, { method: 'DELETE', headers: { Authorization: token ? `Bearer ${token}` : '' } });
       if (!res.ok) throw new Error(await res.text());
       onChange && onChange();
     } catch (err) {
       console.error(err);
-      window.alert('Failed to delete note');
+      window.alert('Failed to delete or leave note');
     }
   }
   const [showLabels, setShowLabels] = useState(false);
@@ -321,18 +376,68 @@ export default function NoteCard({ note, onChange }: { note: Note, onChange?: ()
     }
   }
 
-  function onCollaboratorSelect(user: { id: number; email: string }) {
+  function onCollaboratorSelect(selected: { id: number; email: string; name?: string }) {
     setCollaborators((s) => {
-      if (s.find(x => x.id === user.id)) return s;
-      return [...s, user];
+      if (s.find(x => x.userId === selected.id)) return s;
+      return [...s, { userId: selected.id, email: selected.email, name: selected.name }];
     });
     setShowCollaborator(false);
+    // Persist collaborator on server
+    (async () => {
+      try {
+        const res = await fetch(`/api/notes/${note.id}/collaborators`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: token ? `Bearer ${token}` : '' },
+          body: JSON.stringify({ email: selected.email })
+        });
+        if (!res.ok) throw new Error(await res.text());
+        const data = await res.json();
+        const collab = (data && (data.collaborator || null));
+        if (collab && typeof collab.id === 'number') {
+          setCollaborators((s) => s.map(c => (c.userId === selected.id ? { ...c, collabId: Number(collab.id) } : c)));
+        }
+      } catch (err) {
+        console.error('Failed to add collaborator', err);
+        window.alert('Failed to add collaborator');
+        // Revert optimistic add on failure
+        setCollaborators((s) => s.filter(c => c.userId !== selected.id));
+      }
+    })();
+  }
+
+  async function onRemoveCollaborator(collabId: number) {
+    try {
+      const res = await fetch(`/api/notes/${note.id}/collaborators/${collabId}`, { method: 'DELETE', headers: { Authorization: token ? `Bearer ${token}` : '' } });
+      if (!res.ok) throw new Error(await res.text());
+      setCollaborators((s) => s.filter(c => c.collabId !== collabId));
+      onChange && onChange();
+    } catch (err) {
+      console.error('Failed to remove collaborator', err);
+      window.alert('Failed to remove collaborator');
+    }
   }
 
   // compute chip background so it's visible against selected background/text color
   const chipBg = (textColor === "#ffffff" || textColor === "var(--muted)")
     ? "rgba(0,0,0,0.12)"
     : "rgba(255,255,255,0.06)";
+
+    // Compute participant chips (owner + collaborators), excluding current user
+    const chipParticipants: Array<{ key: string | number; name: string; email: string; userImageUrl?: string }> = [];
+    try {
+      const currentUserId = (user && (user as any).id) ? Number((user as any).id) : undefined;
+      const owner = (note as any).owner || null;
+      if (owner && typeof owner.id === 'number' && owner.id !== currentUserId) {
+        const ownerName = (typeof owner.name === 'string' && owner.name) ? owner.name : String(owner.email || '').split("@")[0];
+        chipParticipants.push({ key: `owner-${owner.id}`, name: ownerName, email: String(owner.email || ''), userImageUrl: (typeof (owner as any).userImageUrl === 'string' ? String((owner as any).userImageUrl) : undefined) });
+      }
+      for (const c of collaborators) {
+        if (typeof c.userId === 'number' && c.userId !== currentUserId) {
+          const nm = (c.name && c.name.length) ? c.name : String(c.email).split('@')[0];
+          chipParticipants.push({ key: c.collabId || `u-${c.userId}`, name: nm, email: c.email, userImageUrl: c.userImageUrl });
+        }
+      }
+    } catch {}
 
     const styleVars: React.CSSProperties = {
       background: bg || undefined,
@@ -380,9 +485,21 @@ export default function NoteCard({ note, onChange }: { note: Note, onChange?: ()
         </div>
       )}
 
-      {collaborators.length > 0 && (
+      {chipParticipants.length > 0 && (
         <div className="collab-chips">
-          {collaborators.map(c => <span key={c.id} className="chip">{c.email.split("@")[0]}</span>)}
+          {chipParticipants.map(p => {
+            const mode = ((user as any)?.chipDisplayMode) || 'image+text';
+            const showImg = (mode === 'image' || mode === 'image+text') && !!p.userImageUrl;
+            const showText = (mode === 'text' || mode === 'image+text');
+            return (
+              <span key={p.key} className="chip" title={p.email} style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                {showImg ? (
+                  <img src={p.userImageUrl!} alt="" style={{ width: 18, height: 18, borderRadius: '50%', objectFit: 'cover' }} />
+                ) : null}
+                {showText ? (<span>{p.name}</span>) : null}
+              </span>
+            );
+          })}
         </div>
       )}
 
@@ -451,9 +568,18 @@ export default function NoteCard({ note, onChange }: { note: Note, onChange?: ()
         )}
       </div>
 
-      {imageUrl && (
-        <div className="note-image">
-          <img src={imageUrl} alt="note" />
+      {images && images.length > 0 && (
+        <div className="note-images">
+          {images.map((img) => (
+            <button
+              key={img.id}
+              className="note-image"
+              style={{ padding: 0, border: 'none', background: 'transparent', cursor: 'pointer' }}
+              onClick={() => { if (note.type === 'CHECKLIST' || (note.items && note.items.length)) setShowEditor(true); else setShowTextEditor(true); }}
+            >
+              <img src={img.url} alt="note image" />
+            </button>
+          ))}
         </div>
       )}
 
@@ -522,7 +648,26 @@ export default function NoteCard({ note, onChange }: { note: Note, onChange?: ()
       )}
 
       {showCollaborator && (
-        <CollaboratorModal onClose={() => setShowCollaborator(false)} onSelect={onCollaboratorSelect} />
+        <CollaboratorModal
+          onClose={() => setShowCollaborator(false)}
+          onSelect={onCollaboratorSelect}
+          current={(() => {
+            const arr: Array<{ collabId?: number; userId: number; email: string; name?: string }> = [];
+            const currentUserId = (user && (user as any).id) ? Number((user as any).id) : undefined;
+            const owner = (note as any).owner || null;
+            if (owner && typeof owner.id === 'number' && owner.id !== currentUserId) {
+              arr.push({ userId: Number(owner.id), email: String(owner.email || ''), name: (typeof owner.name === 'string' ? owner.name : undefined) });
+            }
+            for (const c of collaborators) {
+              if (typeof c.userId === 'number') {
+                arr.push({ collabId: c.collabId, userId: c.userId, email: c.email, name: c.name });
+              }
+            }
+            return arr;
+          })()}
+          ownerId={(typeof (note as any).owner?.id === 'number' ? Number((note as any).owner.id) : ((user as any)?.id))}
+          onRemove={onRemoveCollaborator}
+        />
       )}
 
       {showPalette && <ColorPalette anchorRef={noteRef} onPick={onPickColor} onClose={() => setShowPalette(false)} />}
@@ -530,8 +675,24 @@ export default function NoteCard({ note, onChange }: { note: Note, onChange?: ()
       {showImageDialog && <ImageDialog onClose={() => setShowImageDialog(false)} onAdd={onAddImageUrl} />}
 
       {showReminderPicker && <ReminderPicker onClose={() => setShowReminderPicker(false)} onSet={onSetReminder} />}
-      {showEditor && <ChecklistEditor note={{ ...note, items: noteItems }} noteBg={bg} onClose={() => setShowEditor(false)} onSaved={({ items, title }) => { setNoteItems(items); setTitle(title); }} />}
-      {showTextEditor && <RichTextEditor note={note} noteBg={bg} onClose={() => setShowTextEditor(false)} onSaved={({ title, body }) => { setTitle(title); /* update body via note; preview renders `noteItems` or sanitized HTML, but we keep local title */ note.body = body; }} />}
+      {showEditor && (
+        <ChecklistEditor
+          note={{ ...note, items: noteItems }}
+          noteBg={bg}
+          onClose={() => setShowEditor(false)}
+          onSaved={({ items, title }) => { setNoteItems(items); setTitle(title); }}
+          onImagesUpdated={(imgs) => setImages(imgs)}
+        />
+      )}
+      {showTextEditor && (
+        <RichTextEditor
+          note={note}
+          noteBg={bg}
+          onClose={() => setShowTextEditor(false)}
+          onSaved={({ title, body }) => { setTitle(title); note.body = body; }}
+          onImagesUpdated={(imgs) => setImages(imgs)}
+        />
+      )}
     </article>
   );
 }

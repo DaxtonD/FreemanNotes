@@ -48,6 +48,8 @@ export default function LabelsDialog({ noteId, onClose, onUpdated }: { noteId: n
         setLabels(nextLabels);
         setSelected(nextSelected);
         onUpdated && onUpdated(nextLabels.filter(l => nextSelected.has(l.id)));
+        // update sidebar immediately
+        if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('labels:refresh'));
       }
     } finally {
       setSaving(false);

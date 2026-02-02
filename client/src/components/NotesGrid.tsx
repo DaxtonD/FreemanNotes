@@ -3,7 +3,7 @@ import NoteCard from "./NoteCard";
 import { useAuth } from "../authContext";
 import TakeNoteBar from "./TakeNoteBar";
 
-export default function NotesGrid({ selectedLabelIds = [] }: { selectedLabelIds?: number[] }) {
+export default function NotesGrid({ selectedLabelIds = [], searchQuery = '' }: { selectedLabelIds?: number[], searchQuery?: string }) {
   const { token } = useAuth();
   const [notes, setNotes] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -43,9 +43,12 @@ export default function NotesGrid({ selectedLabelIds = [] }: { selectedLabelIds?
           if (Array.isArray(ids) && ids.length) {
             const map = new Map((data.notes || []).map((n:any) => [n.id, n]));
             const ordered: any[] = [];
-            for (const id of ids) if (map.has(id)) ordered.push(map.get(id));
+            const seen = new Set<number>();
+            for (const id of ids) {
+              if (map.has(id) && !seen.has(id)) { ordered.push(map.get(id)); seen.add(id); }
+            }
             // append any notes not in saved order
-            for (const n of (data.notes || [])) if (!ids.includes(n.id)) ordered.push(n);
+            for (const n of (data.notes || [])) if (!seen.has(n.id)) ordered.push(n);
             setNotes(ordered);
           }
         }
@@ -58,6 +61,74 @@ export default function NotesGrid({ selectedLabelIds = [] }: { selectedLabelIds?
 
   useEffect(() => { if (token) load(); else setNotes([]); }, [token]);
   useEffect(() => { notesRef.current = notes; }, [notes]);
+
+  // Subscribe to lightweight server events to refresh list on share/unshare and update chips
+  useEffect(() => {
+    if (!token) return;
+    let ws: WebSocket | null = null;
+    try {
+      const url = `ws://${window.location.host}/events?token=${encodeURIComponent(token)}`;
+      ws = new WebSocket(url);
+      ws.onmessage = (ev) => {
+        try {
+          const msg = JSON.parse(String(ev.data || '{}'));
+          if (!msg || !msg.type) return;
+          switch (msg.type) {
+            case 'note-shared':
+              // Reload notes so the newly shared note appears immediately
+              load();
+              break;
+            case 'note-unshared': {
+              const noteId = Number(msg.noteId || (msg.payload && msg.payload.noteId));
+              if (Number.isFinite(noteId)) {
+                setNotes((s) => s.filter((n) => Number(n.id) !== noteId));
+              }
+              break;
+            }
+            case 'collab-removed': {
+              const noteId = Number(msg.noteId || (msg.payload && msg.payload.noteId));
+              const userId = Number(msg.userId || (msg.payload && msg.payload.userId));
+              if (Number.isFinite(noteId) && Number.isFinite(userId)) {
+                setNotes((s) => s.map((n) => {
+                  if (Number(n.id) !== noteId) return n;
+                  const cols = Array.isArray(n.collaborators) ? n.collaborators : [];
+                  const nextCols = cols.filter((c: any) => {
+                    const u = (c && (c.user || {}));
+                    const uid = (typeof u.id === 'number' ? Number(u.id) : (typeof c.userId === 'number' ? Number(c.userId) : undefined));
+                    return uid !== userId;
+                  });
+                  return { ...n, collaborators: nextCols };
+                }));
+              }
+              break;
+            }
+            case 'user-photo-updated': {
+              const payload = msg.payload || {};
+              const uid = Number(payload.userId);
+              const url = String(payload.userImageUrl || '');
+              if (Number.isFinite(uid)) {
+                setNotes((s) => s.map((n) => {
+                  const owner = (n as any).owner || null;
+                  const updatedOwner = owner && owner.id === uid ? { ...owner, userImageUrl: url } : owner;
+                  const cols = Array.isArray(n.collaborators) ? n.collaborators : [];
+                  const nextCols = cols.map((c: any) => {
+                    const u = (c && (c.user || {}));
+                    if (typeof u.id === 'number' && Number(u.id) === uid) {
+                      return { ...c, user: { ...u, userImageUrl: url } };
+                    }
+                    return c;
+                  });
+                  return { ...n, owner: updatedOwner, collaborators: nextCols };
+                }));
+              }
+              break;
+            }
+          }
+        } catch {}
+      };
+    } catch {}
+    return () => { try { ws && ws.close(); } catch {}; };
+  }, [token]);
 
   const gridRef = useRef<HTMLDivElement | null>(null);
 
@@ -201,8 +272,21 @@ export default function NotesGrid({ selectedLabelIds = [] }: { selectedLabelIds?
     const labels = (n.noteLabels || []).map((nl: any) => nl.label?.id).filter((id: any) => typeof id === 'number');
     return selectedLabelIds.some(id => labels.includes(id));
   }
-  const pinned = notes.filter(n => n.pinned).filter(matchesLabels);
-  const others = notes.filter(n => !n.pinned).filter(matchesLabels);
+  function matchesSearch(n: any): boolean {
+    const q = (searchQuery || '').trim().toLowerCase();
+    if (!q) return true;
+    if (String(n.title || '').toLowerCase().includes(q)) return true;
+    if (String(n.body || '').toLowerCase().includes(q)) return true;
+    const items = Array.isArray(n.items) ? n.items : [];
+    if (items.some((it: any) => String(it.content || '').toLowerCase().includes(q))) return true;
+    const labels = Array.isArray(n.noteLabels) ? n.noteLabels : [];
+    if (labels.some((nl: any) => String(nl.label?.name || '').toLowerCase().includes(q))) return true;
+    const images = Array.isArray(n.images) ? n.images : [];
+    // OCR text search removed
+    return false;
+  }
+  const pinned = notes.filter(n => n.pinned).filter(matchesLabels).filter(matchesSearch);
+  const others = notes.filter(n => !n.pinned).filter(matchesLabels).filter(matchesSearch);
   function moveNote(from: number, to: number) {
     // FLIP for reordering only: capture before positions, update state, then animate transforms
     const before = new Map<number, DOMRect>();

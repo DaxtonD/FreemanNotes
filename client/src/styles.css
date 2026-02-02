@@ -39,7 +39,10 @@ body{
   z-index:50;
 }
 .header-left{display:flex;align-items:center;gap:12px}
-.app-icon{ width:112px; height:112px; display:inline-block; filter: drop-shadow(0 2px 10px rgba(0,0,0,0.7)) saturate(115%) contrast(108%) brightness(100%); border-radius:14px; }
+.brand-stack{ display:none; }
+.brand-inline{ display:flex; align-items:center; gap:4px; }
+.brand-inline .brand{ margin:0; line-height:1; }
+.app-icon{ width:112px; height:112px; display:block; filter: drop-shadow(0 2px 10px rgba(0,0,0,0.7)) saturate(115%) contrast(108%) brightness(100%); border-radius:14px; }
 .app-icon:hover{ filter: drop-shadow(0 4px 14px rgba(0,0,0,0.75)) saturate(122%) contrast(112%) brightness(102%); }
 .brand{font-weight:400;font-size:12px; opacity:0.85; letter-spacing:0.2px}
 .search{width:520px;max-width:60vw;padding:8px 12px;border-radius:8px;background:#2b2b2b;border:1px solid rgba(255,255,255,0.04);color:#fff}
@@ -329,6 +332,24 @@ body{
 /* Note images */
 .note-image{margin-top:10px;border-radius:6px;overflow:hidden}
 .note-image img{width:100%;height:auto;display:block}
+.image-delete{
+  background: rgba(0,0,0,0.55);
+  border: 1px solid rgba(255,255,255,0.1);
+  color: #fff;
+  border-radius: 999px;
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 140ms ease;
+}
+.note-image:hover .image-delete,
+.note-image:focus-within .image-delete {
+  opacity: 1;
+}
 
 /* Palette popover (positioned via inline fixed coordinates) */
 .palette-popover{

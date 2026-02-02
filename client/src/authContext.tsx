@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
-import { me as apiMe, login as apiLogin, register as apiRegister } from './lib/authApi';
+import { me as apiMe, login as apiLogin, register as apiRegister, uploadMyPhoto, updateMe as apiUpdateMe } from './lib/authApi';
 
 type User = { id: number; email: string; name?: string; role?: 'admin' | 'user' } | null;
 
@@ -9,6 +9,8 @@ type AuthContextValue = {
   login: (email: string, password: string) => Promise<void>;
   register: (email: string, password: string, name?: string, inviteToken?: string) => Promise<void>;
   logout: () => void;
+  uploadPhoto: (dataUrl: string) => Promise<void>;
+  updateMe: (payload: any) => Promise<void>;
 };
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
@@ -87,6 +89,25 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setUser(data.user);
   }
 
+  async function uploadPhoto(dataUrl: string) {
+    if (!token) throw new Error('Not authenticated');
+    const data = await uploadMyPhoto(token, dataUrl);
+    if (data && data.user) setUser(data.user);
+  }
+
+  async function updateMe(payload: any) {
+    if (!token) throw new Error('Not authenticated');
+    const data = await apiUpdateMe(token, payload);
+    if (data && data.user) setUser(data.user);
+    else {
+      // Optimistically merge payload into user if server doesn't echo
+      setUser((prev) => {
+        if (!prev) return prev;
+        return { ...(prev as any), ...(payload || {}) } as any;
+      });
+    }
+  }
+
   function logout() {
     setToken(null);
     setUser(null);
@@ -94,7 +115,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }
 
   return (
-    <AuthContext.Provider value={{ user, token, login, register, logout }}>
+    <AuthContext.Provider value={{ user, token, login, register, logout, uploadPhoto, updateMe }}>
       {children}
     </AuthContext.Provider>
   );
