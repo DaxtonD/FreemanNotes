@@ -135,6 +135,20 @@ docker compose up --build
 - `PUT /api/notes/:id/items` — Replace/sync checklist items.
 - `POST /api/notes/:id/labels` — Add/create label and link to note.
 
+## OCR (PaddleOCR)
+
+- Engine: PaddleOCR with `lang="en"` and `use_angle_cls=True`.
+- Deterministic preprocessing only: convert to RGB, remove alpha, resize so max dimension ≈ 1800px; no thresholding or tuning.
+- Output: `{ text, lines: [{ text, confidence }], avgConfidence }`; returns `{ status: "low_confidence" }` if average confidence falls below the threshold.
+- One pass per image — no retries.
+
+Setup:
+- Requires Python 3 and pip.
+- Install Python deps:
+  - `pip install -r scripts/requirements.txt`
+- Optional: set `PYTHON_BIN` env var to the Python executable if not `python` on your system.
+- Swappable design: `server/src/ocr.ts` exposes a factory `createOcrEngine()`; currently uses PaddleOCR.
+
 ## Troubleshooting
 
 - **Dev server not reading .env**: Restart after edits; confirm `GET /api/config` reflects `USER_REGISTRATION_ENABLED`.
