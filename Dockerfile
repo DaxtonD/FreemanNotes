@@ -24,11 +24,15 @@ COPY prisma ./prisma
 COPY server/scripts ./server/scripts
 RUN chmod +x server/scripts/docker-entrypoint.sh
 
-# Install Python and PaddleOCR dependencies
+# Install Python and PaddleOCR dependencies in a virtualenv (PEP 668 compliant)
 RUN apt-get update && \
-	apt-get install -y --no-install-recommends python3 python3-pip && \
-	pip3 install --no-cache-dir -r scripts/requirements.txt && \
+	apt-get install -y --no-install-recommends python3 python3-venv python3-pip && \
+	python3 -m venv /opt/ocr-venv && \
+	/opt/ocr-venv/bin/pip install --no-cache-dir -r scripts/requirements.txt && \
 	apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# Point app to the venv Python
+ENV PYTHON_BIN=/opt/ocr-venv/bin/python
 
 EXPOSE 4000
 ENTRYPOINT ["/bin/sh", "server/scripts/docker-entrypoint.sh"]
