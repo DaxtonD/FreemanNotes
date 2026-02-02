@@ -62,6 +62,16 @@ export default function NotesGrid({ selectedLabelIds = [], searchQuery = '' }: {
   useEffect(() => { if (token) load(); else setNotes([]); }, [token]);
   useEffect(() => { notesRef.current = notes; }, [notes]);
 
+  // Recalculate grid packing when filters/search change or notes update
+  useEffect(() => {
+    try {
+      // Wait for DOM to update, then trigger a grid recalculation
+      requestAnimationFrame(() => {
+        try { window.dispatchEvent(new Event('notes-grid:recalc')); } catch {}
+      });
+    } catch {}
+  }, [selectedLabelIds, searchQuery, notes]);
+
   // Subscribe to lightweight server events to refresh list on share/unshare and update chips
   useEffect(() => {
     if (!token) return;
@@ -242,8 +252,25 @@ export default function NotesGrid({ selectedLabelIds = [], searchQuery = '' }: {
           }
         };
       } catch {}
-      // (masonry emulation removed) keep grid width locked and let CSS Grid
-      // handle vertical flow to avoid overlapping issues.
+      // Masonry emulation: compute gridRowEnd spans so cards pack tightly.
+      try {
+        const row = parseInt(docStyle.getPropertyValue('--row')) || 8;
+        const gapPx = parseInt(docStyle.getPropertyValue('--gap')) || 16;
+        for (const g of grids) {
+          const children = Array.from(g.children) as HTMLElement[];
+          for (const wrap of children) {
+            // Measure inner .note-card height (wrapper has no margins)
+            const card = wrap.querySelector('.note-card') as HTMLElement | null;
+            const h = card ? card.getBoundingClientRect().height : wrap.getBoundingClientRect().height;
+            const span = Math.max(1, Math.ceil((h + gapPx) / (row + gapPx)));
+            // Avoid thrashing styles if unchanged
+            if (wrap.dataset.__rowspan !== String(span)) {
+              wrap.style.gridRowEnd = `span ${span}`;
+              wrap.dataset.__rowspan = String(span);
+            }
+          }
+        }
+      } catch {}
     }
 
     updateCols();

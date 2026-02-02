@@ -111,6 +111,12 @@ docker compose up --build
 - Each release updates `package.json` version, creates a Git tag `vX.Y.Z`, and pushes to GitHub.
 - Maintain notes in [CHANGELOG.md](CHANGELOG.md).
 
+## Release Notes
+
+### v0.3.1
+
+- **Fix: Grid packing after filters** — Recalculates masonry row spans when label filters or search change, ensuring notes snap back to the correct layout after clearing filters. Implemented by dispatching `notes-grid:recalc` in `client/src/components/NotesGrid.tsx` whenever `selectedLabelIds`, `searchQuery`, or `notes` change.
+
 ## API Summary
 
 - `POST /api/auth/register` — Register (invite required if registration disabled).

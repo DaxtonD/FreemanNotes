@@ -10,6 +10,7 @@
   --checkbox-border: var(--checkbox-border-default);
   --accent:#ffcc00;
   --gap:16px;
+  --row:8px; /* masonry row unit for tight vertical packing */
   --sidebar-width:220px;
   --checklist-item-shift: 6px;
   --note-card-width: 288px; /* fixed card width; change this to experiment (or via prefs) */
@@ -77,6 +78,7 @@ body{
      JS sets --cols based on available width and global card width. */
   display: grid;
   grid-template-columns: repeat(var(--cols, 1), var(--note-card-width));
+  grid-auto-rows: var(--row);
   grid-auto-flow: dense;
   gap: var(--gap);
   margin: 0;
