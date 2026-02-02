@@ -26,10 +26,31 @@ RUN chmod +x server/scripts/docker-entrypoint.sh
 
 # Install Python and PaddleOCR dependencies in a virtualenv (PEP 668 compliant)
 RUN apt-get update && \
-	apt-get install -y --no-install-recommends python3 python3-venv python3-pip && \
-	python3 -m venv /opt/ocr-venv && \
-	/opt/ocr-venv/bin/pip install --no-cache-dir -r scripts/requirements.txt && \
-	apt-get clean && rm -rf /var/lib/apt/lists/*
+		apt-get install -y --no-install-recommends python3 python3-venv python3-pip && \
+		python3 -m venv /opt/ocr-venv && \
+		/opt/ocr-venv/bin/pip install --no-cache-dir --upgrade pip wheel && \
+		# Install Paddle runtime
+		/opt/ocr-venv/bin/pip install --no-cache-dir paddlepaddle==2.6.2 && \
+		# Install PaddleOCR without heavy optional deps (avoid PyMuPDF build)
+		/opt/ocr-venv/bin/pip install --no-cache-dir --no-deps paddleocr==2.7.0 && \
+		# Install minimal deps required for image OCR (no PDF extras)
+		/opt/ocr-venv/bin/pip install --no-cache-dir \
+			numpy \
+			Pillow==10.2.0 \
+			opencv-python-headless \
+			shapely \
+			scikit-image \
+			imgaug \
+			pyclipper \
+			lmdb \
+			rapidfuzz \
+			tqdm \
+			visualdl \
+			fire \
+			requests \
+			protobuf \
+			scipy && \
+		apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Point app to the venv Python
 ENV PYTHON_BIN=/opt/ocr-venv/bin/python
