@@ -47,4 +47,3 @@ ENV PYTHON_BIN=/opt/ocr-venv/bin/python
 
 EXPOSE 4000
 ENTRYPOINT ["/bin/sh", "server/scripts/docker-entrypoint.sh"]
-]
