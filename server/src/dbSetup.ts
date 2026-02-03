@@ -48,12 +48,7 @@ export async function ensureDatabaseReady() {
   // Ensure Prisma client is generated before importing/using it to avoid Windows file locks
   if (!hasGeneratedClient()) {
     try {
-      // Make sure DATABASE_URL is set via helper script if DB_* env vars are provided
-      try {
-        runCommand('node ./server/scripts/set-database-url.js');
-      } catch (e) {
-        // ignore - script exits 0 when DATABASE_URL present
-      }
+      // DATABASE_URL must be provided via environment or .env; deprecated helper removed
 
       generateClientWithRetries();
     } catch (genErr) {

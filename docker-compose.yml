@@ -1,24 +1,16 @@
 version: "3.8"
 services:
-  freemannotes:
-    build: .
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runner
     ports:
       - "4000:4000"
     env_file:
       - .env
     environment:
-      - OCR_SERVICE_URL=http://ocr:8080/ocr
-    depends_on:
-      - ocr
-  ocr:
-    build:
-      context: .
-      dockerfile: ocr-service/Dockerfile
-    expose:
-      - "8080"
-    # MySQL is external; if you run MySQL in compose, add it here and adjust .env
-    # networks:
-    #   - appnet
-#networks:
-#  appnet:
-#    driver: bridge
+      - NODE_ENV=production
+      - PORT=4000
+      - DATABASE_URL=${DATABASE_URL}
+    restart: unless-stopped
