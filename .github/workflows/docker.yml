@@ -5,25 +5,22 @@ on:
     branches:
       - main
     tags:
-      - 'v*'  # triggers on tags like v0.3.3
+      - 'v*'
 
 jobs:
   build-and-push:
     runs-on: ubuntu-latest
     permissions:
-      contents: read    # read repo content
-      packages: write   # write to GHCR
+      contents: read
+      packages: write
 
     steps:
-      # 1️⃣ Checkout the repo
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # 2️⃣ Setup Docker Buildx for multi-platform builds
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      # 3️⃣ Login to GitHub Container Registry using your PAT
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v3
         with:
@@ -31,25 +28,26 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GHCR_PAT }}
 
-      # 4️⃣ Extract metadata for Docker image tags
       - name: Extract Docker metadata
         id: meta
         uses: docker/metadata-action@v5
         with:
           images: ghcr.io/${{ github.repository_owner }}/freemannotes
           tags: |
-            type=ref,event=tag
+            # 1. Handle semantic versioning (v0.3.3 -> 0.3.3)
             type=semver,pattern={{version}}
+            # 2. Handle major/minor versions (v0.3.3 -> 0.3)
             type=semver,pattern={{major}}.{{minor}}
-            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+            # 3. Force update 'latest' for BOTH main branch pushes and version tags
+            type=raw,value=latest,enable=true
 
-      # 5️⃣ Build and push Docker image
       - name: Build and push Docker image
         uses: docker/build-push-action@v6
         with:
           context: .
           file: ./Dockerfile
           target: runner
+          # Note: Multi-platform builds are slow; this is correct but takes time
           platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ steps.meta.outputs.tags }}
