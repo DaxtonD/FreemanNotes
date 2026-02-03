@@ -2,8 +2,13 @@
 set -e
 
 echo "Starting docker entrypoint: set DATABASE_URL if needed and ensure DB schema"
-# Ensure DATABASE_URL is set from DB_* env vars
-node ./server/scripts/set-database-url.js || true
+
+# Only run set-database-url.js if it exists
+if [ -f ./server/scripts/set-database-url.js ]; then
+  node ./server/scripts/set-database-url.js
+else
+  echo "set-database-url.js not found, skipping"
+fi
 
 echo "Running setup-db (db push + prisma generate)"
 npm run setup-db
