@@ -1,8 +1,7 @@
-# Link image to GitHub repository for GHCR permissions
-LABEL org.opencontainers.image.source="https://github.com/daxtond/freemannotes"
-
 # Stage 1: build client
 FROM node:20-bookworm-slim AS builder
+# Link image to GitHub repository for GHCR permissions
+LABEL org.opencontainers.image.source="https://github.com/daxtond/freemannotes"
 WORKDIR /app
 COPY package.json package-lock.json* ./
 # Ensure postinstall scripts exist

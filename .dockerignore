@@ -1,0 +1,46 @@
+# Git
+.git
+.gitignore
+
+# Node
+node_modules
+npm-debug.log
+yarn-debug.log
+yarn-error.log
+
+# Build outputs (rebuilt inside Docker)
+dist
+client-dist
+build
+.next
+.out
+
+# Environment / secrets
+.env
+.env.*
+*.pem
+*.key
+
+# OS / editor noise
+.DS_Store
+Thumbs.db
+.vscode
+.idea
+
+# Logs
+logs
+*.log
+
+# Docker
+Dockerfile.*
+docker-compose.yml
+
+# Tests / coverage
+coverage
+.nyc_output
+
+# Misc
+*.swp
+*.swo
+*.tmp
+.cache

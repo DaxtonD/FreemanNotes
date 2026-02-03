@@ -5,15 +5,14 @@ on:
     branches:
       - main
     tags:
-      - "v*"
-
-permissions:
-  contents: read
-  packages: write
+      - 'v*'
 
 jobs:
   build-and-push:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
 
     steps:
       - name: Checkout repository
@@ -45,6 +44,7 @@ jobs:
         with:
           context: .
           file: ./Dockerfile
+          target: runner
           platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ steps.meta.outputs.tags }}
