@@ -10,8 +10,6 @@ function applySavedPrefs() {
 				'prefs.checklistSpacing': '--checklist-gap',
 				'prefs.checkboxSize': '--checklist-checkbox-size',
 				'prefs.checklistTextSize': '--checklist-text-size',
-				'prefs.checkboxBg': '--checkbox-bg',
-				'prefs.checkboxBorder': '--checkbox-border',
 				'prefs.noteWidth': '--note-card-width',
 				'prefs.fontFamily': '--app-font-family',
 			};

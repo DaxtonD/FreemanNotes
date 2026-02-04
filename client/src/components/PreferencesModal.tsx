@@ -1,9 +1,21 @@
 import React, { useEffect, useState } from 'react';
 import { useAuth } from '../authContext';
 import SettingsModal from './SettingsModal';
+import { useTheme } from '../themeContext';
+
+const APP_VERSION = typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : '0.0.0';
+const ABOUT_ICON_DARK = '/icons/darkicon.png';
+const ABOUT_ICON_LIGHT = '/icons/lighticon.png';
+const ABOUT_WORDMARK = '/icons/freemannotes.png';
+const VERSION_ICON_DARK = '/icons/version.png';
+const VERSION_ICON_LIGHT = '/icons/version-light.png';
 
 export default function PreferencesModal({ onClose }: { onClose: () => void }) {
   const auth = (() => { try { return useAuth(); } catch { return null as any; } })();
+  const themeCtx = (() => { try { return useTheme(); } catch { return null as any; } })();
+  const effectiveTheme = (themeCtx && (themeCtx as any).effective) || 'dark';
+  const themeChoice = (themeCtx && (themeCtx as any).choice) || 'system';
+  const setThemeChoice: (t: any) => void = (themeCtx && (themeCtx as any).setChoice) || (() => {});
   const [pending, setPending] = useState<number>(() => {
     try {
       const v = localStorage.getItem('prefs.checklistSpacing');
@@ -97,14 +109,7 @@ export default function PreferencesModal({ onClose }: { onClose: () => void }) {
     document.documentElement.style.setProperty('--checklist-text-size', `${pendingTextSize}px`);
     // apply note/card width preference
     document.documentElement.style.setProperty('--note-card-width', `${pendingNoteWidth}px`);
-    // apply colors; if reset requested, use defaults
-    if (resetColors) {
-      document.documentElement.style.setProperty('--checkbox-bg', 'var(--card)');
-      document.documentElement.style.setProperty('--checkbox-border', 'var(--checkbox-border-default)');
-    } else {
-      document.documentElement.style.setProperty('--checkbox-bg', pendingCheckboxBg);
-      document.documentElement.style.setProperty('--checkbox-border', pendingCheckboxBorder);
-    }
+    // checkbox color customization removed — theme controls visuals
     try { localStorage.setItem('prefs.checklistSpacing', String(pending)); } catch {}
     try { localStorage.setItem('prefs.checkboxSize', String(pendingCheckboxSize)); } catch {}
     try { localStorage.setItem('prefs.checklistTextSize', String(pendingTextSize)); } catch {}
@@ -132,24 +137,10 @@ export default function PreferencesModal({ onClose }: { onClose: () => void }) {
         checklistTextSize: pendingTextSize,
         chipDisplayMode: pendingChipDisplayMode
       };
-      if (resetColors) {
-        payload.checkboxBg = null;
-        payload.checkboxBorder = null;
-      } else {
-        payload.checkboxBg = pendingCheckboxBg;
-        payload.checkboxBorder = pendingCheckboxBorder;
-      }
+      // remove checkbox color fields from payload
       await (auth?.updateMe?.(payload));
     } catch {}
-    try {
-      if (resetColors) {
-        localStorage.removeItem('prefs.checkboxBg');
-        localStorage.removeItem('prefs.checkboxBorder');
-      } else {
-        localStorage.setItem('prefs.checkboxBg', pendingCheckboxBg);
-        localStorage.setItem('prefs.checkboxBorder', pendingCheckboxBorder);
-      }
-    } catch {}
+    try { localStorage.removeItem('prefs.checkboxBg'); localStorage.removeItem('prefs.checkboxBorder'); } catch {}
     onClose();
   }
 
@@ -201,12 +192,41 @@ export default function PreferencesModal({ onClose }: { onClose: () => void }) {
           {activeSection == null ? (
             <div>
               <div style={{ display: 'grid', gap: 10 }}>
+                <button className="btn" onClick={() => setActiveSection('about')}>About</button>
                 <button className="btn" onClick={() => setActiveSection('appearance')}>Appearance</button>
-                <button className="btn" onClick={() => setActiveSection('colors')}>Colors</button>
+                {false && <button className="btn" onClick={() => setActiveSection('colors')}>Colors</button>}
                 <button className="btn" onClick={() => setActiveSection('drag')}>Drag & Animation</button>
                 <button className="btn" onClick={() => setActiveSection('collaborators')}>Collaborators</button>
               </div>
               <div style={{ marginTop: 16, display: 'flex', gap: 8, justifyContent: 'flex-start' }}>
+                <button className="btn" onClick={onCancel}>Close</button>
+                <span style={{ flex: 1 }} />
+                { (auth?.user as any)?.role === 'admin' && <button className="btn" onClick={() => setShowInvite(true)}>Send Invite</button> }
+                <button className="btn" onClick={() => auth?.logout?.()}>Sign out</button>
+              </div>
+            </div>
+          ) : activeSection === 'about' ? (
+            <div>
+              <button className="btn" onClick={() => setActiveSection(null)} aria-label="Back">← Back</button>
+              <div style={{ height: 8 }} />
+              <h4>About Freeman Notes</h4>
+              <div className="about-hero-group">
+                <div className="about-hero" aria-label="Freeman Notes branding">
+                  <img src={effectiveTheme === 'light' ? ABOUT_ICON_LIGHT : ABOUT_ICON_DARK} alt="Freeman Notes icon" className="about-hero-icon" />
+                  <img src={ABOUT_WORDMARK} alt="" role="presentation" className="about-hero-wordmark" onError={(e) => { e.currentTarget.style.display = 'none'; }} />
+                </div>
+                <div className="about-version-row" aria-label="Current version">
+                  <img src={effectiveTheme === 'light' ? VERSION_ICON_LIGHT : VERSION_ICON_DARK} alt="Version badge" className="about-version-icon" />
+                  <span className="about-version-text">{APP_VERSION}</span>
+                </div>
+              </div>
+              <div className="about-description">
+                <p>Freeman Notes exists to prevent small thoughts from becoming resonance cascades.</p>
+                <p>It captures ideas before they scatter, organizes them without Combine interference, and keeps Civil Protection out of your creative process.</p>
+                <p>No manhacks. No surveillance. Just free notes, recorded and remembered on your terms.</p>
+              </div>
+              <div style={{ marginTop: 16, display: 'flex', gap: 8, justifyContent: 'flex-start' }}>
+                <button className="btn" onClick={() => setActiveSection(null)}>Back</button>
                 <button className="btn" onClick={onCancel}>Close</button>
                 <span style={{ flex: 1 }} />
                 { (auth?.user as any)?.role === 'admin' && <button className="btn" onClick={() => setShowInvite(true)}>Send Invite</button> }
@@ -218,6 +238,17 @@ export default function PreferencesModal({ onClose }: { onClose: () => void }) {
               <button className="btn" onClick={() => setActiveSection(null)} aria-label="Back">← Back</button>
               <div style={{ height: 8 }} />
               <h4>Appearance</h4>
+              <div style={{ marginBottom: 16 }}>
+                <h5 style={{ margin: 0, color: 'var(--muted)' }}>Theme</h5>
+                <div style={{ display: 'flex', gap: 12, alignItems: 'center', justifyContent: 'flex-start' }}>
+                  <label style={{ color: 'var(--muted)', minWidth: 120 }}>Appearance</label>
+                  <select value={themeChoice} onChange={(e) => setThemeChoice(e.target.value)}>
+                    <option value="dark">Dark</option>
+                    <option value="light">Light</option>
+                    <option value="system">System</option>
+                  </select>
+                </div>
+              </div>
               <div style={{ marginBottom: 16 }}>
                 <h5 style={{ margin: 0, color: 'var(--muted)' }}>Profile Photo</h5>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>

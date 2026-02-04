@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from "react";
 import RegisterModal from "./RegisterModal";
 import LoginModal from "./LoginModal";
 import PreferencesModal from "./PreferencesModal";
+import { useTheme } from "../themeContext";
 import { useAuth } from "../authContext";
 
 export default function Header({ onToggleSidebar, searchQuery, onSearchChange }: { onToggleSidebar?: () => void, searchQuery?: string, onSearchChange?: (q: string) => void }) {
@@ -10,6 +11,7 @@ export default function Header({ onToggleSidebar, searchQuery, onSearchChange }:
   const [showPrefs, setShowPrefs] = useState(false);
   const [registrationEnabled, setRegistrationEnabled] = useState<boolean | null>(null);
   const { user, logout } = useAuth();
+  const theme = (() => { try { return useTheme(); } catch { return { effective: 'dark' } as any; } })();
 
   useEffect(() => {
     fetch('/api/config').then(r => r.json()).then((d) => setRegistrationEnabled(Boolean(d.userRegistrationEnabled))).catch(() => setRegistrationEnabled(false));
@@ -22,7 +24,7 @@ export default function Header({ onToggleSidebar, searchQuery, onSearchChange }:
       <div className="header-left">
         <button className="menu-btn" aria-label="menu" onClick={() => onToggleSidebar && onToggleSidebar()}>☰</button>
         <div className="brand-inline">
-          <img src="/icons/darkicon.png" alt="FreemanNotes icon" className="app-icon" />
+          <img src={(theme.effective === 'light') ? '/icons/lighticon.png' : '/icons/darkicon.png'} alt="FreemanNotes icon" className="app-icon" />
           <div className="brand">Freeman Notes</div>
         </div>
       </div>

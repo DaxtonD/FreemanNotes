@@ -13,6 +13,8 @@ import ReminderPicker from './ReminderPicker';
 import CollaboratorModal from './CollaboratorModal';
 import ImageDialog from './ImageDialog';
 import ImageLightbox from './ImageLightbox';
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
+import { faPalette } from '@fortawesome/free-solid-svg-icons';
 
 export default function RichTextEditor({ note, onClose, onSaved, noteBg, onImagesUpdated }:
   { note: any; onClose: () => void; onSaved?: (payload: { title: string; body: string }) => void; noteBg?: string; onImagesUpdated?: (images: Array<{ id:number; url:string }>) => void }) {
@@ -294,7 +296,9 @@ export default function RichTextEditor({ note, onClose, onSaved, noteBg, onImage
         </div>
         <div className="dialog-footer" style={{ borderTop: `1px solid ${textColor || 'rgba(255,255,255,0.15)'}` }}>
           <div className="note-actions" style={{ marginRight: 'auto', display: 'inline-flex', gap: 8, justifyContent: 'flex-start' }}>
-            <button className="tiny palette" onClick={() => setShowPalette(true)} aria-label="Change color" title="Change color">🎨</button>
+            <button className="tiny palette" onClick={() => setShowPalette(true)} aria-label="Change color" title="Change color">
+              <FontAwesomeIcon icon={faPalette} className="palette-svg" />
+            </button>
             <button className="tiny" onClick={() => setShowReminderPicker(true)} aria-label="Reminder" title="Reminder">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
                 <path d="M12 22c1.1 0 2-.9 2-2h-4a2 2 0 0 0 2 2z"/>

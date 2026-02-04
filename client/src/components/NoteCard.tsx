@@ -1,10 +1,13 @@
 import React, { useRef, useState } from "react";
+import { useTheme } from '../themeContext';
 import DOMPurify from 'dompurify';
 import { useAuth } from '../authContext';
 import ChecklistEditor from "./ChecklistEditor";
 import RichTextEditor from "./RichTextEditor";
 import CollaboratorModal from "./CollaboratorModal";
 import MoreMenu from "./MoreMenu";
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
+import { faPalette } from '@fortawesome/free-solid-svg-icons';
 import LabelsDialog from "./LabelsDialog";
 import ColorPalette from "./ColorPalette";
 import ImageDialog from "./ImageDialog";
@@ -62,6 +65,7 @@ function contrastColorForBackground(hex?: string | null): string | undefined {
 
 export default function NoteCard({ note, onChange }: { note: Note, onChange?: () => void }) {
   const noteRef = useRef<HTMLElement | null>(null);
+  const theme = (() => { try { return useTheme(); } catch { return { effective: 'dark' } as any; } })();
 
   const [bg, setBg] = useState<string>((note as any).viewerColor || note.color || ""); // empty = theme card color
   // default text color for "Default" palette will use CSS var --muted so it matches original layout
@@ -435,8 +439,23 @@ export default function NoteCard({ note, onChange }: { note: Note, onChange?: ()
     }
   }
 
+  // Normalize legacy saved defaults when theme switches: if a note saved the default dark
+  // or light background explicitly, treat it as theme-default so it adapts across themes.
+  const normalizedBg = (() => {
+    const v = (bg || '').toLowerCase().trim();
+    // Known dark defaults from prior versions and related UI surfaces
+    const darkDefaults = new Set(["#1e1e1e", "#121212", "#181818", "#1c1c1c", "#161616"]);
+    const lightDefaults = new Set(["#ffffff", "#fff"]);
+    if (theme.effective === 'light' && (darkDefaults.has(v))) return '';
+    if (theme.effective === 'dark' && (lightDefaults.has(v))) return '';
+    return bg;
+  })();
+
+  // Derive the final text color from the effective background; for theme-default bg use inherit
+  const finalTextColor: string | undefined = normalizedBg ? contrastColorForBackground(normalizedBg) : undefined;
+
   // compute chip background so it's visible against selected background/text color
-  const chipBg = (textColor === "#ffffff" || textColor === "var(--muted)")
+  const chipBg = (finalTextColor === "#ffffff" || finalTextColor === "var(--muted)")
     ? "rgba(0,0,0,0.12)"
     : "rgba(255,255,255,0.06)";
 
@@ -458,8 +477,8 @@ export default function NoteCard({ note, onChange }: { note: Note, onChange?: ()
     } catch {}
 
     const styleVars: React.CSSProperties = {
-      background: bg || undefined,
-      color: textColor || undefined,
+      background: normalizedBg || undefined,
+      color: finalTextColor || undefined,
       opacity: archived ? 0.6 : 1,
       position: 'relative',
       // eslint-disable-next-line @typescript-eslint/ban-ts-comment
@@ -467,19 +486,19 @@ export default function NoteCard({ note, onChange }: { note: Note, onChange?: ()
       ['--chip-bg' as any]: chipBg,
     } as React.CSSProperties;
     // Only override checkbox vars when the note has an explicit background color.
-    if (bg) {
+    if (normalizedBg) {
       // eslint-disable-next-line @typescript-eslint/ban-ts-comment
       // @ts-ignore
-      styleVars['--checkbox-bg'] = bg;
+      styleVars['--checkbox-bg'] = normalizedBg;
       // eslint-disable-next-line @typescript-eslint/ban-ts-comment
       // @ts-ignore
-      styleVars['--checkbox-border'] = contrastColorForBackground(bg);
+      styleVars['--checkbox-border'] = contrastColorForBackground(normalizedBg);
       // eslint-disable-next-line @typescript-eslint/ban-ts-comment
       // @ts-ignore
-      styleVars['--checkbox-checked-bg'] = bg;
+      styleVars['--checkbox-checked-bg'] = normalizedBg;
       // eslint-disable-next-line @typescript-eslint/ban-ts-comment
       // @ts-ignore
-      styleVars['--checkbox-checked-mark'] = contrastColorForBackground(bg);
+      styleVars['--checkbox-checked-mark'] = contrastColorForBackground(normalizedBg);
     }
 
     return (
@@ -532,7 +551,7 @@ export default function NoteCard({ note, onChange }: { note: Note, onChange?: ()
                   type="button"
                   onClick={(e) => { e.stopPropagation(); toggleItemChecked(it.id, !it.checked); }}
                   aria-pressed={!!it.checked}
-                  style={{ background: 'var(--checkbox-bg)', border: '2px solid var(--checkbox-border)' }}
+                  style={{ background: 'var(--checkbox-bg)', border: '2px solid var(--checkbox-border)', color: 'var(--checkbox-stroke)' }}
                 >
                   {it.checked && (
                     <svg viewBox="0 0 24 24" fill="none" aria-hidden focusable="false">
@@ -565,7 +584,7 @@ export default function NoteCard({ note, onChange }: { note: Note, onChange?: ()
                   type="button"
                   onClick={(e) => { e.stopPropagation(); toggleItemChecked(it.id, !it.checked); }}
                   aria-pressed={!!it.checked}
-                  style={{ background: 'var(--checkbox-bg)', border: '2px solid var(--checkbox-border)' }}
+                  style={{ background: 'var(--checkbox-bg)', border: '2px solid var(--checkbox-border)', color: 'var(--checkbox-stroke)' }}
                 >
                   {it.checked && (
                     <svg viewBox="0 0 24 24" fill="none" aria-hidden focusable="false">
@@ -610,7 +629,9 @@ export default function NoteCard({ note, onChange }: { note: Note, onChange?: ()
       {/* Protected footer region for actions (not affected by note bg/text color) */}
       <div className="note-footer" aria-hidden={false}>
         <div className="note-actions">
-          <button className="tiny palette" onClick={() => setShowPalette(true)} aria-label="Change color" title="Change color">🎨</button>
+          <button className="tiny palette" onClick={() => setShowPalette(true)} aria-label="Change color" title="Change color">
+            <FontAwesomeIcon icon={faPalette} className="palette-svg" />
+          </button>
           <button className="tiny" onClick={() => setShowReminderPicker(true)} aria-label="Reminder" title="Reminder">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
               <path d="M12 22c1.1 0 2-.9 2-2h-4a2 2 0 0 0 2 2z"/>

@@ -64,16 +64,18 @@ export default function NotesGrid({ selectedLabelIds = [], searchQuery = '' }: {
 
   // Recalculate grid packing when filters/search change or notes update
   useEffect(() => {
-    try {
       // Wait for DOM to update, then trigger a grid recalculation
       requestAnimationFrame(() => {
         try { window.dispatchEvent(new Event('notes-grid:recalc')); } catch {}
       });
-    } catch {}
+    try {} catch {}
   }, [selectedLabelIds, searchQuery, notes]);
 
   // Subscribe to lightweight server events to refresh list on share/unshare and update chips
   useEffect(() => {
+    // Observe child size changes and trigger span recalculation to prevent overlaps
+    const observedChildren = new WeakSet<Element>();
+    let childRO: ResizeObserver | null = null;
     if (!token) return;
     let ws: WebSocket | null = null;
     try {
@@ -147,6 +149,9 @@ export default function NotesGrid({ selectedLabelIds = [], searchQuery = '' }: {
   // Update all `.notes-grid` elements and lock their pixel width to the
   // discrete total for the current column count to avoid mid-resize shifting.
   useEffect(() => {
+    // Observe child size changes and trigger span recalculation to prevent overlaps
+    const observedChildren = new WeakSet<Element>();
+    let childRO: ResizeObserver | null = null;
     function updateCols() {
       // capture pre-layout positions for FLIP if columns change
       const beforeRects = new Map<number, DOMRect>();
@@ -241,9 +246,13 @@ export default function NotesGrid({ selectedLabelIds = [], searchQuery = '' }: {
             for (const g of grids) {
               if (enable) {
                 const spacing = (cardWidth + gap);
-                g.style.backgroundImage = `repeating-linear-gradient(to right, rgba(255,255,255,0.08) 0, rgba(255,255,255,0.08) 1px, transparent 1px, transparent ${spacing}px)`;
-                g.style.backgroundSize = `${spacing}px 100%`;
-                g.style.backgroundPosition = 'left top';
+                const rowUnit = parseInt(docStyle.getPropertyValue('--row')) || 8;
+                const rowSpacing = (rowUnit + gap);
+                const colsGuide = `repeating-linear-gradient(to right, rgba(255,255,255,0.08) 0, rgba(255,255,255,0.08) 1px, transparent 1px, transparent ${spacing}px)`;
+                const rowsGuide = `repeating-linear-gradient(to bottom, rgba(255,255,255,0.08) 0, rgba(255,255,255,0.08) 1px, transparent 1px, transparent ${rowSpacing}px)`;
+                g.style.backgroundImage = `${colsGuide}, ${rowsGuide}`;
+                g.style.backgroundSize = `${spacing}px 100%, 100% ${rowSpacing}px`;
+                g.style.backgroundPosition = 'left top, left top';
               } else {
                 g.style.backgroundImage = '';
                 g.style.backgroundSize = '';
@@ -262,12 +271,20 @@ export default function NotesGrid({ selectedLabelIds = [], searchQuery = '' }: {
             // Measure inner .note-card height (wrapper has no margins)
             const card = wrap.querySelector('.note-card') as HTMLElement | null;
             const h = card ? card.getBoundingClientRect().height : wrap.getBoundingClientRect().height;
+            // Masonry span: account for the grid row unit plus the gap per row
+            // so actual vertical spacing equals the grid's `gap`.
+            // Small cushion avoids edge cases where rounding lands items flush
+            // against the next row; keeps a consistent visible gap.
             const span = Math.max(1, Math.ceil((h + gapPx) / (row + gapPx)));
             // Avoid thrashing styles if unchanged
             if (wrap.dataset.__rowspan !== String(span)) {
               wrap.style.gridRowEnd = `span ${span}`;
               wrap.dataset.__rowspan = String(span);
             }
+            // Continuously observe children; if their size changes (images, fonts, edits), update spans
+            try {
+              if (childRO && !observedChildren.has(wrap)) { childRO.observe(wrap); observedChildren.add(wrap); }
+            } catch {}
           }
         }
       } catch {}
@@ -277,12 +294,18 @@ export default function NotesGrid({ selectedLabelIds = [], searchQuery = '' }: {
     const observerTarget = document.querySelector('.main-area') || document.body;
     const ro = new ResizeObserver(() => updateCols());
     ro.observe(observerTarget as Element);
+    try {
+      childRO = new ResizeObserver(() => {
+        requestAnimationFrame(() => updateCols());
+      });
+    } catch {}
     window.addEventListener('resize', updateCols);
     window.addEventListener('notes-grid:recalc', updateCols as EventListener);
     return () => {
       ro.disconnect();
       window.removeEventListener('resize', updateCols);
       window.removeEventListener('notes-grid:recalc', updateCols as EventListener);
+      try { childRO && childRO.disconnect(); } catch {}
     };
   }, []);
 

@@ -12,6 +12,8 @@ import ColorPalette from './ColorPalette';
 import ReminderPicker from './ReminderPicker';
 import CollaboratorModal from './CollaboratorModal';
 import ImageDialog from './ImageDialog';
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
+import { faPalette } from '@fortawesome/free-solid-svg-icons';
 
 export default function TakeNoteBar({ onCreated }: { onCreated?: () => void }): JSX.Element {
   const { token, user } = useAuth();
@@ -421,11 +423,9 @@ export default function TakeNoteBar({ onCreated }: { onCreated?: () => void }): 
       )}
 
       <div className="note-footer" aria-hidden={false} style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 10 }}>
-        <div className="note-actions" style={{ marginRight: 'auto', display: 'inline-flex', gap: 8, color: (bg ? textColor : '#ffffff') }}>
-          <button className="tiny" onClick={() => setShowPalette(true)} aria-label="Change color" title="Change color">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
-              <path d="M12 2c-5.5 0-10 3.6-10 8.1 0 3.2 2.5 5.9 6 6.9.5.1 1-.3 1-.8s-.3-.9-.8-1c-2.7-.7-4.6-3-4.6-5.8C3.6 6 7.4 3 12 3s8.4 3 8.4 6.4c0 2.7-2 5-4.7 5.7-.5.1-.8.5-.8 1s.5.9 1 .8c3.7-1 6.1-3.9 6.1-7.5C22 5.6 17.5 2 12 2z" />
-            </svg>
+        <div className="note-actions" style={{ marginRight: 'auto', display: 'inline-flex', gap: 8, color: (bg ? textColor : undefined) }}>
+          <button className="tiny palette" onClick={() => setShowPalette(true)} aria-label="Change color" title="Change color">
+            <FontAwesomeIcon icon={faPalette} className="palette-svg" />
           </button>
           <button className="tiny" onClick={() => setShowReminderPicker(true)} aria-label="Reminder" title="Reminder">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden>

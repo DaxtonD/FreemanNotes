@@ -36,7 +36,7 @@ export default function CollaboratorModal({ onClose, onSelect, current, onRemove
       <div
         className="collab-modal"
         onClick={(e) => e.stopPropagation()}
-        style={{ width: 'min(720px, 95vw)', maxHeight: '80vh', overflowY: 'auto', margin: '10vh auto 0', background: 'var(--popover-bg, #222)', color: 'inherit', borderRadius: 8, boxShadow: '0 10px 28px rgba(0,0,0,0.5)', padding: 16 }}
+        style={{ width: 'min(720px, 95vw)', maxHeight: '80vh', overflowY: 'auto', margin: '10vh auto 0', borderRadius: 8, boxShadow: '0 10px 28px rgba(0,0,0,0.5)', padding: 16 }}
       >
         <div className="collab-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
           <strong>Add collaborators</strong>
@@ -51,7 +51,7 @@ export default function CollaboratorModal({ onClose, onSelect, current, onRemove
               { (c as any).userImageUrl ? (
                 <img src={(c as any).userImageUrl} alt="" style={{ width: 28, height: 28, borderRadius: '50%', objectFit: 'cover' }} />
               ) : (
-                <div className="collab-avatar" style={{ width: 28, height: 28, borderRadius: '50%', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(255,255,255,0.1)' }}>
+                <div className="collab-avatar" style={{ width: 28, height: 28, borderRadius: '50%', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
                   {(c.name || c.email.split('@')[0])[0].toUpperCase()}
                 </div>
               ) }
@@ -71,7 +71,7 @@ export default function CollaboratorModal({ onClose, onSelect, current, onRemove
               { u.userImageUrl ? (
                 <img src={u.userImageUrl} alt="" style={{ width: 28, height: 28, borderRadius: '50%', objectFit: 'cover' }} />
               ) : (
-                <div className="collab-avatar" style={{ width: 28, height: 28, borderRadius: '50%', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(255,255,255,0.1)' }}>
+                <div className="collab-avatar" style={{ width: 28, height: 28, borderRadius: '50%', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
                   {(u.name || u.email.split('@')[0])[0].toUpperCase()}
                 </div>
               ) }

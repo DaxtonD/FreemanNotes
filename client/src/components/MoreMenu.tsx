@@ -94,7 +94,7 @@ export default function MoreMenu({
       <button className="more-item" onClick={() => { onAddLabel(); onClose(); }}>Add label</button>
       <button className="more-item" onClick={() => { onUncheckAll(); onClose(); }}>Uncheck all</button>
       <button className="more-item" onClick={() => { onCheckAll(); onClose(); }}>Check all</button>
-      <hr style={{ border: 'none', borderTop: '1px solid rgba(255,255,255,0.06)', margin: '6px 0' }} />
+      <hr className="more-sep" />
       <div style={{ display: 'grid', gap: 6 }}>
         <button className="more-item" onClick={() => { onSetWidth(1); onClose(); }}>Card width: Regular</button>
         <button className="more-item" onClick={() => { onSetWidth(2); onClose(); }}>Card width: Double</button>

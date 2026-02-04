@@ -4,6 +4,7 @@ import Sidebar from "./components/Sidebar";
 import NotesGrid from "./components/NotesGrid";
 import AuthGate from "./components/AuthGate";
 import { AuthProvider } from "./authContext";
+import { ThemeProvider } from "./themeContext";
 
 /**
  * Phase 1 app shell.
@@ -18,19 +19,21 @@ export default function App(): JSX.Element {
 	};
 	const clearLabels = () => setSelectedLabelIds([]);
 	return (
-		<AuthProvider>
-			<div className="app-root">
-				<Header onToggleSidebar={() => setSidebarCollapsed(c => !c)} searchQuery={searchQuery} onSearchChange={setSearchQuery} />
-				<div className="app-body">
-					<Sidebar selectedLabelIds={selectedLabelIds} onToggleLabel={toggleLabel} onClearLabels={clearLabels} collapsed={sidebarCollapsed} />
-					<main className="main-area">
-						{/* AuthGate renders NotesGrid when authenticated; pass filters via context-like props */}
-						{/* To keep AuthGate logic intact, duplicate NotesGrid for filter support within gate */}
-						<AuthGate selectedLabelIds={selectedLabelIds} searchQuery={searchQuery} />
-						{/* Fallback direct grid (optional): <NotesGrid selectedLabelIds={selectedLabelIds} /> */}
-					</main>
+		<ThemeProvider>
+			<AuthProvider>
+				<div className="app-root">
+					<Header onToggleSidebar={() => setSidebarCollapsed(c => !c)} searchQuery={searchQuery} onSearchChange={setSearchQuery} />
+					<div className="app-body">
+						<Sidebar selectedLabelIds={selectedLabelIds} onToggleLabel={toggleLabel} onClearLabels={clearLabels} collapsed={sidebarCollapsed} />
+						<main className="main-area">
+							{/* AuthGate renders NotesGrid when authenticated; pass filters via context-like props */}
+							{/* To keep AuthGate logic intact, duplicate NotesGrid for filter support within gate */}
+							<AuthGate selectedLabelIds={selectedLabelIds} searchQuery={searchQuery} />
+							{/* Fallback direct grid (optional): <NotesGrid selectedLabelIds={selectedLabelIds} /> */}
+						</main>
+					</div>
 				</div>
-			</div>
-		</AuthProvider>
+			</AuthProvider>
+		</ThemeProvider>
 	);
 }

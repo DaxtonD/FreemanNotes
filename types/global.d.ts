@@ -8,3 +8,15 @@ declare namespace JSX {
   interface Element {}
   interface IntrinsicElements { [elemName: string]: any; }
 }
+
+declare const __APP_VERSION__: string;
+
+declare module "*.svg" {
+  const src: string;
+  export default src;
+}
+
+declare module "*.png" {
+  const src: string;
+  export default src;
+}

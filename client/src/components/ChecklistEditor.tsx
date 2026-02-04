@@ -7,6 +7,8 @@ import ReminderPicker from './ReminderPicker';
 import CollaboratorModal from './CollaboratorModal';
 import ImageDialog from './ImageDialog';
 import ImageLightbox from './ImageLightbox';
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
+import { faPalette } from '@fortawesome/free-solid-svg-icons';
 import DOMPurify from 'dompurify';
 import * as Y from 'yjs';
 import { WebsocketProvider } from 'y-websocket';
@@ -1005,7 +1007,9 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
 
               <div className="dialog-footer">
                 <div className="note-actions" style={{ marginRight: 'auto', display: 'inline-flex', gap: 8, justifyContent: 'flex-start' }}>
-                  <button className="tiny palette" onClick={() => setShowPalette(true)} aria-label="Change color" title="Change color">🎨</button>
+                  <button className="tiny palette" onClick={() => setShowPalette(true)} aria-label="Change color" title="Change color">
+                    <FontAwesomeIcon icon={faPalette} className="palette-svg" />
+                  </button>
                   <button className="tiny" onClick={() => setShowReminderPicker(true)} aria-label="Reminder" title="Reminder">
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
                       <path d="M12 22c1.1 0 2-.9 2-2h-4a2 2 0 0 0 2 2z"/>

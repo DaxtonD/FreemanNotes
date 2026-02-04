@@ -2,8 +2,12 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import path from "path";
 import dotenv from "dotenv";
+import { readFileSync } from "node:fs";
 
 dotenv.config();
+
+const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
+const appVersion = pkg.version ?? "0.0.0";
 
 function collectAllowedHosts(): string[] {
   const hosts = new Set<string>();
@@ -25,6 +29,9 @@ function collectAllowedHosts(): string[] {
 export default defineConfig({
   root: path.resolve(__dirname),
   plugins: [react()],
+  define: {
+    __APP_VERSION__: JSON.stringify(appVersion)
+  },
   build: {
     outDir: path.resolve(__dirname, "..", "client-dist"),
     emptyOutDir: true,
