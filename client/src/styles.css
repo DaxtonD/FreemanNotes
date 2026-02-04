@@ -152,7 +152,7 @@ body{
 
 /* Rich text editor styling to match checklist aesthetics */
 .rt-toolbar { background: rgba(255,255,255,0.03); padding: 6px; border-radius: 6px; display:flex; flex-wrap: wrap; gap:8px; align-items:center; }
-.rt-toolbar .tiny { background: transparent; color: var(--muted); border: 1px solid rgba(255,255,255,0.12); padding: 4px 8px; border-radius: 6px; flex: 0 0 auto; }
+.rt-toolbar .tiny { background: transparent; color: inherit; border: 1px solid rgba(255,255,255,0.12); padding: 4px 8px; border-radius: 6px; flex: 0 0 auto; }
 :root[data-theme="light"] .rt-toolbar { background: rgba(0,0,0,0.03); }
 :root[data-theme="light"] .rt-toolbar .tiny { border-color: rgba(0,0,0,0.12); }
 .rt-toolbar .tiny svg { width: 18px; height: 18px; display: block; fill: currentColor; }
@@ -160,7 +160,7 @@ body{
 .rt-toolbar .tiny text { font-weight: 600; }
 .rt-toolbar .tiny[aria-pressed="true"] { background: rgba(255,255,255,0.08); color: #fff; }
 :root[data-theme="light"] .rt-toolbar .tiny[aria-pressed="true"] { background: rgba(0,0,0,0.08); color: #000; }
-.rt-editor { min-height: 300px; padding: 12px 14px; border-radius: 8px; background: var(--card); color: inherit; }
+.rt-editor { min-height: 300px; padding: 12px 14px; border-radius: 8px; background: inherit; color: inherit; }
 .rt-item { min-height: 22px; padding: 4px 6px; border-radius: 4px; background: transparent; color: inherit; }
 .rt-item p { margin: 0; font-size: var(--checklist-text-size); }
 .rt-editor h1, .rt-editor h2, .rt-editor h3 { margin: 8px 0; font-weight: 700; }
@@ -278,6 +278,7 @@ body{
 /* Icon hover/scale: consolidated and fixed (no syntax errors) */
 .note-actions .tiny,
 .note-footer .tiny {
+  color: inherit;
   filter: grayscale(100%);
   opacity: 0.9;
   transition: transform 140ms cubic-bezier(.2,0,0,1), opacity 120ms ease;
@@ -583,7 +584,8 @@ body{
 /* dialog header and close button should inherit the dialog's text color (set inline) */
 .image-dialog .icon-close,
 .image-dialog .icon-close:hover,
-.image-dialog .dialog-header strong {
+.image-dialog .dialog-header strong,
+.image-dialog .dialog-header .tiny {
   color: inherit;
 }
 /* preferences dialog header and close button inherit text color */

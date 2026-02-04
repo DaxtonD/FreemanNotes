@@ -33,5 +33,17 @@ function applySavedPrefs() {
 
 applySavedPrefs();
 
+// If a legacy service worker is still registered from previous builds, unregister it to prevent
+// intercepting requests and causing network errors on third-party beacons or mixed-content issues.
+try {
+	if ('serviceWorker' in navigator) {
+		navigator.serviceWorker.getRegistrations().then(regs => {
+			regs.forEach(reg => {
+				try { reg.unregister(); } catch {}
+			});
+		}).catch(() => {});
+	}
+} catch {}
+
 const root = createRoot(document.getElementById("root")!);
 root.render(<App />);

@@ -96,7 +96,8 @@ export default function NoteCard({ note, onChange }: { note: Note, onChange?: ()
   const [rtHtmlFromY, setRtHtmlFromY] = React.useState<string | null>(null);
   React.useEffect(() => {
     const room = `note-${note.id}`;
-    const serverUrl = `ws://${window.location.host}/collab`;
+    const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
+    const serverUrl = `${proto}://${window.location.host}/collab`;
     const provider = new WebsocketProvider(serverUrl, room, ydoc);
     providerRef.current = provider;
     const yarr = ydoc.getArray<Y.Map<any>>('checklist');
@@ -493,6 +494,9 @@ export default function NoteCard({ note, onChange }: { note: Note, onChange?: ()
       // eslint-disable-next-line @typescript-eslint/ban-ts-comment
       // @ts-ignore
       styleVars['--checkbox-border'] = contrastColorForBackground(normalizedBg);
+      // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+      // @ts-ignore
+      styleVars['--checkbox-stroke'] = contrastColorForBackground(normalizedBg);
       // eslint-disable-next-line @typescript-eslint/ban-ts-comment
       // @ts-ignore
       styleVars['--checkbox-checked-bg'] = normalizedBg;

@@ -83,7 +83,8 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
   // Setup Yjs provider and bind checklist CRDT
   useEffect(() => {
     const room = `note-${note.id}`;
-    const serverUrl = `ws://${window.location.host}/collab`;
+    const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
+    const serverUrl = `${proto}://${window.location.host}/collab`;
     const provider = new WebsocketProvider(serverUrl, room, ydoc);
     providerRef.current = provider;
     const yarr = ydoc.getArray<Y.Map<any>>('checklist');
@@ -540,6 +541,9 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
   // eslint-disable-next-line @typescript-eslint/ban-ts-comment
   // @ts-ignore
   if (text) dialogStyle['--checkbox-border'] = text;
+  // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+  // @ts-ignore
+  if (text) dialogStyle['--checkbox-stroke'] = text;
   // eslint-disable-next-line @typescript-eslint/ban-ts-comment
   // @ts-ignore
   if (bg) dialogStyle['--checkbox-checked-bg'] = bg;
@@ -1005,8 +1009,8 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
                 </div>
 
 
-              <div className="dialog-footer">
-                <div className="note-actions" style={{ marginRight: 'auto', display: 'inline-flex', gap: 8, justifyContent: 'flex-start' }}>
+              <div className="dialog-footer" style={{ borderTop: text ? `1px solid ${text}` : undefined }}>
+                <div className="note-actions" style={{ marginRight: 'auto', display: 'inline-flex', gap: 8, justifyContent: 'flex-start', color: text }}>
                   <button className="tiny palette" onClick={() => setShowPalette(true)} aria-label="Change color" title="Change color">
                     <FontAwesomeIcon icon={faPalette} className="palette-svg" />
                   </button>

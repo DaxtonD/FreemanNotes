@@ -35,7 +35,8 @@ export default function RichTextEditor({ note, onClose, onSaved, noteBg, onImage
   const providerRef = React.useRef<WebsocketProvider | null>(null);
   React.useEffect(() => {
     const room = `note-${note.id}`;
-    const serverUrl = `ws://${window.location.host}/collab`;
+    const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
+    const serverUrl = `${proto}://${window.location.host}/collab`;
     const provider = new WebsocketProvider(serverUrl, room, ydoc);
     providerRef.current = provider;
     return () => { try { provider.destroy(); } catch {} };
@@ -139,6 +140,10 @@ export default function RichTextEditor({ note, onClose, onSaved, noteBg, onImage
   React.useEffect(() => { setBg(noteBg ?? ((note as any).viewerColor || note.color || '')); }, [noteBg, (note as any).viewerColor, note.color]);
   if (bg) {
     (dialogStyle as any)['--checkbox-bg'] = bg;
+    (dialogStyle as any)['--checkbox-border'] = textColor || undefined;
+    (dialogStyle as any)['--checkbox-stroke'] = textColor || undefined;
+    (dialogStyle as any)['--checkbox-checked-bg'] = bg;
+    (dialogStyle as any)['--checkbox-checked-mark'] = textColor || undefined;
     dialogStyle.background = bg;
     if (textColor) dialogStyle.color = textColor;
   }
@@ -291,11 +296,11 @@ export default function RichTextEditor({ note, onClose, onSaved, noteBg, onImage
               }
             }}
           >
-            <EditorContent editor={editor} />
+            <EditorContent editor={editor} style={{ color: textColor }} />
           </div>
         </div>
         <div className="dialog-footer" style={{ borderTop: `1px solid ${textColor || 'rgba(255,255,255,0.15)'}` }}>
-          <div className="note-actions" style={{ marginRight: 'auto', display: 'inline-flex', gap: 8, justifyContent: 'flex-start' }}>
+          <div className="note-actions" style={{ marginRight: 'auto', display: 'inline-flex', gap: 8, justifyContent: 'flex-start', color: textColor }}>
             <button className="tiny palette" onClick={() => setShowPalette(true)} aria-label="Change color" title="Change color">
               <FontAwesomeIcon icon={faPalette} className="palette-svg" />
             </button>

@@ -165,7 +165,8 @@ export default function TakeNoteBar({ onCreated }: { onCreated?: () => void }): 
         try {
           const ydoc = new Y.Doc();
           const room = `note-${noteId}`;
-          const serverUrl = `ws://${window.location.host}/collab`;
+          const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
+          const serverUrl = `${proto}://${window.location.host}/collab`;
           const provider = new WebsocketProvider(serverUrl, room, ydoc);
           // Create a headless temporary editor bound to the Yjs doc and set content
           const tempEditor = new Editor({
