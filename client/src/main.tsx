@@ -12,6 +12,7 @@ function applySavedPrefs() {
 				'prefs.checklistTextSize': '--checklist-text-size',
 				'prefs.noteWidth': '--note-card-width',
 				'prefs.fontFamily': '--app-font-family',
+				'prefs.noteLineSpacing': '--note-line-height',
 			};
 			const pxKeys = new Set(['prefs.checklistSpacing', 'prefs.checkboxSize', 'prefs.checklistTextSize', 'prefs.noteWidth']);
 			Object.entries(map).forEach(([key, cssVar]) => {

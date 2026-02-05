@@ -20,6 +20,7 @@ model User {
   checklistSpacing Int?         @default(15)
   checkboxSize     Int?         @default(20)
   checklistTextSize Int?        @default(17)
+  noteLineSpacing  Float?       @default(1.38)
   dragBehavior   String?        @default("swap")
   animationSpeed String?        @default("normal")
   chipDisplayMode String?       @default("image+text")

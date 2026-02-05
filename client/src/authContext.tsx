@@ -62,6 +62,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         document.documentElement.style.setProperty('--checklist-text-size', String((user as any).checklistTextSize) + 'px');
         localStorage.setItem('prefs.checklistTextSize', String((user as any).checklistTextSize));
       }
+      if (typeof (user as any).noteLineSpacing === 'number') {
+        document.documentElement.style.setProperty('--note-line-height', String((user as any).noteLineSpacing));
+        localStorage.setItem('prefs.noteLineSpacing', String((user as any).noteLineSpacing));
+      }
       if ((user as any).checkboxBg) {
         document.documentElement.style.setProperty('--checkbox-bg', (user as any).checkboxBg);
         localStorage.setItem('prefs.checkboxBg', (user as any).checkboxBg);

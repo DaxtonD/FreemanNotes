@@ -2,8 +2,12 @@ import React, { useEffect, useState, useRef } from "react";
 import NoteCard from "./NoteCard";
 import { useAuth } from "../authContext";
 import TakeNoteBar from "./TakeNoteBar";
+import { DEFAULT_SORT_CONFIG, type SortConfig } from '../sortTypes';
 
-export default function NotesGrid({ selectedLabelIds = [], searchQuery = '' }: { selectedLabelIds?: number[], searchQuery?: string }) {
+type NoteLabelLite = { id: number; name: string };
+type NoteImageLite = { id: number; url: string };
+
+export default function NotesGrid({ selectedLabelIds = [], searchQuery = '', sortConfig = DEFAULT_SORT_CONFIG }: { selectedLabelIds?: number[], searchQuery?: string, sortConfig?: SortConfig }) {
   const { token } = useAuth();
   const [notes, setNotes] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -47,9 +51,11 @@ export default function NotesGrid({ selectedLabelIds = [], searchQuery = '' }: {
             for (const id of ids) {
               if (map.has(id) && !seen.has(id)) { ordered.push(map.get(id)); seen.add(id); }
             }
-            // append any notes not in saved order
-            for (const n of (data.notes || [])) if (!seen.has(n.id)) ordered.push(n);
-            setNotes(ordered);
+            // Prepend any notes not in saved order (e.g. newly created notes)
+            // so "newest" stays at the top-left by default.
+            const missing: any[] = [];
+            for (const n of (data.notes || [])) if (!seen.has(n.id)) missing.push(n);
+            setNotes([...missing, ...ordered]);
           }
         }
       } catch (e) { /* ignore malformed localStorage */ }
@@ -59,8 +65,121 @@ export default function NotesGrid({ selectedLabelIds = [], searchQuery = '' }: {
     } finally { setLoading(false); }
   }
 
+  function applyLabelsToNote(noteId: number, labels: NoteLabelLite[]) {
+    setNotes((s) => s.map((n) => {
+      if (Number(n.id) !== Number(noteId)) return n;
+      const nextNoteLabels = (Array.isArray(labels) ? labels : [])
+        .filter((l) => l && typeof l.id === 'number' && typeof l.name === 'string')
+        .map((l) => ({ id: l.id, label: { id: l.id, name: l.name } }));
+      return { ...n, noteLabels: nextNoteLabels };
+    }));
+  }
+
+  function applyImagesToNote(noteId: number, images: NoteImageLite[]) {
+    setNotes((s) => s.map((n) => {
+      if (Number(n.id) !== Number(noteId)) return n;
+      const nextImages = (Array.isArray(images) ? images : [])
+        .filter((img) => img && (typeof (img as any).url === 'string'))
+        .map((img: any) => ({ id: Number(img.id || Date.now()), url: String(img.url) }));
+      return { ...n, images: nextImages };
+    }));
+  }
+
   useEffect(() => { if (token) load(); else setNotes([]); }, [token]);
   useEffect(() => { notesRef.current = notes; }, [notes]);
+
+  const canManualReorder = !!(sortConfig && sortConfig.sortKey === 'default' && sortConfig.groupBy === 'none' && sortConfig.smartFilter === 'none');
+
+  function parseDateMaybe(v: any): number {
+    if (!v) return 0;
+    if (v instanceof Date) return v.getTime();
+    const t = Date.parse(String(v));
+    return Number.isFinite(t) ? t : 0;
+  }
+
+  function applySort(list: any[]): any[] {
+    const cfg = sortConfig || DEFAULT_SORT_CONFIG;
+    if (cfg.sortKey === 'default') return list;
+    const dir = cfg.sortDir === 'asc' ? 1 : -1;
+    const copy = [...list];
+    copy.sort((a, b) => {
+      if (cfg.sortKey === 'createdAt') {
+        return (parseDateMaybe(a.createdAt) - parseDateMaybe(b.createdAt)) * dir;
+      }
+      if (cfg.sortKey === 'updatedAt') {
+        return (parseDateMaybe(a.updatedAt) - parseDateMaybe(b.updatedAt)) * dir;
+      }
+      if (cfg.sortKey === 'title') {
+        const ta = String(a.title || '').trim();
+        const tb = String(b.title || '').trim();
+        const cmp = ta.localeCompare(tb, undefined, { sensitivity: 'base' });
+        if (cmp !== 0) return cmp * dir;
+        // stable-ish fallback
+        return (parseDateMaybe(a.createdAt) - parseDateMaybe(b.createdAt)) * -1;
+      }
+      return 0;
+    });
+    return copy;
+  }
+
+  function startOfWeekMs(d: Date): number {
+    // Monday-based week
+    const date = new Date(d);
+    const day = (date.getDay() + 6) % 7; // Mon=0..Sun=6
+    date.setHours(0, 0, 0, 0);
+    date.setDate(date.getDate() - day);
+    return date.getTime();
+  }
+
+  function groupNotes(list: any[]): Array<{ key: string; title: string; notes: any[]; sortMs: number }> {
+    const cfg = sortConfig || DEFAULT_SORT_CONFIG;
+    if (cfg.groupBy === 'none') return [{ key: 'all', title: '', notes: list, sortMs: 0 }];
+    const buckets = new Map<string, { title: string; notes: any[]; sortMs: number }>();
+
+    if (cfg.groupBy === 'week') {
+      const now = new Date();
+      const thisWeek = startOfWeekMs(now);
+      const lastWeek = thisWeek - 7 * 24 * 60 * 60 * 1000;
+      for (const n of list) {
+        const ms = parseDateMaybe(n.createdAt);
+        const wk = startOfWeekMs(new Date(ms || 0));
+        let key = 'older';
+        let title = 'Older';
+        let sortMs = 0;
+        if (wk >= thisWeek) { key = 'thisWeek'; title = 'This week'; sortMs = thisWeek; }
+        else if (wk >= lastWeek) { key = 'lastWeek'; title = 'Last week'; sortMs = lastWeek; }
+        const b = buckets.get(key) || { title, notes: [], sortMs };
+        b.notes.push(n);
+        buckets.set(key, b);
+      }
+      const order = ['thisWeek', 'lastWeek', 'older'];
+      return order
+        .filter(k => buckets.has(k))
+        .map(k => ({ key: k, title: buckets.get(k)!.title, notes: buckets.get(k)!.notes, sortMs: buckets.get(k)!.sortMs }));
+    }
+
+    if (cfg.groupBy === 'month') {
+      for (const n of list) {
+        const ms = parseDateMaybe(n.createdAt);
+        const d = new Date(ms || 0);
+        const y = d.getFullYear();
+        const m = d.getMonth();
+        const key = `${y}-${String(m + 1).padStart(2, '0')}`;
+        const title = d.toLocaleString(undefined, { month: 'long', year: 'numeric' });
+        const sortMs = new Date(y, m, 1).getTime();
+        const b = buckets.get(key) || { title, notes: [], sortMs };
+        b.notes.push(n);
+        buckets.set(key, b);
+      }
+      const groups = Array.from(buckets.entries()).map(([key, v]) => ({ key, title: v.title, notes: v.notes, sortMs: v.sortMs }));
+      // Default to newest month first. If explicitly sorting by createdAt asc, show oldest month first.
+      const monthDir = (cfg.sortKey === 'createdAt' && cfg.sortDir === 'asc') ? 1 : -1;
+      groups.sort((a, b) => (a.sortMs - b.sortMs) * monthDir);
+      return groups;
+    }
+
+    return [{ key: 'all', title: '', notes: list, sortMs: 0 }];
+  }
 
   // Recalculate grid packing when filters/search change or notes update
   useEffect(() => {
@@ -79,13 +198,42 @@ export default function NotesGrid({ selectedLabelIds = [], searchQuery = '' }: {
     if (!token) return;
     let ws: WebSocket | null = null;
     try {
-      const url = `ws://${window.location.host}/events?token=${encodeURIComponent(token)}`;
+      const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
+      const url = `${proto}://${window.location.host}/events?token=${encodeURIComponent(token)}`;
       ws = new WebSocket(url);
       ws.onmessage = (ev) => {
         try {
           const msg = JSON.parse(String(ev.data || '{}'));
           if (!msg || !msg.type) return;
           switch (msg.type) {
+            case 'note-created':
+              // Another session for this user created a note
+              load();
+              break;
+            case 'note-deleted': {
+              const payload = msg.payload || {};
+              const noteId = Number(payload.noteId);
+              if (Number.isFinite(noteId)) {
+                setNotes((s) => s.filter((n) => Number(n.id) !== noteId));
+              }
+              break;
+            }
+            case 'note-images-changed': {
+              const payload = msg.payload || {};
+              const noteId = Number(payload.noteId);
+              if (!Number.isFinite(noteId)) break;
+              // Refresh just the images for this note, then patch local state.
+              (async () => {
+                try {
+                  const res = await fetch(`/api/notes/${noteId}/images`, { headers: { Authorization: `Bearer ${token}` } });
+                  if (!res.ok) return;
+                  const data = await res.json();
+                  const imgs = Array.isArray(data?.images) ? data.images : [];
+                  applyImagesToNote(noteId, imgs);
+                } catch {}
+              })();
+              break;
+            }
             case 'note-shared':
               // Reload notes so the newly shared note appears immediately
               load();
@@ -168,7 +316,8 @@ export default function NotesGrid({ selectedLabelIds = [], searchQuery = '' }: {
       const availMain = main ? main.clientWidth : 0;
       const notesArea = document.querySelector('.notes-area') as HTMLElement | null;
       const availArea = notesArea ? notesArea.clientWidth : 0;
-      const sidebarWidth = parseInt(docStyle.getPropertyValue('--sidebar-width')) || 220;
+      const sidebarEl = document.querySelector('.sidebar') as HTMLElement | null;
+      const sidebarWidth = sidebarEl ? sidebarEl.clientWidth : (parseInt(docStyle.getPropertyValue('--sidebar-width')) || 220);
       const mainHorizontalPadding = 64; // matches `.main-area{padding:24px 32px}`
       const availFallback = window.innerWidth - sidebarWidth - mainHorizontalPadding;
       const avail = Math.max(availMain, availArea, availFallback, 0);
@@ -327,8 +476,12 @@ export default function NotesGrid({ selectedLabelIds = [], searchQuery = '' }: {
     // OCR text search removed
     return false;
   }
-  const pinned = notes.filter(n => n.pinned).filter(matchesLabels).filter(matchesSearch);
-  const others = notes.filter(n => !n.pinned).filter(matchesLabels).filter(matchesSearch);
+  const pinnedRaw = notes.filter(n => n.pinned).filter(matchesLabels).filter(matchesSearch);
+  const othersRaw = notes.filter(n => !n.pinned).filter(matchesLabels).filter(matchesSearch);
+  const pinned = applySort(pinnedRaw);
+  const others = applySort(othersRaw);
+  const pinnedGroups = groupNotes(pinned);
+  const otherGroups = groupNotes(others);
   function moveNote(from: number, to: number) {
     // FLIP for reordering only: capture before positions, update state, then animate transforms
     const before = new Map<number, DOMRect>();
@@ -437,152 +590,196 @@ export default function NotesGrid({ selectedLabelIds = [], searchQuery = '' }: {
       {pinned.length > 0 && (
         <div className="notes-section">
           <h4 className="section-title">Pinned</h4>
-          <div className="notes-grid" ref={gridRef}>
-            {pinned.map((n) => {
-              const globalIdx = notes.findIndex(x => x.id === n.id);
-              return (
-                <div key={n.id}
-                  style={{ gridColumn: `span ${Math.max(1, Math.min(3, Number((n as any).cardSpan || 1)))}` }}
-                  ref={(el) => { if (el) itemRefs.current.set(n.id, el); else itemRefs.current.delete(n.id); }}
-                  draggable
-                  onDragStart={(e) => {
-                    e.dataTransfer.setData('text/plain', String(globalIdx));
-                    setDraggingIndex(globalIdx);
-                    // align drag image to cursor using `.note-card` if available; do not hide original
-                    const wrapper = itemRefs.current.get(n.id);
-                    const cardEl = wrapper ? (wrapper.querySelector('.note-card') as HTMLElement | null) : null;
-                    if (cardEl) {
-                      const r = cardEl.getBoundingClientRect();
-                      const dpr = (window as any).devicePixelRatio || 1;
-                      const offsetX = (e.clientX - r.left) * dpr;
-                      const offsetY = (e.clientY - r.top) * dpr;
-                      try { e.dataTransfer.setDragImage(cardEl, offsetX, offsetY); } catch {}
-                    }
-                  }}
-                  onDragEnd={() => {
-                    setDraggingIndex(null);
-                    setHoverIndex(null);
-                  }}
-                  onDragOver={(e) => {
-                    e.preventDefault();
-                    setHoverIndex(globalIdx);
-                    try {
-                      const behavior = localStorage.getItem('prefs.dragBehavior') || 'swap';
-                      if (behavior === 'rearrange' && draggingIndex !== null && draggingIndex !== globalIdx) {
-                        const now = Date.now();
-                        const targetEl = e.currentTarget as HTMLElement;
-                        const rect = targetEl.getBoundingClientRect();
-                        const bufferY = Math.min(28, Math.floor(rect.height * 0.2));
-                        const bufferX = Math.min(20, Math.floor(rect.width * 0.2));
-                        const insideSafeY = e.clientY > rect.top + bufferY && e.clientY < rect.bottom - bufferY;
-                        const insideSafeX = e.clientX > rect.left + bufferX && e.clientX < rect.right - bufferX;
-                        const interval = Math.max(150, Math.floor(getAnimMs('rearrange') * 0.6));
-                        if (insideSafeY && insideSafeX && (now - lastSpliceAt.current > interval)) {
-                          moveNoteSplice(draggingIndex, globalIdx);
-                          lastSpliceAt.current = now;
-                          setDraggingIndex(globalIdx);
+          {pinnedGroups.map((g) => (
+            <div key={g.key}>
+              {g.title && g.key !== 'all' && <h5 className="section-title" style={{ marginTop: 10, marginBottom: 6, color: 'var(--muted)' }}>{g.title}</h5>}
+              <div className="notes-grid" ref={gridRef}>
+                {g.notes.map((n) => {
+                  const globalIdx = notes.findIndex(x => x.id === n.id);
+                  return (
+                    <div key={n.id}
+                      style={{ gridColumn: `span ${Math.max(1, Math.min(3, Number((n as any).cardSpan || 1)))}` }}
+                      ref={(el) => { if (el) itemRefs.current.set(n.id, el); else itemRefs.current.delete(n.id); }}
+                      draggable={canManualReorder}
+                      onDragStart={(e) => {
+                        if (!canManualReorder) return;
+                        e.dataTransfer.setData('text/plain', String(globalIdx));
+                        setDraggingIndex(globalIdx);
+                        // align drag image to cursor using `.note-card` if available; do not hide original
+                        const wrapper = itemRefs.current.get(n.id);
+                        const cardEl = wrapper ? (wrapper.querySelector('.note-card') as HTMLElement | null) : null;
+                        if (cardEl) {
+                          const r = cardEl.getBoundingClientRect();
+                          const dpr = (window as any).devicePixelRatio || 1;
+                          const offsetX = (e.clientX - r.left) * dpr;
+                          const offsetY = (e.clientY - r.top) * dpr;
+                          try { e.dataTransfer.setDragImage(cardEl, offsetX, offsetY); } catch {}
                         }
-                      }
-                    } catch {}
-                  }}
-                  onDrop={(e) => {
-                    e.preventDefault();
-                    const from = Number(e.dataTransfer.getData('text/plain'));
-                    const to = globalIdx;
-                    try {
-                      const behavior = localStorage.getItem('prefs.dragBehavior') || 'swap';
-                      if (behavior === 'rearrange') {
-                        moveNoteSplice(from, to);
-                      } else {
-                        moveNote(from, to);
-                      }
-                    } catch { moveNote(from, to); }
-                    // persist after state update — read latest notes from ref inside RAF
-                    requestAnimationFrame(() => { try { persistOrder(notesRef.current); } catch (err) {} });
-                    setDraggingIndex(null);
-                    setHoverIndex(null);
-                  }}
-                >
-                    <NoteCard note={n} onChange={load} />
-                </div>
-              );
-            })}
-          </div>
+                      }}
+                      onDragEnd={() => {
+                        if (!canManualReorder) return;
+                        setDraggingIndex(null);
+                        setHoverIndex(null);
+                      }}
+                      onDragOver={(e) => {
+                        if (!canManualReorder) return;
+                        e.preventDefault();
+                        setHoverIndex(globalIdx);
+                        try {
+                          const behavior = localStorage.getItem('prefs.dragBehavior') || 'swap';
+                          if (behavior === 'rearrange' && draggingIndex !== null && draggingIndex !== globalIdx) {
+                            const now = Date.now();
+                            const targetEl = e.currentTarget as HTMLElement;
+                            const rect = targetEl.getBoundingClientRect();
+                            const bufferY = Math.min(28, Math.floor(rect.height * 0.2));
+                            const bufferX = Math.min(20, Math.floor(rect.width * 0.2));
+                            const insideSafeY = e.clientY > rect.top + bufferY && e.clientY < rect.bottom - bufferY;
+                            const insideSafeX = e.clientX > rect.left + bufferX && e.clientX < rect.right - bufferX;
+                            const interval = Math.max(150, Math.floor(getAnimMs('rearrange') * 0.6));
+                            if (insideSafeY && insideSafeX && (now - lastSpliceAt.current > interval)) {
+                              moveNoteSplice(draggingIndex, globalIdx);
+                              lastSpliceAt.current = now;
+                              setDraggingIndex(globalIdx);
+                            }
+                          }
+                        } catch {}
+                      }}
+                      onDrop={(e) => {
+                        if (!canManualReorder) return;
+                        e.preventDefault();
+                        const from = Number(e.dataTransfer.getData('text/plain'));
+                        const to = globalIdx;
+                        try {
+                          const behavior = localStorage.getItem('prefs.dragBehavior') || 'swap';
+                          if (behavior === 'rearrange') {
+                            moveNoteSplice(from, to);
+                          } else {
+                            moveNote(from, to);
+                          }
+                        } catch { moveNote(from, to); }
+                        // persist after state update — read latest notes from ref inside RAF
+                        requestAnimationFrame(() => { try { persistOrder(notesRef.current); } catch (err) {} });
+                        setDraggingIndex(null);
+                        setHoverIndex(null);
+                      }}
+                    >
+                      <NoteCard
+                        note={n}
+                        onChange={(evt?: any) => {
+                          if (evt && evt.type === 'labels' && typeof evt.noteId === 'number' && Array.isArray(evt.labels)) {
+                            applyLabelsToNote(evt.noteId, evt.labels);
+                            return;
+                          }
+                          if (evt && evt.type === 'images' && typeof evt.noteId === 'number' && Array.isArray(evt.images)) {
+                            applyImagesToNote(evt.noteId, evt.images);
+                            return;
+                          }
+                          load();
+                        }}
+                      />
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
         </div>
       )}
       <div className="notes-section">
         <h4 className="section-title">Others</h4>
-        <div className="notes-grid">
-          {others.map((n) => {
-            const globalIdx = notes.findIndex(x => x.id === n.id);
-              return (
-              <div key={n.id}
-                style={{ gridColumn: `span ${Math.max(1, Math.min(3, Number((n as any).cardSpan || 1)))}` }}
-                ref={(el) => { if (el) itemRefs.current.set(n.id, el); else itemRefs.current.delete(n.id); }}
-                draggable
-                onDragStart={(e) => {
-                  e.dataTransfer.setData('text/plain', String(globalIdx));
-                  setDraggingIndex(globalIdx);
-                  // align drag image to cursor using `.note-card` if available; do not hide original
-                  const wrapper = itemRefs.current.get(n.id);
-                  const cardEl = wrapper ? (wrapper.querySelector('.note-card') as HTMLElement | null) : null;
-                  if (cardEl) {
-                    const r = cardEl.getBoundingClientRect();
-                    const dpr = (window as any).devicePixelRatio || 1;
-                    const offsetX = (e.clientX - r.left) * dpr;
-                    const offsetY = (e.clientY - r.top) * dpr;
-                    try { e.dataTransfer.setDragImage(cardEl, offsetX, offsetY); } catch {}
-                  }
-                }}
-                onDragEnd={() => {
-                  setDraggingIndex(null);
-                  setHoverIndex(null);
-                }}
-                onDragOver={(e) => {
-                  e.preventDefault();
-                  setHoverIndex(globalIdx);
-                  try {
-                    const behavior = localStorage.getItem('prefs.dragBehavior') || 'swap';
-                    if (behavior === 'rearrange' && draggingIndex !== null && draggingIndex !== globalIdx) {
-                      const now = Date.now();
-                      const targetEl = e.currentTarget as HTMLElement;
-                      const rect = targetEl.getBoundingClientRect();
-                      const bufferY = Math.min(28, Math.floor(rect.height * 0.2));
-                      const bufferX = Math.min(20, Math.floor(rect.width * 0.2));
-                      const insideSafeY = e.clientY > rect.top + bufferY && e.clientY < rect.bottom - bufferY;
-                      const insideSafeX = e.clientX > rect.left + bufferX && e.clientX < rect.right - bufferX;
-                      const interval = Math.max(150, Math.floor(getAnimMs('rearrange') * 0.6));
-                      if (insideSafeY && insideSafeX && (now - lastSpliceAt.current > interval)) {
-                        moveNoteSplice(draggingIndex, globalIdx);
-                        lastSpliceAt.current = now;
-                        setDraggingIndex(globalIdx);
+        {otherGroups.map((g) => (
+          <div key={g.key}>
+            {g.title && g.key !== 'all' && <h5 className="section-title" style={{ marginTop: 10, marginBottom: 6, color: 'var(--muted)' }}>{g.title}</h5>}
+            <div className="notes-grid">
+              {g.notes.map((n) => {
+                const globalIdx = notes.findIndex(x => x.id === n.id);
+                return (
+                  <div key={n.id}
+                    style={{ gridColumn: `span ${Math.max(1, Math.min(3, Number((n as any).cardSpan || 1)))}` }}
+                    ref={(el) => { if (el) itemRefs.current.set(n.id, el); else itemRefs.current.delete(n.id); }}
+                    draggable={canManualReorder}
+                    onDragStart={(e) => {
+                      if (!canManualReorder) return;
+                      e.dataTransfer.setData('text/plain', String(globalIdx));
+                      setDraggingIndex(globalIdx);
+                      // align drag image to cursor using `.note-card` if available; do not hide original
+                      const wrapper = itemRefs.current.get(n.id);
+                      const cardEl = wrapper ? (wrapper.querySelector('.note-card') as HTMLElement | null) : null;
+                      if (cardEl) {
+                        const r = cardEl.getBoundingClientRect();
+                        const dpr = (window as any).devicePixelRatio || 1;
+                        const offsetX = (e.clientX - r.left) * dpr;
+                        const offsetY = (e.clientY - r.top) * dpr;
+                        try { e.dataTransfer.setDragImage(cardEl, offsetX, offsetY); } catch {}
                       }
-                    }
-                  } catch {}
-                }}
-                onDrop={(e) => {
-                  e.preventDefault();
-                  const from = Number(e.dataTransfer.getData('text/plain'));
-                  const to = globalIdx;
-                  try {
-                    const behavior = localStorage.getItem('prefs.dragBehavior') || 'swap';
-                    if (behavior === 'rearrange') {
-                      moveNoteSplice(from, to);
-                    } else {
-                      moveNote(from, to);
-                    }
-                  } catch { moveNote(from, to); }
-                  // persist after state update — read latest notes from ref inside RAF
-                  requestAnimationFrame(() => { try { persistOrder(notesRef.current); } catch (err) {} });
-                  setDraggingIndex(null);
-                  setHoverIndex(null);
-                }}
-              >
-                <NoteCard note={n} onChange={load} />
-              </div>
-            );
-          })}
-        </div>
+                    }}
+                    onDragEnd={() => {
+                      if (!canManualReorder) return;
+                      setDraggingIndex(null);
+                      setHoverIndex(null);
+                    }}
+                    onDragOver={(e) => {
+                      if (!canManualReorder) return;
+                      e.preventDefault();
+                      setHoverIndex(globalIdx);
+                      try {
+                        const behavior = localStorage.getItem('prefs.dragBehavior') || 'swap';
+                        if (behavior === 'rearrange' && draggingIndex !== null && draggingIndex !== globalIdx) {
+                          const now = Date.now();
+                          const targetEl = e.currentTarget as HTMLElement;
+                          const rect = targetEl.getBoundingClientRect();
+                          const bufferY = Math.min(28, Math.floor(rect.height * 0.2));
+                          const bufferX = Math.min(20, Math.floor(rect.width * 0.2));
+                          const insideSafeY = e.clientY > rect.top + bufferY && e.clientY < rect.bottom - bufferY;
+                          const insideSafeX = e.clientX > rect.left + bufferX && e.clientX < rect.right - bufferX;
+                          const interval = Math.max(150, Math.floor(getAnimMs('rearrange') * 0.6));
+                          if (insideSafeY && insideSafeX && (now - lastSpliceAt.current > interval)) {
+                            moveNoteSplice(draggingIndex, globalIdx);
+                            lastSpliceAt.current = now;
+                            setDraggingIndex(globalIdx);
+                          }
+                        }
+                      } catch {}
+                    }}
+                    onDrop={(e) => {
+                      if (!canManualReorder) return;
+                      e.preventDefault();
+                      const from = Number(e.dataTransfer.getData('text/plain'));
+                      const to = globalIdx;
+                      try {
+                        const behavior = localStorage.getItem('prefs.dragBehavior') || 'swap';
+                        if (behavior === 'rearrange') {
+                          moveNoteSplice(from, to);
+                        } else {
+                          moveNote(from, to);
+                        }
+                      } catch { moveNote(from, to); }
+                      // persist after state update — read latest notes from ref inside RAF
+                      requestAnimationFrame(() => { try { persistOrder(notesRef.current); } catch (err) {} });
+                      setDraggingIndex(null);
+                      setHoverIndex(null);
+                    }}
+                  >
+                    <NoteCard
+                      note={n}
+                      onChange={(evt?: any) => {
+                        if (evt && evt.type === 'labels' && typeof evt.noteId === 'number' && Array.isArray(evt.labels)) {
+                          applyLabelsToNote(evt.noteId, evt.labels);
+                          return;
+                        }
+                        if (evt && evt.type === 'images' && typeof evt.noteId === 'number' && Array.isArray(evt.images)) {
+                          applyImagesToNote(evt.noteId, evt.images);
+                          return;
+                        }
+                        load();
+                      }}
+                    />
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        ))}
       </div>
     </section>
   );

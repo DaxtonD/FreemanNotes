@@ -22,3 +22,7 @@ prisma/dev.db
 # Logs
 logs/
 *.log
+
+# Local scratch / testing artifacts
+/1.mp4
+/frames-focus/

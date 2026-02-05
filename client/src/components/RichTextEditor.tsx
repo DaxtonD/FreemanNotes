@@ -2,10 +2,12 @@ import React from 'react';
 import { createPortal } from 'react-dom';
 import { useAuth } from '../authContext';
 import { EditorContent, useEditor } from '@tiptap/react';
+import { Extension } from '@tiptap/core';
 import StarterKit from '@tiptap/starter-kit';
 import Link from '@tiptap/extension-link';
 import TextAlign from '@tiptap/extension-text-align';
 import Collaboration from '@tiptap/extension-collaboration';
+import Underline from '@tiptap/extension-underline';
 import * as Y from 'yjs';
 import { WebsocketProvider } from 'y-websocket';
 import ColorPalette from './ColorPalette';
@@ -19,6 +21,9 @@ import { faPalette } from '@fortawesome/free-solid-svg-icons';
 export default function RichTextEditor({ note, onClose, onSaved, noteBg, onImagesUpdated }:
   { note: any; onClose: () => void; onSaved?: (payload: { title: string; body: string }) => void; noteBg?: string; onImagesUpdated?: (images: Array<{ id:number; url:string }>) => void }) {
   const { token, user } = useAuth();
+  const clientIdRef = React.useRef<string>((() => {
+    try { return `c${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`; } catch { return `c${Math.random()}`; }
+  })());
   const [title, setTitle] = React.useState<string>(note.title || '');
   const [maximized, setMaximized] = React.useState<boolean>(false);
   const [showPalette, setShowPalette] = React.useState(false);
@@ -26,6 +31,7 @@ export default function RichTextEditor({ note, onClose, onSaved, noteBg, onImage
   const [showCollaborator, setShowCollaborator] = React.useState(false);
   const [showImageDialog, setShowImageDialog] = React.useState(false);
   const [images, setImages] = React.useState<Array<{ id:number; url:string }>>(((note as any).images || []).map((i:any)=>({ id:Number(i.id), url:String(i.url) })));
+  const [imagesOpen, setImagesOpen] = React.useState(false);
   const [lightboxUrl, setLightboxUrl] = React.useState<string | null>(null);
   const [collaborators, setCollaborators] = React.useState<{ id:number; email:string }[]>([]);
   const seededOnceRef = React.useRef<boolean>(false);
@@ -42,21 +48,99 @@ export default function RichTextEditor({ note, onClose, onSaved, noteBg, onImage
     return () => { try { provider.destroy(); } catch {} };
   }, [note.id, ydoc]);
 
+  const broadcastImagesChanged = React.useCallback(() => {
+    try {
+      const ymeta = ydoc.getMap<any>('meta');
+      ymeta.set('imagesTick', { t: Date.now(), by: clientIdRef.current });
+    } catch {}
+  }, [ydoc]);
+
+  const refreshImagesFromServer = React.useCallback(async () => {
+    try {
+      const res = await fetch(`/api/notes/${note.id}/images`, { headers: { Authorization: `Bearer ${token}` } });
+      if (!res.ok) return;
+      const data = await res.json();
+      const next = (((data && data.images) || []).map((i: any) => ({ id: Number(i.id), url: String(i.url) })));
+      setImages(next);
+      onImagesUpdated && onImagesUpdated(next);
+    } catch {}
+  }, [note.id, token, onImagesUpdated]);
+
+  React.useEffect(() => {
+    const ymeta = (() => { try { return ydoc.getMap<any>('meta'); } catch { return null; } })();
+    if (!ymeta) return;
+    const onMeta = () => {
+      try {
+        const payload: any = ymeta.get('imagesTick');
+        if (!payload || !payload.t) return;
+        if (payload.by && String(payload.by) === String(clientIdRef.current)) return;
+        refreshImagesFromServer();
+      } catch {}
+    };
+    try { ymeta.observe(onMeta); } catch {}
+    return () => { try { ymeta.unobserve(onMeta); } catch {} };
+  }, [ydoc, refreshImagesFromServer]);
+
   const editor = useEditor({
     extensions: [
       StarterKit.configure({ heading: { levels: [1, 2, 3] } }),
       Link.configure({ openOnClick: true, autolink: true }),
       TextAlign.configure({ types: ['heading', 'paragraph'] }),
-      Collaboration.configure({ document: ydoc })
+      Collaboration.configure({ document: ydoc }),
+      Underline,
+      // Ensure equal spacing by splitting blocks instead of inserting hard breaks
+      Extension.create({
+        name: 'paragraphEnterFix',
+        priority: 1000,
+        addKeyboardShortcuts() {
+          return {
+            'Shift-Enter': () => {
+              const e = this.editor;
+              e.commands.splitBlock();
+              e.commands.setParagraph();
+              return true;
+            },
+            'Mod-Enter': () => {
+              const e = this.editor;
+              e.commands.splitBlock();
+              e.commands.setParagraph();
+              return true;
+            },
+          };
+        },
+      }),
     ],
     editorProps: { attributes: { class: 'rt-editor' } },
   });
 
+  function toggleMarkAcrossLine(mark: 'bold' | 'italic' | 'underline') {
+    if (!editor) return;
+    const sel: any = editor.state.selection;
+    if (!sel || !sel.empty) {
+      editor.chain().focus()[`toggle${mark.charAt(0).toUpperCase() + mark.slice(1)}` as 'toggleBold' | 'toggleItalic' | 'toggleUnderline']().run();
+      return;
+    }
+    const $from = sel.$from;
+    let depth = $from.depth;
+    while (depth > 0 && !$from.node(depth).isBlock) depth--;
+    const from = $from.start(depth);
+    const to = $from.end(depth);
+    const chain = editor.chain().focus().setTextSelection({ from, to });
+    if (mark === 'bold') chain.toggleBold().run();
+    else if (mark === 'italic') chain.toggleItalic().run();
+    else chain.toggleUnderline().run();
+    try { editor.chain().setTextSelection(sel.from).run(); } catch {}
+  }
+
   React.useEffect(() => {
     try {
       const next = (((note as any).images || []).map((i:any)=>({ id:Number(i.id), url:String(i.url) })));
-      setImages(next);
-      onImagesUpdated && onImagesUpdated(next);
+      setImages((cur) => {
+        try {
+          if (cur.length === next.length && cur.every((c, idx) => Number(c.id) === Number(next[idx]?.id) && String(c.url) === String(next[idx]?.url))) return cur;
+        } catch {}
+        return next;
+      });
     } catch {}
   }, [ (note as any).images ]);
 
@@ -167,6 +251,15 @@ export default function RichTextEditor({ note, onClose, onSaved, noteBg, onImage
   function onAddImageUrl(url?: string | null) {
     setShowImageDialog(false);
     if (!url) return;
+    const tempId = -Date.now();
+    // Optimistically show immediately
+    setImages((s) => {
+      const exists = s.some((x) => String(x.url) === String(url));
+      const next = exists ? s : [...s, { id: tempId, url: String(url) }];
+      onImagesUpdated && onImagesUpdated(next);
+      return next;
+    });
+    try { setImagesOpen(true); } catch {}
     (async () => {
       try {
         const res = await fetch(`/api/notes/${note.id}/images`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ url }) });
@@ -174,13 +267,22 @@ export default function RichTextEditor({ note, onClose, onSaved, noteBg, onImage
         const data = await res.json();
         const img = data.image || null;
         if (img && img.id && img.url) {
-          setImages(s => { const exists = s.some(x => Number(x.id) === Number(img.id)); const next = exists ? s : [...s, { id: Number(img.id), url: String(img.url) }]; onImagesUpdated && onImagesUpdated(next); return next; });
+          setImages((s) => {
+            const serverId = Number(img.id);
+            const serverUrl = String(img.url);
+            // Replace the optimistic temp entry if present; otherwise merge by url/id.
+            const replaced = s.map((x) => (Number(x.id) === tempId || String(x.url) === String(url)) ? ({ id: serverId, url: serverUrl }) : x);
+            const hasServer = replaced.some((x) => Number(x.id) === serverId);
+            const next = hasServer ? replaced : [...replaced, { id: serverId, url: serverUrl }];
+            onImagesUpdated && onImagesUpdated(next);
+            return next;
+          });
+          broadcastImagesChanged();
         }
       } catch (err) {
         console.error('Failed to attach image', err);
+        // Keep optimistic image; just surface the error.
         window.alert('Failed to attach image');
-        // Fallback: display locally
-        setImages(s => { const exists = s.some(x => String(x.url) === String(url)); const next = exists ? s : [...s, { id: Date.now(), url }]; onImagesUpdated && onImagesUpdated(next); return next; });
       }
     })();
   }
@@ -209,12 +311,18 @@ export default function RichTextEditor({ note, onClose, onSaved, noteBg, onImage
   }
 
   async function deleteImage(imageId: number) {
+    const prev = images;
+    const next = prev.filter(i => Number(i.id) !== Number(imageId));
+    setImages(next);
+    onImagesUpdated && onImagesUpdated(next);
     try {
       const res = await deleteImageFromServer(note.id, imageId, token);
       if (!res.ok) throw new Error(await res.text());
-      setImages(s => { const next = s.filter(i => i.id !== imageId); onImagesUpdated && onImagesUpdated(next); return next; });
+      broadcastImagesChanged();
     } catch (err) {
       console.error('Failed to delete image', err);
+      setImages(prev);
+      onImagesUpdated && onImagesUpdated(prev);
       window.alert('Failed to delete image');
     }
   }
@@ -234,9 +342,9 @@ export default function RichTextEditor({ note, onClose, onSaved, noteBg, onImage
             <input placeholder="Title" value={title} onChange={(e) => setTitle(e.target.value)} style={{ flex: 1, background: 'transparent', border: 'none', color: 'inherit', fontWeight: 600, fontSize: 18 }} />
           </div>
           <div className="rt-toolbar" style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center', marginTop: 8, marginBottom: 8, overflowX: 'auto', color: textColor }}>
-            <button className="tiny" onClick={() => editor?.chain().focus().toggleBold().run()} aria-pressed={editor?.isActive('bold')} aria-label="Bold" title="Bold">B</button>
-            <button className="tiny" onClick={() => editor?.chain().focus().toggleItalic().run()} aria-pressed={editor?.isActive('italic')} aria-label="Italic" title="Italic">I</button>
-            <button className="tiny" onClick={() => editor?.chain().focus().toggleUnderline().run()} aria-pressed={editor?.isActive('underline')} aria-label="Underline" title="Underline">U</button>
+            <button className="tiny" onClick={() => toggleMarkAcrossLine('bold')} aria-pressed={editor?.isActive('bold')} aria-label="Bold" title="Bold">B</button>
+            <button className="tiny" onClick={() => toggleMarkAcrossLine('italic')} aria-pressed={editor?.isActive('italic')} aria-label="Italic" title="Italic">I</button>
+            <button className="tiny" onClick={() => toggleMarkAcrossLine('underline')} aria-pressed={editor?.isActive('underline')} aria-label="Underline" title="Underline">U</button>
             <button className="tiny" onClick={() => editor?.chain().focus().toggleHeading({ level: 1 }).run()} aria-pressed={editor?.isActive('heading', { level: 1 })} aria-label="Heading 1" title="Heading 1">H1</button>
             <button className="tiny" onClick={() => editor?.chain().focus().toggleHeading({ level: 2 }).run()} aria-pressed={editor?.isActive('heading', { level: 2 })} aria-label="Heading 2" title="Heading 2">H2</button>
             <button className="tiny" onClick={() => editor?.chain().focus().toggleHeading({ level: 3 }).run()} aria-pressed={editor?.isActive('heading', { level: 3 })} aria-label="Heading 3" title="Heading 3">H3</button>
@@ -252,32 +360,6 @@ export default function RichTextEditor({ note, onClose, onSaved, noteBg, onImage
             <button className="tiny" onClick={() => editor?.chain().focus().setTextAlign('justify').run()} aria-pressed={editor?.isActive({ textAlign: 'justify' })} aria-label="Justify" title="Justify"><svg viewBox="0 0 24 24" aria-hidden focusable="false"><rect x="5" y="5" width="14" height="2" rx="1" /><rect x="5" y="9" width="14" height="2" rx="1" /><rect x="5" y="13" width="14" height="2" rx="1" /><rect x="5" y="17" width="14" height="2" rx="1" /></svg></button>
             <button className="tiny" onClick={applyLink} aria-label="Insert link" title="Insert link"><svg viewBox="0 0 24 24" aria-hidden focusable="false"><path d="M9.17 14.83a3 3 0 0 1 0-4.24l2.83-2.83a3 3 0 1 1 4.24 4.24l-.88.88" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/><path d="M14.83 9.17a3 3 0 0 1 0 4.24l-2.83 2.83a3 3 0 1 1-4.24-4.24l.88-.88" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg></button>
           </div>
-          {images && images.length > 0 && (
-            <div className="note-images" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: 8, marginBottom: 8 }}>
-              {images.map(img => (
-                <div
-                  key={img.id}
-                  className="note-image"
-                  role="button"
-                  tabIndex={0}
-                  style={{ cursor: 'zoom-in', position: 'relative' }}
-                  onClick={() => setLightboxUrl(img.url)}
-                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setLightboxUrl(img.url); } }}
-                >
-                  <img src={img.url} alt="note image" style={{ width: '100%', height: 'auto', borderRadius: 6, display: 'block' }} />
-                  <button
-                    className="image-delete"
-                    aria-label="Delete image"
-                    title="Delete image"
-                    onClick={(e) => { e.stopPropagation(); deleteImage(img.id); }}
-                    style={{ position: 'absolute', right: 6, bottom: 6 }}
-                  >
-                    🗑️
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
           <div
             onKeyDown={(e) => {
               if (!editor) return;
@@ -285,9 +367,9 @@ export default function RichTextEditor({ note, onClose, onSaved, noteBg, onImage
               if (!ctrl) return;
               if (!editor.isFocused) return;
               switch (e.key.toLowerCase()) {
-                case 'b': e.preventDefault(); editor.chain().focus().toggleBold().run(); break;
-                case 'i': e.preventDefault(); editor.chain().focus().toggleItalic().run(); break;
-                case 'u': e.preventDefault(); editor.chain().focus().toggleUnderline().run(); break;
+                case 'b': e.preventDefault(); toggleMarkAcrossLine('bold'); break;
+                case 'i': e.preventDefault(); toggleMarkAcrossLine('italic'); break;
+                case 'u': e.preventDefault(); toggleMarkAcrossLine('underline'); break;
                 case 'k': e.preventDefault(); applyLink(); break;
                 case 'l': e.preventDefault(); editor.chain().focus().setTextAlign('left').run(); break;
                 case 'r': e.preventDefault(); editor.chain().focus().setTextAlign('right').run(); break;
@@ -298,6 +380,48 @@ export default function RichTextEditor({ note, onClose, onSaved, noteBg, onImage
           >
             <EditorContent editor={editor} style={{ color: textColor }} />
           </div>
+
+          {images && images.length > 0 && (
+            <div className="editor-images" style={{ marginTop: 10 }}>
+              <button
+                type="button"
+                className="btn editor-images-toggle"
+                onClick={() => setImagesOpen(o => !o)}
+                aria-expanded={imagesOpen}
+              >
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+                  <span style={{ transform: imagesOpen ? 'rotate(90deg)' : 'rotate(0deg)', display: 'inline-block' }}>{'▸'}</span>
+                  <span>Images ({images.length})</span>
+                </span>
+              </button>
+              {imagesOpen && (
+                <div className="editor-images-grid" style={{ marginTop: 8 }}>
+                  {images.map(img => (
+                    <div
+                      key={img.id}
+                      className="note-image"
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => setLightboxUrl(img.url)}
+                      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setLightboxUrl(img.url); } }}
+                      style={{ cursor: 'zoom-in', position: 'relative' }}
+                    >
+                      <img src={img.url} alt="note image" />
+                      <button
+                        className="image-delete"
+                        aria-label="Delete image"
+                        title="Delete image"
+                        onClick={(e) => { e.stopPropagation(); deleteImage(img.id); }}
+                        style={{ position: 'absolute', right: 6, bottom: 6 }}
+                      >
+                        🗑️
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
         </div>
         <div className="dialog-footer" style={{ borderTop: `1px solid ${textColor || 'rgba(255,255,255,0.15)'}` }}>
           <div className="note-actions" style={{ marginRight: 'auto', display: 'inline-flex', gap: 8, justifyContent: 'flex-start', color: textColor }}>

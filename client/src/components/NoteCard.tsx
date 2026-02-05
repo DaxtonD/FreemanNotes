@@ -65,6 +65,7 @@ function contrastColorForBackground(hex?: string | null): string | undefined {
 
 export default function NoteCard({ note, onChange }: { note: Note, onChange?: () => void }) {
   const noteRef = useRef<HTMLElement | null>(null);
+  const imagesWrapRef = useRef<HTMLDivElement | null>(null);
   const theme = (() => { try { return useTheme(); } catch { return { effective: 'dark' } as any; } })();
 
   const [bg, setBg] = useState<string>((note as any).viewerColor || note.color || ""); // empty = theme card color
@@ -72,8 +73,29 @@ export default function NoteCard({ note, onChange }: { note: Note, onChange?: ()
   const [textColor, setTextColor] = useState<string | undefined>(((note as any).viewerColor || note.color) ? contrastColorForBackground(((note as any).viewerColor || note.color) as string) : undefined);
   const [archived, setArchived] = useState(false);
   const [images, setImages] = useState<Array<{ id:number; url:string }>>((note.images as any) || []);
+  const [thumbsPerRow, setThumbsPerRow] = useState<number>(3);
   const [noteItems, setNoteItems] = useState<any[]>(note.items || []);
   const [title, setTitle] = useState<string>(note.title || '');
+
+  React.useEffect(() => {
+    try {
+      const next = (((note as any).images || []).map((i: any) => ({ id: Number(i.id), url: String(i.url) })));
+      setImages(next);
+    } catch {}
+  }, [note.id, (note as any).images]);
+
+  function notifyImages(next: Array<{ id: number; url: string }>) {
+    try { (onChange as any)?.({ type: 'images', noteId: note.id, images: next }); } catch {}
+  }
+
+  function setImagesWithNotify(updater: (prev: Array<{ id: number; url: string }>) => Array<{ id: number; url: string }>) {
+    setImages((prev) => {
+      const next = updater(prev);
+      try { setTimeout(() => notifyImages(next), 0); } catch {}
+      return next;
+    });
+  }
+
   const [showCollaborator, setShowCollaborator] = useState(false);
   const [collaborators, setCollaborators] = useState<Array<{ collabId?: number; userId: number; email: string; name?: string; userImageUrl?: string }>>([]);
   const [labels, setLabels] = useState<Array<{ id: number; name: string }>>(() => (note.noteLabels || []).map((nl:any) => nl.label).filter((l:any) => l && typeof l.id === 'number' && typeof l.name === 'string'));
@@ -86,6 +108,31 @@ export default function NoteCard({ note, onChange }: { note: Note, onChange?: ()
   const [showEditor, setShowEditor] = useState(false);
   const [showTextEditor, setShowTextEditor] = useState(false);
   const [showCompleted, setShowCompleted] = useState<boolean>(true);
+
+  React.useEffect(() => {
+    const el = imagesWrapRef.current;
+    if (!el) return;
+    const THUMB_W = 96;
+    const GAP = 6;
+    const compute = () => {
+      try {
+        const w = el.clientWidth || 0;
+        const perRow = Math.max(1, Math.floor((w + GAP) / (THUMB_W + GAP)));
+        setThumbsPerRow(perRow);
+      } catch {}
+    };
+    compute();
+    let ro: ResizeObserver | null = null;
+    try {
+      ro = new ResizeObserver(() => compute());
+      ro.observe(el);
+    } catch {}
+    window.addEventListener('resize', compute);
+    return () => {
+      try { ro && ro.disconnect(); } catch {}
+      window.removeEventListener('resize', compute);
+    };
+  }, []);
 
   const fileRef = useRef<HTMLInputElement | null>(null);
   const { token, user } = useAuth();
@@ -269,7 +316,7 @@ export default function NoteCard({ note, onChange }: { note: Note, onChange?: ()
         const data = await res.json();
         const img = data.image || null;
         if (img && img.id && img.url) {
-          setImages(s => {
+          setImagesWithNotify((s) => {
             const exists = s.some(x => Number(x.id) === Number(img.id));
             if (exists) return s;
             return [...s, { id: Number(img.id), url: String(img.url) }];
@@ -278,7 +325,7 @@ export default function NoteCard({ note, onChange }: { note: Note, onChange?: ()
       } catch (err) {
         console.error('Failed to attach image', err);
         // Fallback: show locally even if save fails
-        setImages(s => {
+        setImagesWithNotify((s) => {
           const exists = s.some(x => String(x.url) === String(url));
           if (exists) return s;
           return [...s, { id: Date.now(), url }];
@@ -548,8 +595,8 @@ export default function NoteCard({ note, onChange }: { note: Note, onChange?: ()
         {noteItems && noteItems.length > 0 ? (
           <div>
             {/** Show incomplete first, then optionally completed items. Preserve indent in preview. */}
-            {(noteItems.filter((it:any) => !it.checked)).map(it => (
-              <div key={it.id} className="note-item" style={{ display: 'flex', gap: 8, alignItems: 'flex-start', marginLeft: ((it.indent || 0) * 16) }}>
+            {(noteItems.filter((it:any) => !it.checked)).map((it, idx) => (
+              <div key={typeof it.id === 'number' ? it.id : `i-${idx}`} className="note-item" style={{ display: 'flex', gap: 8, alignItems: 'flex-start', marginLeft: ((it.indent || 0) * 16) }}>
                 <button
                   className={`note-checkbox ${it.checked ? 'checked' : ''}`}
                   type="button"
@@ -581,8 +628,8 @@ export default function NoteCard({ note, onChange }: { note: Note, onChange?: ()
               </div>
             )}
 
-            {showCompleted && noteItems.filter((it:any) => it.checked).map(it => (
-              <div key={`c-${it.id}`} className="note-item completed" style={{ display: 'flex', gap: 8, alignItems: 'flex-start', marginLeft: ((it.indent || 0) * 16), opacity: 0.7 }}>
+            {showCompleted && noteItems.filter((it:any) => it.checked).map((it, idx) => (
+              <div key={`c-${typeof it.id === 'number' ? it.id : idx}`} className="note-item completed" style={{ display: 'flex', gap: 8, alignItems: 'flex-start', marginLeft: ((it.indent || 0) * 16), opacity: 0.7 }}>
                 <button
                   className={`note-checkbox ${it.checked ? 'checked' : ''}`}
                   type="button"
@@ -610,8 +657,12 @@ export default function NoteCard({ note, onChange }: { note: Note, onChange?: ()
       </div>
 
       {images && images.length > 0 && (
-        <div className="note-images">
-          {images.map((img) => (
+        <div className="note-images" ref={imagesWrapRef}>
+          {(() => {
+            const maxSlots = Math.max(1, thumbsPerRow) * 3;
+            const visible = images.slice(0, Math.min(images.length, maxSlots));
+            const hiddenCount = Math.max(0, images.length - maxSlots);
+            return visible.map((img, idx) => (
             <button
               key={img.id}
               className="note-image"
@@ -619,8 +670,12 @@ export default function NoteCard({ note, onChange }: { note: Note, onChange?: ()
               onClick={() => { if (note.type === 'CHECKLIST' || (note.items && note.items.length)) setShowEditor(true); else setShowTextEditor(true); }}
             >
               <img src={img.url} alt="note image" />
+              {hiddenCount > 0 && idx === visible.length - 1 && (
+                <span className="note-image-moreOverlay" aria-label={`${hiddenCount} more images`}>+{hiddenCount} more</span>
+              )}
             </button>
-          ))}
+            ));
+          })()}
         </div>
       )}
 
@@ -630,6 +685,8 @@ export default function NoteCard({ note, onChange }: { note: Note, onChange?: ()
         </div>
       )}
 
+      {/* Hover zone to reveal footer only near the bottom */}
+      <div className="footer-hover-zone" aria-hidden />
       {/* Protected footer region for actions (not affected by note bg/text color) */}
       <div className="note-footer" aria-hidden={false}>
         <div className="note-actions">
@@ -688,7 +745,14 @@ export default function NoteCard({ note, onChange }: { note: Note, onChange?: ()
         />
       )}
       {showLabels && (
-        <LabelsDialog noteId={note.id} onClose={() => setShowLabels(false)} onUpdated={(ls) => setLabels(ls)} />
+        <LabelsDialog
+          noteId={note.id}
+          onClose={() => setShowLabels(false)}
+          onUpdated={(ls) => {
+            setLabels(ls);
+            try { (onChange as any)?.({ type: 'labels', noteId: note.id, labels: ls }); } catch {}
+          }}
+        />
       )}
 
       {showCollaborator && (
@@ -721,20 +785,20 @@ export default function NoteCard({ note, onChange }: { note: Note, onChange?: ()
       {showReminderPicker && <ReminderPicker onClose={() => setShowReminderPicker(false)} onSet={onSetReminder} />}
       {showEditor && (
         <ChecklistEditor
-          note={{ ...note, items: noteItems }}
+          note={{ ...note, items: noteItems, images }}
           noteBg={bg}
           onClose={() => setShowEditor(false)}
           onSaved={({ items, title }) => { setNoteItems(items); setTitle(title); }}
-          onImagesUpdated={(imgs) => setImages(imgs)}
+          onImagesUpdated={(imgs) => { setImagesWithNotify(() => imgs); }}
         />
       )}
       {showTextEditor && (
         <RichTextEditor
-          note={note}
+          note={{ ...note, images }}
           noteBg={bg}
           onClose={() => setShowTextEditor(false)}
           onSaved={({ title, body }) => { setTitle(title); note.body = body; }}
-          onImagesUpdated={(imgs) => setImages(imgs)}
+          onImagesUpdated={(imgs) => { setImagesWithNotify(() => imgs); }}
         />
       )}
     </article>

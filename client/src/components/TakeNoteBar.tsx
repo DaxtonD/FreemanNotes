@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { EditorContent, useEditor } from '@tiptap/react';
-import { Editor } from '@tiptap/core';
+import { Editor, Extension } from '@tiptap/core';
 import StarterKit from '@tiptap/starter-kit';
 import TextAlign from '@tiptap/extension-text-align';
 import Collaboration from '@tiptap/extension-collaboration';
@@ -14,6 +14,7 @@ import CollaboratorModal from './CollaboratorModal';
 import ImageDialog from './ImageDialog';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faPalette } from '@fortawesome/free-solid-svg-icons';
+import Underline from '@tiptap/extension-underline';
 
 export default function TakeNoteBar({ onCreated }: { onCreated?: () => void }): JSX.Element {
   const { token, user } = useAuth();
@@ -28,6 +29,17 @@ export default function TakeNoteBar({ onCreated }: { onCreated?: () => void }): 
           heading: { levels: [1, 2, 3] },
         }),
         TextAlign.configure({ types: ['heading', 'paragraph'] }),
+        Underline,
+        Extension.create({
+          name: 'paragraphEnterFix',
+          priority: 1000,
+          addKeyboardShortcuts() {
+            return {
+              'Shift-Enter': () => { const e = this.editor; e.commands.splitBlock(); e.commands.setParagraph(); return true; },
+              'Mod-Enter': () => { const e = this.editor; e.commands.splitBlock(); e.commands.setParagraph(); return true; },
+            };
+          },
+        }),
       ],
       content: '',
       editorProps: {
@@ -36,6 +48,20 @@ export default function TakeNoteBar({ onCreated }: { onCreated?: () => void }): 
         },
       },
     });
+
+    function toggleMarkAcrossLine(mark: 'bold' | 'italic' | 'underline') {
+      if (!editor) return;
+      const sel: any = editor.state.selection;
+      if (!sel || !sel.empty) {
+        editor.chain().focus()[`toggle${mark.charAt(0).toUpperCase() + mark.slice(1)}` as 'toggleBold' | 'toggleItalic' | 'toggleUnderline']().run();
+        return;
+      }
+      const $from = sel.$from; let depth = $from.depth; while (depth > 0 && !$from.node(depth).isBlock) depth--;
+      const from = $from.start(depth); const to = $from.end(depth);
+      const chain = editor.chain().focus().setTextSelection({ from, to });
+      if (mark === 'bold') chain.toggleBold().run(); else if (mark === 'italic') chain.toggleItalic().run(); else chain.toggleUnderline().run();
+      try { editor.chain().setTextSelection(sel.from).run(); } catch {}
+    }
 
     const [, setToolbarTick] = useState(0);
     useEffect(() => {
@@ -58,6 +84,7 @@ export default function TakeNoteBar({ onCreated }: { onCreated?: () => void }): 
   const activeChecklistEditor = useRef<any | null>(null);
   const itemEditorRefs = useRef<Array<any | null>>([]);
   const [, setChecklistToolbarTick] = useState(0);
+  const skipNextChecklistToolbarClickRef = useRef(false);
   const [bg, setBg] = useState<string>('');
   const [textColor, setTextColor] = useState<string | undefined>(undefined);
   const [showPalette, setShowPalette] = useState(false);
@@ -67,9 +94,98 @@ export default function TakeNoteBar({ onCreated }: { onCreated?: () => void }): 
   const [imageUrl, setImageUrl] = useState<string | null>(null);
   const [selectedCollaborators, setSelectedCollaborators] = useState<Array<{id:number;email:string}>>([]);
 
+  function getCurrentChecklistEditor(): any | null {
+    let ed = activeChecklistEditor.current as any;
+    if (ed && (ed as any).isFocused) return ed;
+    const selNode = typeof document !== 'undefined' ? (document.getSelection()?.anchorNode || null) : null;
+    if (selNode) {
+      const bySel = itemEditorRefs.current.find((x) => {
+        try { return !!(x && (x as any).view?.dom && (x as any).view.dom.contains(selNode as Node)); } catch { return false; }
+      });
+      if (bySel) ed = bySel;
+    } else {
+      const activeEl = typeof document !== 'undefined' ? (document.activeElement as HTMLElement | null) : null;
+      if (activeEl) {
+        const byDom = itemEditorRefs.current.find((x) => {
+          try { return !!(x && (x as any).view && (x as any).view.dom && ((x as any).view.dom === activeEl || (x as any).view.dom.contains(activeEl))); } catch { return false; }
+        });
+        if (byDom) ed = byDom;
+      }
+    }
+    if (!ed || !(ed as any)?.isFocused) {
+      const focused = itemEditorRefs.current.find((x) => !!(x && (x as any).isFocused));
+      if (focused) ed = focused;
+    }
+    return ed || null;
+  }
+
+  function applyChecklistMarkAcrossLine(mark: 'bold' | 'italic' | 'underline') {
+    const ed = getCurrentChecklistEditor() as any;
+    if (!ed) return;
+    const sel: any = ed.state?.selection;
+    if (!sel || !sel.empty) {
+      const chain = ed.chain().focus();
+      if (mark === 'bold') chain.toggleBold().run();
+      else if (mark === 'italic') chain.toggleItalic().run();
+      else chain.toggleUnderline().run();
+      try {
+        const restorePos = sel?.from;
+        requestAnimationFrame(() => {
+          try {
+            const ch = ed.chain().focus();
+            if (typeof restorePos === 'number') ch.setTextSelection(restorePos);
+            ch.run();
+          } catch {}
+        });
+      } catch {}
+      return;
+    }
+    const $from = sel.$from; let depth = $from.depth; while (depth > 0 && !$from.node(depth).isBlock) depth--;
+    const from = $from.start(depth); const to = $from.end(depth);
+    const chain = ed.chain().focus().setTextSelection({ from, to });
+    if (mark === 'bold') chain.toggleBold().run();
+    else if (mark === 'italic') chain.toggleItalic().run();
+    else chain.toggleUnderline().run();
+    try { ed.chain().focus().setTextSelection(sel.from).run(); } catch {}
+    try {
+      const restorePos = sel.from;
+      requestAnimationFrame(() => {
+        try {
+          try { (ed as any).view?.focus?.(); } catch {}
+          ed.chain().focus().setTextSelection(restorePos).run();
+        } catch {}
+      });
+    } catch {}
+    try { setChecklistToolbarTick(t => t + 1); } catch {}
+  }
+
+  function isCurrentLineMarked(mark: 'bold' | 'italic' | 'underline'): boolean {
+    const ed = getCurrentChecklistEditor() as any;
+    if (!ed) return false;
+    const sel: any = ed.state?.selection;
+    if (!sel) return false;
+    const markType = (ed.schema?.marks || {})[mark];
+    if (!markType) return false;
+    const $from = sel.$from; let depth = $from.depth; while (depth > 0 && !$from.node(depth).isBlock) depth--; const from = $from.start(depth); const to = $from.end(depth);
+    let hasText = false; let allMarked = true;
+    try {
+      ed.state.doc.nodesBetween(from, to, (node: any) => {
+        if (node && node.isText) {
+          hasText = true;
+          const hasMark = !!markType.isInSet(node.marks);
+          if (!hasMark) allMarked = false;
+        }
+      });
+    } catch {}
+    return hasText && allMarked;
+  }
+
   useEffect(() => {
     function onDocClick(e: MouseEvent) {
       if (!expanded) return;
+      // If an inner control intentionally prevented default (e.g. formatting buttons,
+      // empty-state actions), don't treat it as a click-away.
+      if (e.defaultPrevented) return;
       const el = rootRef.current;
       if (!el) return;
       // Ignore clicks inside any overlay/popover elements so the creation dialog stays open
@@ -79,10 +195,18 @@ export default function TakeNoteBar({ onCreated }: { onCreated?: () => void }): 
       const inCollab = document.querySelector('.collab-modal')?.contains(t);
       const inImageDlg = document.querySelector('.image-dialog')?.contains(t);
       if (inPalette || inReminder || inCollab || inImageDlg) return;
-      if (e.target instanceof Node && !el.contains(e.target)) {
-        setExpanded(false);
-        setMaximized(false);
-      }
+
+      // Prefer composedPath: it's resilient even if the click target is removed
+      // during the same event (e.g. state updates that replace the button).
+      try {
+        const path = (e.composedPath?.() || []) as unknown[];
+        if (path.includes(el)) return;
+      } catch {}
+
+      if (e.target instanceof Node && el.contains(e.target)) return;
+
+      setExpanded(false);
+      setMaximized(false);
     }
 
     function onKey(e: KeyboardEvent) {
@@ -230,7 +354,7 @@ export default function TakeNoteBar({ onCreated }: { onCreated?: () => void }): 
             }
           }}
         >
-          <div style={{ flex: 1, padding: '10px 12px' }}>Take a note...</div>
+          <div style={{ flex: 1, padding: '10px 12px' }}>Create a new note</div>
           <div
             className="checkbox-visual"
             onMouseDown={(e) => { e.stopPropagation(); }}
@@ -272,9 +396,9 @@ export default function TakeNoteBar({ onCreated }: { onCreated?: () => void }): 
       {mode === 'text' ? (
         <div>
           <div className="rt-toolbar" style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center', marginTop: 8, marginBottom: 8, overflowX: 'auto' }}>
-            <button className="tiny" onClick={() => editor?.chain().focus().toggleBold().run()} aria-pressed={editor?.isActive('bold')}>B</button>
-            <button className="tiny" onClick={() => editor?.chain().focus().toggleItalic().run()} aria-pressed={editor?.isActive('italic')}>I</button>
-            <button className="tiny" onClick={() => editor?.chain().focus().toggleUnderline().run()} aria-pressed={editor?.isActive('underline')}>U</button>
+            <button className="tiny" onClick={() => toggleMarkAcrossLine('bold')} aria-pressed={editor?.isActive('bold')}>B</button>
+            <button className="tiny" onClick={() => toggleMarkAcrossLine('italic')} aria-pressed={editor?.isActive('italic')}>I</button>
+            <button className="tiny" onClick={() => toggleMarkAcrossLine('underline')} aria-pressed={editor?.isActive('underline')}>U</button>
             <button className="tiny" onClick={() => editor?.chain().focus().toggleHeading({ level: 1 }).run()} aria-pressed={editor?.isActive('heading', { level: 1 })}>H1</button>
             <button className="tiny" onClick={() => editor?.chain().focus().toggleHeading({ level: 2 }).run()} aria-pressed={editor?.isActive('heading', { level: 2 })}>H2</button>
             <button className="tiny" onClick={() => editor?.chain().focus().toggleHeading({ level: 3 }).run()} aria-pressed={editor?.isActive('heading', { level: 3 })}>H3</button>
@@ -341,9 +465,9 @@ export default function TakeNoteBar({ onCreated }: { onCreated?: () => void }): 
               // scope shortcuts when editor is focused
               if (!editor.isFocused) return;
               switch (e.key.toLowerCase()) {
-                case 'b': e.preventDefault(); editor.chain().focus().toggleBold().run(); break;
-                case 'i': e.preventDefault(); editor.chain().focus().toggleItalic().run(); break;
-                case 'u': e.preventDefault(); editor.chain().focus().toggleUnderline().run(); break;
+                case 'b': e.preventDefault(); toggleMarkAcrossLine('bold'); break;
+                case 'i': e.preventDefault(); toggleMarkAcrossLine('italic'); break;
+                case 'u': e.preventDefault(); toggleMarkAcrossLine('underline'); break;
                 // 'k' (insert link) is available in the full editor only
                 case 'l': e.preventDefault(); editor.chain().focus().setTextAlign('left').run(); break;
                 case 'r': e.preventDefault(); editor.chain().focus().setTextAlign('right').run(); break;
@@ -357,11 +481,62 @@ export default function TakeNoteBar({ onCreated }: { onCreated?: () => void }): 
         </div>
       ) : (
         <div style={{ marginTop: 8 }}>
-          <div className="rt-toolbar" style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center', marginBottom: 8 }}>
-            <button className="tiny" onClick={() => activeChecklistEditor.current?.chain().focus().toggleBold().run()} aria-pressed={activeChecklistEditor.current?.isActive?.('bold')}>B</button>
-            <button className="tiny" onClick={() => activeChecklistEditor.current?.chain().focus().toggleItalic().run()} aria-pressed={activeChecklistEditor.current?.isActive?.('italic')}>I</button>
-            <button className="tiny" onClick={() => activeChecklistEditor.current?.chain().focus().toggleUnderline().run()} aria-pressed={activeChecklistEditor.current?.isActive?.('underline')}>U</button>
+          <div
+            className="rt-toolbar"
+            style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center', marginBottom: 8 }}
+            onPointerDown={(e) => e.preventDefault()}
+            onPointerUp={(e) => e.preventDefault()}
+          >
+            <button
+              className="tiny"
+              type="button"
+              tabIndex={-1}
+              onPointerDownCapture={(e) => { e.preventDefault(); e.stopPropagation(); skipNextChecklistToolbarClickRef.current = true; applyChecklistMarkAcrossLine('bold'); }}
+              onPointerUp={(e) => { e.preventDefault(); e.stopPropagation(); }}
+              onMouseDownCapture={(e) => { e.preventDefault(); e.stopPropagation(); }}
+              onMouseUp={(e) => e.preventDefault()}
+              onClick={() => { if (skipNextChecklistToolbarClickRef.current) { skipNextChecklistToolbarClickRef.current = false; return; } applyChecklistMarkAcrossLine('bold'); }}
+              aria-pressed={isCurrentLineMarked('bold')}
+            >B</button>
+            <button
+              className="tiny"
+              type="button"
+              tabIndex={-1}
+              onPointerDownCapture={(e) => { e.preventDefault(); e.stopPropagation(); skipNextChecklistToolbarClickRef.current = true; applyChecklistMarkAcrossLine('italic'); }}
+              onPointerUp={(e) => { e.preventDefault(); e.stopPropagation(); }}
+              onMouseDownCapture={(e) => { e.preventDefault(); e.stopPropagation(); }}
+              onMouseUp={(e) => e.preventDefault()}
+              onClick={() => { if (skipNextChecklistToolbarClickRef.current) { skipNextChecklistToolbarClickRef.current = false; return; } applyChecklistMarkAcrossLine('italic'); }}
+              aria-pressed={isCurrentLineMarked('italic')}
+            >I</button>
+            <button
+              className="tiny"
+              type="button"
+              tabIndex={-1}
+              onPointerDownCapture={(e) => { e.preventDefault(); e.stopPropagation(); skipNextChecklistToolbarClickRef.current = true; applyChecklistMarkAcrossLine('underline'); }}
+              onPointerUp={(e) => { e.preventDefault(); e.stopPropagation(); }}
+              onMouseDownCapture={(e) => { e.preventDefault(); e.stopPropagation(); }}
+              onMouseUp={(e) => e.preventDefault()}
+              onClick={() => { if (skipNextChecklistToolbarClickRef.current) { skipNextChecklistToolbarClickRef.current = false; return; } applyChecklistMarkAcrossLine('underline'); }}
+              aria-pressed={isCurrentLineMarked('underline')}
+            >U</button>
           </div>
+          {items.length === 0 && (
+            <div style={{ marginBottom: 8 }}>
+              <button
+                className="btn"
+                onPointerDown={(e) => { e.preventDefault(); e.stopPropagation(); }}
+                onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); }}
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setItems([{ content: '' }]);
+                  // wait for ChecklistItemRT to mount + register
+                  setTimeout(() => focusItem(0), 30);
+                }}
+              >Add an item</button>
+            </div>
+          )}
           {items.map((it, idx) => (
             <div
               key={idx}
@@ -418,8 +593,39 @@ export default function TakeNoteBar({ onCreated }: { onCreated?: () => void }): 
                   autoFocus={idx === 0}
                 />
               </div>
+              <button
+                className="delete-item"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setItems(s => {
+                    const next = s.filter((_, i) => i !== idx);
+                    // if we deleted the last item, clear active editor refs
+                    if (next.length === 0) {
+                      activeChecklistEditor.current = null;
+                      itemEditorRefs.current = [];
+                      return next;
+                    }
+                    // focus previous (or first) after the list updates
+                    const focusIdx = Math.max(0, Math.min(idx - 1, next.length - 1));
+                    setTimeout(() => focusItem(focusIdx), 30);
+                    return next;
+                  });
+                }}
+                aria-label="Delete item"
+                title="Delete item"
+              >✕</button>
             </div>
           ))}
+        </div>
+      )}
+
+      {imageUrl && (
+        <div style={{ marginTop: 10, display: 'flex', alignItems: 'center', gap: 10 }}>
+          <div className="note-image" style={{ width: 96, height: 72, flex: '0 0 auto' }}>
+            <img src={imageUrl} alt="selected" style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: 6, display: 'block' }} />
+          </div>
+          <div style={{ flex: 1, fontSize: 13, opacity: 0.9 }}>1 image selected</div>
+          <button className="btn" type="button" onClick={() => setImageUrl(null)} style={{ padding: '6px 10px' }}>Remove</button>
         </div>
       )}
 

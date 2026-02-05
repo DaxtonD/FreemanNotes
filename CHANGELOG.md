@@ -4,6 +4,27 @@ All notable changes to this project will be documented in this file.
 
 Adheres to Semantic Versioning (MAJOR.MINOR.PATCH).
 
+## [0.4.2] - 2026-02-05
+
+### Added
+- Sidebar sorting + grouping controls (sort mode, group mode, and quick resets).
+- Real-time note lifecycle events over `/events`: broadcast `note-created` and `note-deleted` so multiple sessions/collaborators stay in sync.
+- Real-time image refresh across clients: broadcast `note-images-changed` and fetch the latest images via `GET /api/notes/:id/images`.
+
+### Changed
+- Default ordering behavior: notes remain stable in creation order unless manually reordered.
+- Sorting pipeline: layered sort → optional grouping while preserving manual `ord` as the baseline for Default mode.
+- `/events` websocket now uses `wss://` automatically when the app is served over HTTPS.
+
+### Fixed
+- New labels become immediately filterable without requiring refresh.
+- Images added/removed show up immediately in editors and note cards (optimistic UI + reconciliation).
+- Note card body clipping when images are present.
+
+### UI
+- Note card thumbnails: compact, wrap layout with “+N more” overflow indicator.
+- Editor images moved to a bottom, collapsible section with a scroll cap for large sets.
+
 ## [0.3.0] - 2026-02-01
 
 ### Added

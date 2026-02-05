@@ -5,6 +5,7 @@ import NotesGrid from "./components/NotesGrid";
 import AuthGate from "./components/AuthGate";
 import { AuthProvider } from "./authContext";
 import { ThemeProvider } from "./themeContext";
+import { DEFAULT_SORT_CONFIG, SortConfig } from './sortTypes';
 
 /**
  * Phase 1 app shell.
@@ -14,6 +15,7 @@ export default function App(): JSX.Element {
 	const [selectedLabelIds, setSelectedLabelIds] = React.useState<number[]>([]);
 	const [sidebarCollapsed, setSidebarCollapsed] = React.useState(false);
   const [searchQuery, setSearchQuery] = React.useState('');
+	const [sortConfig, setSortConfig] = React.useState<SortConfig>(DEFAULT_SORT_CONFIG);
 	const toggleLabel = (id: number) => {
 		setSelectedLabelIds((s) => s.includes(id) ? s.filter(x => x !== id) : [...s, id]);
 	};
@@ -24,11 +26,11 @@ export default function App(): JSX.Element {
 				<div className="app-root">
 					<Header onToggleSidebar={() => setSidebarCollapsed(c => !c)} searchQuery={searchQuery} onSearchChange={setSearchQuery} />
 					<div className="app-body">
-						<Sidebar selectedLabelIds={selectedLabelIds} onToggleLabel={toggleLabel} onClearLabels={clearLabels} collapsed={sidebarCollapsed} />
+						<Sidebar selectedLabelIds={selectedLabelIds} onToggleLabel={toggleLabel} onClearLabels={clearLabels} collapsed={sidebarCollapsed} sortConfig={sortConfig} onSortConfigChange={setSortConfig} />
 						<main className="main-area">
 							{/* AuthGate renders NotesGrid when authenticated; pass filters via context-like props */}
 							{/* To keep AuthGate logic intact, duplicate NotesGrid for filter support within gate */}
-							<AuthGate selectedLabelIds={selectedLabelIds} searchQuery={searchQuery} />
+							<AuthGate selectedLabelIds={selectedLabelIds} searchQuery={searchQuery} sortConfig={sortConfig} />
 							{/* Fallback direct grid (optional): <NotesGrid selectedLabelIds={selectedLabelIds} /> */}
 						</main>
 					</div>

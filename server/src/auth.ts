@@ -74,7 +74,8 @@ router.post("/api/auth/register", async (req: Request, res: Response) => {
       checklistSpacing: 15,
       checkboxSize: 20,
       checklistTextSize: 17,
-      noteWidth: 288
+      noteWidth: 288,
+      noteLineSpacing: 1.38
     } });
     const token = jwt.sign({ userId: user.id }, getJwtSecret(), { expiresIn: "7d" });
     if (invite) {
@@ -126,7 +127,7 @@ router.patch('/api/auth/me', async (req: Request, res: Response) => {
   const user = await getUserFromToken(req);
   if (!user) return res.status(401).json({ error: 'unauthenticated' });
   const body = req.body || {};
-  const { name, fontFamily, noteWidth, dragBehavior, animationSpeed, checklistSpacing, checkboxSize, checklistTextSize, chipDisplayMode } = body as any;
+  const { name, fontFamily, noteWidth, dragBehavior, animationSpeed, checklistSpacing, checkboxSize, checklistTextSize, chipDisplayMode, noteLineSpacing } = body as any;
   const data: any = {};
   if (typeof name === 'string') data.name = name;
   if (typeof fontFamily === 'string') data.fontFamily = fontFamily;
@@ -137,6 +138,7 @@ router.patch('/api/auth/me', async (req: Request, res: Response) => {
   if (typeof checkboxSize === 'number') data.checkboxSize = checkboxSize;
   if (typeof checklistTextSize === 'number') data.checklistTextSize = checklistTextSize;
   if (typeof chipDisplayMode === 'string') data.chipDisplayMode = chipDisplayMode;
+  if (typeof noteLineSpacing === 'number') data.noteLineSpacing = noteLineSpacing;
   // allow setting checkbox colors to string values or null to clear
   if ('checkboxBg' in body) data.checkboxBg = (body as any).checkboxBg;
   if ('checkboxBorder' in body) data.checkboxBorder = (body as any).checkboxBorder;

@@ -37,9 +37,42 @@ export default function ChecklistItemRT({ value, onChange, onEnter, onArrowUp, o
         const ctrl = event.ctrlKey || event.metaKey;
         if (ctrl) {
           switch ((event.key || '').toLowerCase()) {
-            case 'b': event.preventDefault(); editor?.chain().focus().toggleBold().run(); return true;
-            case 'i': event.preventDefault(); editor?.chain().focus().toggleItalic().run(); return true;
-            case 'u': event.preventDefault(); editor?.chain().focus().toggleUnderline().run(); return true;
+            case 'b': {
+              event.preventDefault();
+              if (!editor) return true;
+              const sel: any = editor.state.selection;
+              if (sel && sel.empty) {
+                const $from = sel.$from; let depth = $from.depth; while (depth > 0 && !$from.node(depth).isBlock) depth--;
+                const from = $from.start(depth); const to = $from.end(depth);
+                editor.chain().focus().setTextSelection({ from, to }).toggleBold().run();
+                try { editor.chain().setTextSelection(sel.from).run(); } catch {}
+              } else {
+                editor.chain().focus().toggleBold().run();
+              }
+              return true;
+            }
+            case 'i': {
+              event.preventDefault(); if (!editor) return true;
+              const sel: any = editor.state.selection;
+              if (sel && sel.empty) {
+                const $from = sel.$from; let depth = $from.depth; while (depth > 0 && !$from.node(depth).isBlock) depth--;
+                const from = $from.start(depth); const to = $from.end(depth);
+                editor.chain().focus().setTextSelection({ from, to }).toggleItalic().run();
+                try { editor.chain().setTextSelection(sel.from).run(); } catch {}
+              } else { editor.chain().focus().toggleItalic().run(); }
+              return true;
+            }
+            case 'u': {
+              event.preventDefault(); if (!editor) return true;
+              const sel: any = editor.state.selection;
+              if (sel && sel.empty) {
+                const $from = sel.$from; let depth = $from.depth; while (depth > 0 && !$from.node(depth).isBlock) depth--;
+                const from = $from.start(depth); const to = $from.end(depth);
+                editor.chain().focus().setTextSelection({ from, to }).toggleUnderline().run();
+                try { editor.chain().setTextSelection(sel.from).run(); } catch {}
+              } else { editor.chain().focus().toggleUnderline().run(); }
+              return true;
+            }
           }
         }
         if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); onEnter && onEnter(); return true; }
@@ -57,6 +90,11 @@ export default function ChecklistItemRT({ value, onChange, onEnter, onArrowUp, o
     },
     onUpdate({ editor }) {
       onChange(editor.getHTML());
+    },
+    onFocus({ editor }) {
+      // Focusing an editor does not always produce a selection transaction.
+      // We still need to notify the parent so toolbar state can update.
+      onFocus && onFocus(editor);
     },
     onSelectionUpdate({ editor }) {
       // notify parent to update toolbar active states

@@ -1,4 +1,6 @@
 import React, { useEffect, useState } from 'react';
+// Ensure TS recognizes the global defined via Vite
+declare const __APP_VERSION__: string;
 import { useAuth } from '../authContext';
 import SettingsModal from './SettingsModal';
 import { useTheme } from '../themeContext';
@@ -29,6 +31,15 @@ export default function PreferencesModal({ onClose }: { onClose: () => void }) {
   });
   const [pendingTextSize, setPendingTextSize] = useState<number>(() => {
     try { return Number(localStorage.getItem('prefs.checklistTextSize') || '17'); } catch { return 17; }
+  });
+  const [pendingNoteLineSpacing, setPendingNoteLineSpacing] = useState<number>(() => {
+    try {
+      const v = localStorage.getItem('prefs.noteLineSpacing');
+      if (v) return Number(v);
+      const userVal = auth && (auth.user as any)?.noteLineSpacing;
+      if (typeof userVal === 'number') return userVal;
+      return 1.38;
+    } catch { return 1.38; }
   });
   const [pendingNoteWidth, setPendingNoteWidth] = useState<number>(() => {
     try {
@@ -84,6 +95,7 @@ export default function PreferencesModal({ onClose }: { onClose: () => void }) {
     })();
     setPending(saved);
     try { const f = localStorage.getItem('prefs.fontFamily'); if (f) setPendingFont(f); } catch {}
+    try { const ls = localStorage.getItem('prefs.noteLineSpacing') ?? ((auth && (auth.user as any)?.noteLineSpacing) != null ? String((auth as any).user.noteLineSpacing) : null); if (ls) setPendingNoteLineSpacing(Number(ls)); } catch {}
     try {
       const w = localStorage.getItem('prefs.noteWidth') ?? ((auth && (auth.user as any)?.noteWidth) != null ? String((auth as any).user.noteWidth) : null);
       if (w) setPendingNoteWidth(Number(w));
@@ -107,12 +119,14 @@ export default function PreferencesModal({ onClose }: { onClose: () => void }) {
     document.documentElement.style.setProperty('--checklist-gap', `${pending}px`);
     document.documentElement.style.setProperty('--checklist-checkbox-size', `${pendingCheckboxSize}px`);
     document.documentElement.style.setProperty('--checklist-text-size', `${pendingTextSize}px`);
+    document.documentElement.style.setProperty('--note-line-height', String(pendingNoteLineSpacing));
     // apply note/card width preference
     document.documentElement.style.setProperty('--note-card-width', `${pendingNoteWidth}px`);
     // checkbox color customization removed — theme controls visuals
     try { localStorage.setItem('prefs.checklistSpacing', String(pending)); } catch {}
     try { localStorage.setItem('prefs.checkboxSize', String(pendingCheckboxSize)); } catch {}
     try { localStorage.setItem('prefs.checklistTextSize', String(pendingTextSize)); } catch {}
+    try { localStorage.setItem('prefs.noteLineSpacing', String(pendingNoteLineSpacing)); } catch {}
     try { localStorage.setItem('prefs.noteWidth', String(pendingNoteWidth)); } catch {}
     try { localStorage.setItem('prefs.fontFamily', pendingFont); } catch {}
     // auto-fit removed
@@ -135,6 +149,7 @@ export default function PreferencesModal({ onClose }: { onClose: () => void }) {
         checklistSpacing: pending,
         checkboxSize: pendingCheckboxSize,
         checklistTextSize: pendingTextSize,
+        noteLineSpacing: pendingNoteLineSpacing,
         chipDisplayMode: pendingChipDisplayMode
       };
       // remove checkbox color fields from payload
@@ -265,9 +280,15 @@ export default function PreferencesModal({ onClose }: { onClose: () => void }) {
               </div>
               <div style={{ display: 'block' }}>
                 <div style={{ display: 'flex', gap: 12, alignItems: 'center', justifyContent: 'flex-start' }}>
-                  <label style={{ color: 'var(--muted)', minWidth: 120 }}>Item spacing</label>
+                  <label style={{ color: 'var(--muted)', minWidth: 120 }}>Checklist item spacing</label>
                   <input aria-label="checklist spacing" type="range" min={2} max={24} value={pending} onChange={(e) => setPending(Number(e.target.value))} />
                   <div style={{ width: 48, textAlign: 'left' }}>{pending}px</div>
+                </div>
+                <div style={{ height: 10 }} />
+                <div style={{ display: 'flex', gap: 12, alignItems: 'center', justifyContent: 'flex-start' }}>
+                  <label style={{ color: 'var(--muted)', minWidth: 120 }}>Note line spacing</label>
+                  <input aria-label="note line spacing" type="range" min={0.9} max={1.8} step={0.02} value={pendingNoteLineSpacing} onChange={(e) => setPendingNoteLineSpacing(Number(e.target.value))} />
+                  <div style={{ width: 48, textAlign: 'left' }}>{pendingNoteLineSpacing.toFixed(2)}</div>
                 </div>
                 <div style={{ height: 10 }} />
                 <div style={{ display: 'flex', gap: 12, alignItems: 'center', justifyContent: 'flex-start' }}>

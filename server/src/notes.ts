@@ -49,7 +49,10 @@ router.get('/api/notes', async (req: Request, res: Response) => {
           noteLabels: { where: { label: { ownerId: user.id } }, include: { label: true } },
           notePrefs: { where: { userId: user.id } }
       },
-      orderBy: [{ ord: 'asc' }, { updatedAt: 'desc' }]
+        // Default ordering:
+        // 1) `ord` for manual drag-reorder
+        // 2) `createdAt` so notes remain in creation order by default
+        orderBy: [{ ord: 'asc' }, { createdAt: 'desc' }]
     });
     // ensure checklist items are returned in ord order
       const normalized = (notes as any[]).map((n: any) => ({
@@ -139,6 +142,8 @@ router.post('/api/notes', async (req: Request, res: Response) => {
     const note = await prisma.note.create({ data, include: { items: true, collaborators: true, images: true, noteLabels: true } });
     // sort items by ord before returning
     const created = { ...note, items: (note.items || []).slice().sort((a, b) => (a.ord || 0) - (b.ord || 0)) };
+    // Notify all sessions for this user so new note appears instantly
+    try { notifyUser(user.id, 'note-created', { noteId: created.id }); } catch {}
     res.status(201).json({ note: created });
   } catch (err) {
     res.status(500).json({ error: String(err) });
@@ -155,10 +160,38 @@ router.post('/api/notes/:id/images', async (req: Request, res: Response) => {
   try {
     const note = await prisma.note.findUnique({ where: { id } });
     if (!note) return res.status(404).json({ error: 'not found' });
-    if (note.ownerId !== user.id) return res.status(403).json({ error: 'forbidden' });
+    if (note.ownerId !== user.id) {
+      const collab = await prisma.collaborator.findFirst({ where: { noteId: id, userId: user.id } });
+      if (!collab) return res.status(403).json({ error: 'forbidden' });
+    }
     const img = await prisma.noteImage.create({ data: { noteId: id, url } });
     // OCR functionality removed — return created image immediately
+    try {
+      const collabs = await prisma.collaborator.findMany({ where: { noteId: id }, select: { userId: true } });
+      const participantIds = Array.from(new Set<number>([note.ownerId, ...collabs.map(c => Number(c.userId)).filter((n) => Number.isFinite(n))]));
+      for (const uid of participantIds) notifyUser(uid, 'note-images-changed', { noteId: id });
+    } catch {}
     res.status(201).json({ image: img });
+  } catch (err) {
+    res.status(500).json({ error: String(err) });
+  }
+});
+
+// list images for a note (owner or collaborators)
+router.get('/api/notes/:id/images', async (req: Request, res: Response) => {
+  const user = await getUserFromToken(req);
+  if (!user) return res.status(401).json({ error: 'unauthenticated' });
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) return res.status(400).json({ error: 'invalid id' });
+  try {
+    const note = await prisma.note.findUnique({ where: { id } });
+    if (!note) return res.status(404).json({ error: 'not found' });
+    if (note.ownerId !== user.id) {
+      const collab = await prisma.collaborator.findFirst({ where: { noteId: id, userId: user.id } });
+      if (!collab) return res.status(403).json({ error: 'forbidden' });
+    }
+    const images = await prisma.noteImage.findMany({ where: { noteId: id }, orderBy: { createdAt: 'asc' } });
+    res.json({ images });
   } catch (err) {
     res.status(500).json({ error: String(err) });
   }
@@ -174,11 +207,19 @@ router.delete('/api/notes/:id/images/:imageId', async (req: Request, res: Respon
   try {
     const note = await prisma.note.findUnique({ where: { id } });
     if (!note) return res.status(404).json({ error: 'not found' });
-    if (note.ownerId !== user.id) return res.status(403).json({ error: 'forbidden' });
+    if (note.ownerId !== user.id) {
+      const collab = await prisma.collaborator.findFirst({ where: { noteId: id, userId: user.id } });
+      if (!collab) return res.status(403).json({ error: 'forbidden' });
+    }
     // ensure image belongs to this note
     const img = await prisma.noteImage.findUnique({ where: { id: imageId } });
     if (!img || img.noteId !== id) return res.status(404).json({ error: 'image not found' });
     await prisma.noteImage.delete({ where: { id: imageId } });
+    try {
+      const collabs = await prisma.collaborator.findMany({ where: { noteId: id }, select: { userId: true } });
+      const participantIds = Array.from(new Set<number>([note.ownerId, ...collabs.map(c => Number(c.userId)).filter((n) => Number.isFinite(n))]));
+      for (const uid of participantIds) notifyUser(uid, 'note-images-changed', { noteId: id });
+    } catch {}
     res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: String(err) });
@@ -350,6 +391,12 @@ router.delete('/api/notes/:id', async (req: Request, res: Response) => {
     const note = await prisma.note.findUnique({ where: { id } });
     if (!note) return res.status(404).json({ error: 'not found' });
     if (note.ownerId !== user.id) return res.status(403).json({ error: 'forbidden' });
+    // Capture participants before deleting.
+    let participantIds: number[] = [];
+    try {
+      const collabs = await prisma.collaborator.findMany({ where: { noteId: id }, select: { userId: true } });
+      participantIds = Array.from(new Set<number>([note.ownerId, ...collabs.map(c => Number(c.userId)).filter((n) => Number.isFinite(n))]));
+    } catch {}
     await prisma.$transaction([
       prisma.noteItem.deleteMany({ where: { noteId: id } }),
       prisma.noteImage.deleteMany({ where: { noteId: id } }),
@@ -357,6 +404,12 @@ router.delete('/api/notes/:id', async (req: Request, res: Response) => {
       prisma.collaborator.deleteMany({ where: { noteId: id } }),
       prisma.note.delete({ where: { id } })
     ]);
+    // Notify owner + collaborators to remove the note instantly
+    try {
+      for (const uid of (participantIds.length ? participantIds : [note.ownerId])) {
+        notifyUser(uid, 'note-deleted', { noteId: id });
+      }
+    } catch {}
     res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: String(err) });

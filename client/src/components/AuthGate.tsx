@@ -3,8 +3,9 @@ import { useAuth } from '../authContext';
 import NotesGrid from './NotesGrid';
 import RegisterModal from './RegisterModal';
 import LoginModal from './LoginModal';
+import type { SortConfig } from '../sortTypes';
 
-export default function AuthGate({ selectedLabelIds, searchQuery }: { selectedLabelIds?: number[], searchQuery?: string }) {
+export default function AuthGate({ selectedLabelIds, searchQuery, sortConfig }: { selectedLabelIds?: number[], searchQuery?: string, sortConfig?: SortConfig }) {
   const { user } = useAuth();
   const [showRegister, setShowRegister] = useState(false);
   const [showLogin, setShowLogin] = useState(false);
@@ -17,7 +18,7 @@ export default function AuthGate({ selectedLabelIds, searchQuery }: { selectedLa
       .catch(() => setRegistrationEnabled(false));
   }, []);
 
-  if (user) return <NotesGrid selectedLabelIds={selectedLabelIds || []} searchQuery={searchQuery} />;
+  if (user) return <NotesGrid selectedLabelIds={selectedLabelIds || []} searchQuery={searchQuery} sortConfig={sortConfig} />;
 
   return (
     <div style={{ padding: 24, display: 'flex', flexDirection: 'column', alignItems: 'center' }}>

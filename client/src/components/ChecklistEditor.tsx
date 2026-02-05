@@ -16,9 +16,14 @@ import { WebsocketProvider } from 'y-websocket';
 export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImagesUpdated }:
   { note: any; onClose: () => void; onSaved?: (payload: { items: Array<{ id: number; content: string; checked: boolean; ord: number; indent: number }>; title: string }) => void; noteBg?: string; onImagesUpdated?: (images: Array<{ id:number; url:string }>) => void }) {
   const { token, user } = useAuth();
+  const clientIdRef = useRef<string>((() => {
+    try { return `c${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`; } catch { return `c${Math.random()}`; }
+  })());
   // Track the currently-focused per-item rich-text editor to drive toolbar actions/state
   const activeChecklistEditor = useRef<any>(null);
   const [, setToolbarTick] = useState<number>(0);
+  // When we handle a toolbar action on pointerdown, ignore the following click.
+  const skipNextToolbarClickRef = useRef(false);
   // Prevent immediate pointer interactions for a short time after mount
   const pointerSafeRef = useRef(false);
   React.useEffect(() => {
@@ -26,7 +31,15 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
     const id = window.setTimeout(() => { pointerSafeRef.current = true; }, 160);
     return () => window.clearTimeout(id);
   }, []);
-  const [items, setItems] = useState<Array<any>>(() => (note.items || []).map((it: any) => ({ indent: 0, ...it })));
+  // Ensure items have stable identity before Yjs sync kicks in.
+  // Without this, the first edit can cause Yjs to inject uid/key values,
+  // changing React keys and remounting editors (caret appears to "disappear").
+  const [items, setItems] = useState<Array<any>>(() => (note.items || []).map((it: any, idx: number) => {
+    const stableUid = (typeof it?.uid === 'string' && it.uid)
+      ? String(it.uid)
+      : (typeof it?.id === 'number' ? `id-${Number(it.id)}` : `init-${idx}-${Math.random().toString(36).slice(2, 8)}`);
+    return { indent: 0, uid: stableUid, key: stableUid, ...it };
+  }));
   const [saving, setSaving] = useState(false);
   const [completedOpen, setCompletedOpen] = useState(true);
   const [dragging, setDragging] = useState<number | null>(null);
@@ -41,9 +54,107 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
   const [showCollaborator, setShowCollaborator] = useState(false);
   const [showImageDialog, setShowImageDialog] = useState(false);
   const [images, setImages] = useState<Array<{ id:number; url:string }>>(((note as any).images || []).map((i:any)=>({ id:Number(i.id), url:String(i.url) })));
-  React.useEffect(() => { try { const next = (((note as any).images || []).map((i:any)=>({ id:Number(i.id), url:String(i.url) }))); setImages(next); onImagesUpdated && onImagesUpdated(next); } catch {} }, [ (note as any).images ]);
+  const [imagesOpen, setImagesOpen] = useState(false);
+  React.useEffect(() => {
+    try {
+      const next = (((note as any).images || []).map((i:any)=>({ id:Number(i.id), url:String(i.url) })));
+      setImages((cur) => {
+        try {
+          if (cur.length === next.length && cur.every((c, idx) => Number(c.id) === Number(next[idx]?.id) && String(c.url) === String(next[idx]?.url))) return cur;
+        } catch {}
+        return next;
+      });
+    } catch {}
+  }, [ (note as any).images ]);
   const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
   const [collaborators, setCollaborators] = useState<{ id:number; email:string }[]>([]);
+  const itemEditorRefs = useRef<Array<any | null>>([]);
+
+  function getCurrentChecklistEditor(): any | null {
+    let ed = activeChecklistEditor.current as any;
+    if (ed && (ed as any).isFocused) return ed;
+    const selNode = typeof document !== 'undefined' ? (document.getSelection()?.anchorNode || null) : null;
+    if (selNode) {
+      const bySel = itemEditorRefs.current.find((x) => {
+        try { return !!(x && (x as any).view?.dom && (x as any).view.dom.contains(selNode as Node)); } catch { return false; }
+      });
+      if (bySel) ed = bySel;
+    } else {
+      const activeEl = typeof document !== 'undefined' ? (document.activeElement as HTMLElement | null) : null;
+      if (activeEl) {
+        const byDom = itemEditorRefs.current.find((x) => {
+          try { return !!(x && (x as any).view && (x as any).view.dom && ((x as any).view.dom === activeEl || (x as any).view.dom.contains(activeEl))); } catch { return false; }
+        });
+        if (byDom) ed = byDom;
+      }
+    }
+    if (!ed || !(ed as any)?.isFocused) {
+      const focused = itemEditorRefs.current.find((x) => !!(x && (x as any).isFocused));
+      if (focused) ed = focused;
+    }
+    return ed || null;
+  }
+
+  function applyChecklistMarkAcrossLine(mark: 'bold' | 'italic' | 'underline') {
+    const ed = getCurrentChecklistEditor() as any;
+    if (!ed) return;
+    const sel: any = ed.state?.selection;
+    if (!sel || !sel.empty) {
+      const chain = ed.chain().focus();
+      if (mark === 'bold') chain.toggleBold().run();
+      else if (mark === 'italic') chain.toggleItalic().run();
+      else chain.toggleUnderline().run();
+      try {
+        const restorePos = sel?.from;
+        requestAnimationFrame(() => {
+          try {
+            const ch = ed.chain().focus();
+            if (typeof restorePos === 'number') ch.setTextSelection(restorePos);
+            ch.run();
+          } catch {}
+        });
+      } catch {}
+      return;
+    }
+    const $from = sel.$from; let depth = $from.depth; while (depth > 0 && !$from.node(depth).isBlock) depth--;
+    const from = $from.start(depth); const to = $from.end(depth);
+    const chain = ed.chain().focus().setTextSelection({ from, to });
+    if (mark === 'bold') chain.toggleBold().run();
+    else if (mark === 'italic') chain.toggleItalic().run();
+    else chain.toggleUnderline().run();
+    try { ed.chain().focus().setTextSelection(sel.from).run(); } catch {}
+    try {
+      const restorePos = sel.from;
+      requestAnimationFrame(() => {
+        try {
+          try { (ed as any).view?.focus?.(); } catch {}
+          ed.chain().focus().setTextSelection(restorePos).run();
+        } catch {}
+      });
+    } catch {}
+    try { setToolbarTick(t => t + 1); } catch {}
+  }
+
+  function isCurrentLineMarked(mark: 'bold' | 'italic' | 'underline'): boolean {
+    const ed = getCurrentChecklistEditor() as any;
+    if (!ed) return false;
+    const sel: any = ed.state?.selection;
+    if (!sel) return false;
+    const markType = (ed.schema?.marks || {})[mark];
+    if (!markType) return false;
+    const $from = sel.$from; let depth = $from.depth; while (depth > 0 && !$from.node(depth).isBlock) depth--; const from = $from.start(depth); const to = $from.end(depth);
+    let hasText = false; let allMarked = true;
+    try {
+      ed.state.doc.nodesBetween(from, to, (node: any) => {
+        if (node && node.isText) {
+          hasText = true;
+          const hasMark = !!markType.isInSet(node.marks);
+          if (!hasMark) allMarked = false;
+        }
+      });
+    } catch {}
+    return hasText && allMarked;
+  }
 
   // Yjs collaboration state for checklist items
   const ydoc = React.useMemo(() => new Y.Doc(), [note.id]);
@@ -92,6 +203,27 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
     const ymeta = ydoc.getMap<any>('meta');
     ymetaRef.current = ymeta;
 
+    const refreshImagesFromServer = async () => {
+      try {
+        const res = await fetch(`/api/notes/${note.id}/images`, { headers: { Authorization: `Bearer ${token}` } });
+        if (!res.ok) return;
+        const data = await res.json();
+        const next = (((data && data.images) || []).map((i: any) => ({ id: Number(i.id), url: String(i.url) })));
+        setImages(next);
+        onImagesUpdated && onImagesUpdated(next);
+      } catch {}
+    };
+
+    const onMeta = () => {
+      try {
+        const payload: any = ymeta.get('imagesTick');
+        if (!payload || !payload.t) return;
+        if (payload.by && String(payload.by) === String(clientIdRef.current)) return;
+        refreshImagesFromServer();
+      } catch {}
+    };
+    try { ymeta.observe(onMeta as any); } catch {}
+
     const seededRef = { current: false } as { current: boolean };
     const onSync = (isSynced: boolean) => {
       if (!isSynced) return;
@@ -103,7 +235,11 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
           const initial = (note.items || []).map((it: any) => {
             const m = new Y.Map<any>();
             if (typeof it.id === 'number') m.set('id', it.id);
-            m.set('uid', (it.uid || `u${Math.random().toString(36).slice(2,8)}`));
+            // Use deterministic uid when possible to keep React keys stable.
+            const uid = (typeof it?.uid === 'string' && it.uid)
+              ? String(it.uid)
+              : (typeof it?.id === 'number' ? `id-${Number(it.id)}` : `u${Math.random().toString(36).slice(2,8)}`);
+            m.set('uid', uid);
             m.set('content', String(it.content || ''));
             m.set('checked', !!it.checked);
             m.set('indent', Number(it.indent || 0));
@@ -182,9 +318,18 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
     return () => {
       try { yarr.unobserveDeep(updateFromY as any); } catch {}
       try { provider.off('sync', onSync as any); } catch {}
+      try { ymeta.unobserve(onMeta as any); } catch {}
       try { provider.destroy(); } catch {}
     };
   }, [note.id, token, ydoc]);
+
+  const broadcastImagesChanged = React.useCallback(() => {
+    try {
+      const ymeta = ymetaRef.current;
+      if (!ymeta) return;
+      ymeta.set('imagesTick', { t: Date.now(), by: clientIdRef.current });
+    } catch {}
+  }, []);
 
   useEffect(() => {
     try {
@@ -574,17 +719,37 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
   function onAddImageUrl(url?: string | null) {
     setShowImageDialog(false);
     if (!url) return;
+    const tempId = -Date.now();
+    // Optimistically show immediately
+    setImages((s) => {
+      const exists = s.some((x) => String(x.url) === String(url));
+      const next = exists ? s : [...s, { id: tempId, url: String(url) }];
+      onImagesUpdated && onImagesUpdated(next);
+      return next;
+    });
+    try { setImagesOpen(true); } catch {}
     (async () => {
       try {
         const res = await fetch(`/api/notes/${note.id}/images`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ url }) });
         if (!res.ok) throw new Error(await res.text());
         const data = await res.json();
         const img = data.image || null;
-        if (img && img.id && img.url) setImages(s => { const exists = s.some(x => Number(x.id) === Number(img.id)); const next = exists ? s : [...s, { id: Number(img.id), url: String(img.url) }]; onImagesUpdated && onImagesUpdated(next); return next; });
+        if (img && img.id && img.url) {
+          setImages((s) => {
+            const serverId = Number(img.id);
+            const serverUrl = String(img.url);
+            const replaced = s.map((x) => (Number(x.id) === tempId || String(x.url) === String(url)) ? ({ id: serverId, url: serverUrl }) : x);
+            const hasServer = replaced.some((x) => Number(x.id) === serverId);
+            const next = hasServer ? replaced : [...replaced, { id: serverId, url: serverUrl }];
+            onImagesUpdated && onImagesUpdated(next);
+            return next;
+          });
+          broadcastImagesChanged();
+        }
       } catch (err) {
         console.error('Failed to attach image', err);
         window.alert('Failed to attach image');
-        setImages(s => { const exists = s.some(x => String(x.url) === String(url)); const next = exists ? s : [...s, { id: Date.now(), url }]; onImagesUpdated && onImagesUpdated(next); return next; });
+        // Keep optimistic image; user can refresh or retry if needed.
       }
     })();
   }
@@ -612,12 +777,18 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
     }
   }
   async function deleteImage(imageId: number) {
+    const prev = images;
+    const next = prev.filter(i => Number(i.id) !== Number(imageId));
+    setImages(next);
+    onImagesUpdated && onImagesUpdated(next);
     try {
       const res = await fetch(`/api/notes/${note.id}/images/${imageId}`, { method: 'DELETE', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` } });
       if (!res.ok) throw new Error(await res.text());
-      setImages(s => { const next = s.filter(i => i.id !== imageId); onImagesUpdated && onImagesUpdated(next); return next; });
+      broadcastImagesChanged();
     } catch (err) {
       console.error('Failed to delete image', err);
+      setImages(prev);
+      onImagesUpdated && onImagesUpdated(prev);
       window.alert('Failed to delete image');
     }
   }
@@ -641,36 +812,46 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
           <div style={{ display: 'flex', gap: 12, marginBottom: 8 }}>
             <input placeholder="Checklist title" value={title} onChange={(e) => setTitle(e.target.value)} style={{ flex: 1, background: 'transparent', border: 'none', color: 'inherit', fontWeight: 600, fontSize: 18 }} />
           </div>
-          {images && images.length > 0 && (
-            <div className="note-images" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: 8, marginBottom: 8 }}>
-              {images.map(img => (
-                <div
-                  key={img.id}
-                  className="note-image"
-                  role="button"
-                  tabIndex={0}
-                  style={{ cursor: 'zoom-in', position: 'relative' }}
-                  onClick={() => setLightboxUrl(img.url)}
-                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setLightboxUrl(img.url); } }}
-                >
-                  <img src={img.url} alt="note image" style={{ width: '100%', height: 'auto', borderRadius: 6, display: 'block' }} />
-                  <button
-                    className="image-delete"
-                    aria-label="Delete image"
-                    title="Delete image"
-                    onClick={(e) => { e.stopPropagation(); deleteImage(img.id); }}
-                    style={{ position: 'absolute', right: 6, bottom: 6 }}
-                  >
-                    🗑️
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
-          <div className="rt-toolbar" style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 8 }}>
-            <button className="tiny" onClick={() => activeChecklistEditor.current?.chain().focus().toggleBold().run()} aria-pressed={activeChecklistEditor.current?.isActive?.('bold')}>B</button>
-            <button className="tiny" onClick={() => activeChecklistEditor.current?.chain().focus().toggleItalic().run()} aria-pressed={activeChecklistEditor.current?.isActive?.('italic')}>I</button>
-            <button className="tiny" onClick={() => activeChecklistEditor.current?.chain().focus().toggleUnderline().run()} aria-pressed={activeChecklistEditor.current?.isActive?.('underline')}>U</button>
+          <div
+            className="rt-toolbar"
+            style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 8 }}
+            onMouseDown={(e) => e.preventDefault()}
+            onPointerDown={(e) => e.preventDefault()}
+            onPointerUp={(e) => e.preventDefault()}
+          >
+            <button
+              className="tiny"
+              type="button"
+              tabIndex={-1}
+              onPointerDownCapture={(e) => { e.preventDefault(); e.stopPropagation(); skipNextToolbarClickRef.current = true; applyChecklistMarkAcrossLine('bold'); }}
+              onPointerUp={(e) => { e.preventDefault(); e.stopPropagation(); }}
+              onMouseDownCapture={(e) => { e.preventDefault(); e.stopPropagation(); }}
+              onMouseUp={(e) => e.preventDefault()}
+              onClick={() => { if (skipNextToolbarClickRef.current) { skipNextToolbarClickRef.current = false; return; } applyChecklistMarkAcrossLine('bold'); }}
+              aria-pressed={isCurrentLineMarked('bold')}
+            >B</button>
+            <button
+              className="tiny"
+              type="button"
+              tabIndex={-1}
+              onPointerDownCapture={(e) => { e.preventDefault(); e.stopPropagation(); skipNextToolbarClickRef.current = true; applyChecklistMarkAcrossLine('italic'); }}
+              onPointerUp={(e) => { e.preventDefault(); e.stopPropagation(); }}
+              onMouseDownCapture={(e) => { e.preventDefault(); e.stopPropagation(); }}
+              onMouseUp={(e) => e.preventDefault()}
+              onClick={() => { if (skipNextToolbarClickRef.current) { skipNextToolbarClickRef.current = false; return; } applyChecklistMarkAcrossLine('italic'); }}
+              aria-pressed={isCurrentLineMarked('italic')}
+            >I</button>
+            <button
+              className="tiny"
+              type="button"
+              tabIndex={-1}
+              onPointerDownCapture={(e) => { e.preventDefault(); e.stopPropagation(); skipNextToolbarClickRef.current = true; applyChecklistMarkAcrossLine('underline'); }}
+              onPointerUp={(e) => { e.preventDefault(); e.stopPropagation(); }}
+              onMouseDownCapture={(e) => { e.preventDefault(); e.stopPropagation(); }}
+              onMouseUp={(e) => e.preventDefault()}
+              onClick={() => { if (skipNextToolbarClickRef.current) { skipNextToolbarClickRef.current = false; return; } applyChecklistMarkAcrossLine('underline'); }}
+              aria-pressed={isCurrentLineMarked('underline')}
+            >U</button>
           </div>
 
           {((previewItems ?? items).length === 0) && (
@@ -973,13 +1154,15 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
                             onChange={(html) => updateItem(realIdx, html)}
                             onEnter={() => addItemAt(realIdx + 1)}
                             autoFocus={autoFocusIndex === realIdx}
-                            onFocus={(ed) => { activeChecklistEditor.current = ed; setToolbarTick(t => t + 1); if (autoFocusIndex === realIdx) setAutoFocusIndex(null); }}
+                            onFocus={(ed) => { activeChecklistEditor.current = ed; itemEditorRefs.current[realIdx] = ed; setToolbarTick(t => t + 1); if (autoFocusIndex === realIdx) setAutoFocusIndex(null); }}
                           />
                         </div>
                         {/* up/down controls removed in favor of drag reorder */}
                         <button className="delete-item" onClick={(e) => { e.stopPropagation(); deleteItemAt(realIdx); }} aria-label="Delete item">✕</button>
                       </div>
                     );
+
+                    
                   })}
 
                   <div style={{ marginTop: 12 }}>
@@ -1007,6 +1190,48 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
                     })}
                   </div>
                 </div>
+
+                {images && images.length > 0 && (
+                  <div className="editor-images" style={{ marginTop: 10, marginBottom: 8 }}>
+                    <button
+                      type="button"
+                      className="btn editor-images-toggle"
+                      onClick={() => setImagesOpen(o => !o)}
+                      aria-expanded={imagesOpen}
+                    >
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+                        <span style={{ transform: imagesOpen ? 'rotate(90deg)' : 'rotate(0deg)', display: 'inline-block' }}>{'▸'}</span>
+                        <span>Images ({images.length})</span>
+                      </span>
+                    </button>
+                    {imagesOpen && (
+                      <div className="editor-images-grid" style={{ marginTop: 8 }}>
+                        {images.map(img => (
+                          <div
+                            key={img.id}
+                            className="note-image"
+                            role="button"
+                            tabIndex={0}
+                            onClick={() => setLightboxUrl(img.url)}
+                            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setLightboxUrl(img.url); } }}
+                            style={{ cursor: 'zoom-in', position: 'relative' }}
+                          >
+                            <img src={img.url} alt="note image" />
+                            <button
+                              className="image-delete"
+                              aria-label="Delete image"
+                              title="Delete image"
+                              onClick={(e) => { e.stopPropagation(); deleteImage(img.id); }}
+                              style={{ position: 'absolute', right: 6, bottom: 6 }}
+                            >
+                              🗑️
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
 
 
               <div className="dialog-footer" style={{ borderTop: text ? `1px solid ${text}` : undefined }}>
