@@ -6,6 +6,8 @@
   --muted:#bdbdbd;
   --checklist-gap:8px;
   --checklist-checkbox-size:26px;
+  --checklist-drag-handle-width: 32px;
+  --checklist-drag-handle-height: var(--checklist-checkbox-size);
   --checklist-text-size:14px;
   --checkbox-bg: var(--card);
   --checkbox-border-default: #ffffff;
@@ -20,10 +22,19 @@
   --note-card-max-width: 420px; /* optional max width preference placeholder */
   /* Max card height for preview. Tuned to roughly fit ~18 checklist rows on typical settings. */
   --note-card-max-height: 672px;
+  --image-thumb-size: 96px;
   /* Multi-line clamp for plain-text preview (TEXT notes). */
   --note-text-preview-lines: 14;
   --app-font-family: Inter, system-ui, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   --header-height: 64px;
+}
+
+@media (pointer: coarse) {
+  :root{
+    /* Touch-friendly target size for checklist drag. */
+    --checklist-drag-handle-width: 48px;
+    --checklist-drag-handle-height: 44px;
+  }
 }
 /* Light theme overrides */
 :root[data-theme="light"]{
@@ -74,7 +85,23 @@ body{
 
 /* Layout */
 .app-body{display:flex;height:calc(100vh - var(--header-height))}
-.sidebar{width:max-content; min-width: var(--sidebar-min-width); padding:20px;border-right:1px solid rgba(255,255,255,0.06);background:transparent; transition: width 200ms cubic-bezier(.2,0,.2,1);}
+.sidebar{
+  width:max-content;
+  min-width: var(--sidebar-min-width);
+  padding:20px;
+  border-right:1px solid rgba(255,255,255,0.06);
+  background:transparent;
+  transition: width 200ms cubic-bezier(.2,0,.2,1);
+  /* Allow sidebar to scroll independently of the notes area (mobile-friendly). */
+  height: 100%;
+  overflow-y: auto;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* IE/Edge legacy */
+}
+.sidebar::-webkit-scrollbar{ width: 0; height: 0; }
 :root[data-theme="light"] .sidebar{ border-right-color: rgba(0,0,0,0.06); }
 .sidebar.collapsed{ width: 64px; min-width: 64px; padding: 16px 10px; }
 .sidebar .sidebar-item { display:flex; align-items:center; gap:8px; transition: transform 140ms cubic-bezier(.2,0,.2,1), color 120ms ease; }
@@ -253,15 +280,41 @@ html.is-editor-modal-open .notes-area{
 .take-note-bar .checkbox-visual svg{ transform: scale(0.86); }
 
 /* Rich text editor styling to match checklist aesthetics */
-.rt-toolbar { background: rgba(255,255,255,0.03); padding: 6px; border-radius: 6px; display:flex; flex-wrap: wrap; gap:8px; align-items:center; }
+.rt-toolbar { background: var(--editor-surface, var(--card)); padding: 6px; border-radius: 6px; display:flex; flex-wrap: wrap; gap:8px; align-items:center; border: 1px solid rgba(255,255,255,0.06); }
 .rt-toolbar .tiny { background: transparent; color: inherit; border: 1px solid rgba(255,255,255,0.12); padding: 4px 8px; border-radius: 6px; flex: 0 0 auto; }
-:root[data-theme="light"] .rt-toolbar { background: rgba(0,0,0,0.03); }
+:root[data-theme="light"] .rt-toolbar { background: var(--editor-surface, var(--card)); border-color: rgba(0,0,0,0.08); }
 :root[data-theme="light"] .rt-toolbar .tiny { border-color: rgba(0,0,0,0.12); }
 .rt-toolbar .tiny svg { width: 18px; height: 18px; display: block; fill: currentColor; }
 .rt-toolbar .tiny rect, .rt-toolbar .tiny circle { fill: currentColor; }
 .rt-toolbar .tiny text { font-weight: 600; }
 .rt-toolbar .tiny[aria-pressed="true"] { background: rgba(255,255,255,0.08); color: #fff; }
 :root[data-theme="light"] .rt-toolbar .tiny[aria-pressed="true"] { background: rgba(0,0,0,0.08); color: #000; }
+
+/* Keep note title + formatting icons visible while scrolling within editors. */
+.dialog-body .rt-sticky-header,
+.take-note-expanded .rt-sticky-header {
+  position: sticky;
+  top: 0;
+  z-index: 40;
+  background: var(--editor-surface, var(--card));
+}
+/* Expand sticky header to full width inside padded scroll containers. */
+.dialog-body .rt-sticky-header {
+  margin: 0 -12px 8px;
+  padding: 12px 12px 8px;
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+}
+:root[data-theme="light"] .dialog-body .rt-sticky-header {
+  border-bottom-color: rgba(0,0,0,0.08);
+}
+.take-note-expanded .rt-sticky-header {
+  margin: -12px -12px 8px;
+  padding: 12px 12px 8px;
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+}
+:root[data-theme="light"] .take-note-expanded .rt-sticky-header {
+  border-bottom-color: rgba(0,0,0,0.08);
+}
 .rt-editor { min-height: 300px; padding: 12px 14px; border-radius: 8px; background: inherit; color: inherit; }
 .rt-item { min-height: 22px; padding: 4px 6px; border-radius: 4px; background: transparent; color: inherit; }
 .rt-item p { margin: 0; font-size: var(--checklist-text-size); }
@@ -275,12 +328,14 @@ html.is-editor-modal-open .notes-area{
 
 /* Checklist item / drag handle styles */
 .checklist-item { padding: 4px 6px; border-radius:6px; background: transparent; margin-bottom: var(--checklist-gap); display:flex; align-items:flex-start; gap:8px; }
+.image-dialog .checklist-item { align-items: center; }
 .image-dialog .checklist-item:hover { background: rgba(255,255,255,0.06); }
 :root[data-theme="light"] .image-dialog .checklist-item:hover { background: rgba(0,0,0,0.06); }
 .take-note-expanded .checklist-item:hover { background: rgba(255,255,255,0.06); }
 :root[data-theme="light"] .take-note-expanded .checklist-item:hover { background: rgba(0,0,0,0.06); }
-.checklist-item .drag-handle { opacity: 0.9; color: inherit; display:flex; align-items:center; justify-content:center; height: var(--checklist-checkbox-size); line-height: 1; font-size: 18px; margin-right:0 }
-.checklist-item .drag-handle{ touch-action:none; }
+.checklist-item .drag-gutter { display:flex; align-items:center; gap:8px; }
+.checklist-item .drag-handle { opacity: 0.9; color: inherit; display:flex; align-items:center; justify-content:center; width: var(--checklist-drag-handle-width); min-width: var(--checklist-drag-handle-width); height: var(--checklist-drag-handle-height); min-height: var(--checklist-drag-handle-height); line-height: 1; font-size: 18px; margin-right:0 }
+.checklist-item .drag-gutter, .checklist-item .drag-handle{ touch-action:none; }
 .take-note-input{ padding:4px 6px; border-radius:4px; font-size: var(--checklist-text-size); resize: none; width:100%; min-height:22px; background: transparent; border: none; color: inherit; outline: none; font-family: inherit; }
 .take-note-input{ overflow: hidden; }
 .take-note-input::placeholder{ color: var(--muted); }
@@ -568,10 +623,17 @@ html.is-editor-modal-open .notes-area{
   display:flex;
   flex-wrap:wrap;
   gap:6px;
+  max-width: 100%;
+}
+.note-card.has-labels .note-images{
+  /* Reserve the footer+labels band so thumbnails don't render underneath it. */
+  margin-bottom: 66px;
 }
 .note-card .note-images .note-image{
-  width: 96px;
-  height: 72px;
+  width: min(var(--image-thumb-size), 100%);
+  aspect-ratio: 1 / 1;
+  height: auto;
+  flex: 0 0 auto;
   position: relative;
 }
 .note-card .note-images .note-image img{
@@ -603,20 +665,29 @@ html.is-editor-modal-open .notes-area{
   gap:8px;
   max-width: 100%;
   /* 2 rows max before scroll */
-  max-height: 184px;
+  max-height: calc((var(--image-thumb-size) * 2) + 16px);
   overflow-y: auto;
   overflow-x: hidden;
   padding-right: 4px;
 }
 .image-dialog .editor-images-grid .note-image{
-  width: 140px;
-  height: 88px;
+  width: min(var(--image-thumb-size), 100%);
+  aspect-ratio: 1 / 1;
+  height: auto;
   flex: 0 0 auto;
+  background: rgba(255,255,255,0.04);
+}
+.image-dialog .editor-images-grid .note-image:focus-within,
+.image-dialog .editor-images-grid .note-image:hover{
+  background: rgba(255,255,255,0.06);
+}
+:root[data-theme="light"] .image-dialog .editor-images-grid .note-image{
+  background: rgba(0,0,0,0.04);
 }
 .image-dialog .editor-images-grid .note-image img{
   width: 100%;
   height: 100%;
-  object-fit: cover;
+  object-fit: contain;
 }
 .image-delete{
   background: rgba(0,0,0,0.55);
@@ -672,6 +743,7 @@ html.is-editor-modal-open .notes-area{
   width: min(420px, calc(var(--note-card-width) + 120px));
   background:#181818;   /* solid opaque background */
   color:#ffffff;        /* white text */
+  --editor-surface: #181818;
   border-radius:10px;
   padding:12px;
   border:1px solid rgba(255,255,255,0.04);
@@ -680,6 +752,7 @@ html.is-editor-modal-open .notes-area{
 :root[data-theme="light"] .image-dialog{
   background:#ffffff;
   color:#000000;
+  --editor-surface: #ffffff;
   border:1px solid rgba(0,0,0,0.08);
 }
 .image-dialog.maximized{
@@ -723,6 +796,11 @@ html.is-editor-modal-open .notes-area{
 .dialog-header{display:flex;align-items:center;justify-content:space-between}
 /* dialog body (scrollable) and footer (sticky) */
 .dialog-body{ padding:12px; overflow:auto; flex:1 1 auto; }
+.image-dialog .dialog-body{
+  /* Ensure sticky title/toolbar can sit flush (no scroll-through gap). */
+  padding: 0 12px 12px;
+  background: var(--editor-surface, var(--card));
+}
 .dialog-footer{ padding:12px; border-top:1px solid rgba(255,255,255,0.03); display:flex; gap:8px; align-items:center; }
 :root[data-theme="light"] .dialog-footer{ border-top:1px solid rgba(0,0,0,0.06); }
 .image-dialog .dialog-footer .note-actions{ justify-content: flex-start; }

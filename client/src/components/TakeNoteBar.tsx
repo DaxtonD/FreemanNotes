@@ -384,17 +384,23 @@ export default function TakeNoteBar({ onCreated }: { onCreated?: () => void }): 
     // eslint-disable-next-line @typescript-eslint/ban-ts-comment
     // @ts-ignore
     dialogStyle['--checkbox-checked-mark'] = '#ffffff';
+
+    // Used by sticky title/toolbar backgrounds.
+    // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+    // @ts-ignore
+    dialogStyle['--editor-surface'] = bg;
   }
 
   return (
     <div className={`take-note-expanded${maximized ? ' maximized' : ''}`} ref={rootRef} style={{ padding: 12, ...dialogStyle }}>
-      <div style={{ display: 'flex', justifyContent: 'flex-start' }}>
-        <input placeholder="Title" value={title} onChange={e => setTitle(e.target.value)} style={{ fontSize: 18, fontWeight: 600, border: 'none', background: 'transparent', color: 'inherit' }} />
-      </div>
-
       {mode === 'text' ? (
         <div>
-          <div className="rt-toolbar" style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center', marginTop: 8, marginBottom: 8, overflowX: 'auto' }}>
+          <div className="rt-sticky-header">
+            <div style={{ display: 'flex', justifyContent: 'flex-start' }}>
+              <input placeholder="Title" value={title} onChange={e => setTitle(e.target.value)} style={{ fontSize: 18, fontWeight: 600, border: 'none', background: 'transparent', color: 'inherit' }} />
+            </div>
+
+            <div className="rt-toolbar" style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center', marginTop: 8, marginBottom: 0, overflowX: 'auto' }}>
             <button className="tiny" onClick={() => toggleMarkAcrossLine('bold')} aria-pressed={editor?.isActive('bold')}>B</button>
             <button className="tiny" onClick={() => toggleMarkAcrossLine('italic')} aria-pressed={editor?.isActive('italic')}>I</button>
             <button className="tiny" onClick={() => toggleMarkAcrossLine('underline')} aria-pressed={editor?.isActive('underline')}>U</button>
@@ -455,6 +461,7 @@ export default function TakeNoteBar({ onCreated }: { onCreated?: () => void }): 
             </button>
             {/* Link insertion is available in the full editor only */}
             <button className="tiny" onClick={() => setMaximized(m => !m)} aria-label="Toggle maximize" title="Toggle maximize">⤢</button>
+            </div>
           </div>
           <div
             onKeyDown={(e) => {
@@ -479,13 +486,18 @@ export default function TakeNoteBar({ onCreated }: { onCreated?: () => void }): 
           </div>
         </div>
       ) : (
-        <div style={{ marginTop: 8 }}>
-          <div
-            className="rt-toolbar"
-            style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center', marginBottom: 8 }}
-            onPointerDown={(e) => e.preventDefault()}
-            onPointerUp={(e) => e.preventDefault()}
-          >
+        <div>
+          <div className="rt-sticky-header">
+            <div style={{ display: 'flex', justifyContent: 'flex-start' }}>
+              <input placeholder="Title" value={title} onChange={e => setTitle(e.target.value)} style={{ fontSize: 18, fontWeight: 600, border: 'none', background: 'transparent', color: 'inherit' }} />
+            </div>
+
+            <div
+              className="rt-toolbar"
+              style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center', marginTop: 8, marginBottom: 0 }}
+              onPointerDown={(e) => e.preventDefault()}
+              onPointerUp={(e) => e.preventDefault()}
+            >
             <button
               className="tiny"
               type="button"
@@ -519,7 +531,10 @@ export default function TakeNoteBar({ onCreated }: { onCreated?: () => void }): 
               onClick={() => { if (skipNextChecklistToolbarClickRef.current) { skipNextChecklistToolbarClickRef.current = false; return; } applyChecklistMarkAcrossLine('underline'); }}
               aria-pressed={isCurrentLineMarked('underline')}
             >U</button>
+            </div>
           </div>
+
+          <div style={{ marginTop: 8 }}>
           {items.length === 0 && (
             <div style={{ marginBottom: 8 }}>
               <button
@@ -615,6 +630,7 @@ export default function TakeNoteBar({ onCreated }: { onCreated?: () => void }): 
               >✕</button>
             </div>
           ))}
+          </div>
         </div>
       )}
 

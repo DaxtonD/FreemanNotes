@@ -186,17 +186,37 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
   const nestedPendingRef = useRef<{ parentId: number | null; makeNested: boolean }>({ parentId: null, makeNested: false });
   const pointerTrackRef = useRef<{ active: boolean; startX: number; startY: number; idx: number | null; draggedId?: number | null; pointerId?: number } | null>(null);
   const [previewItems, setPreviewItems] = useState<Array<any> | null>(null);
-  // Hardwired drag/hover thresholds
-  const DRAG = {
-    hoverDownPct: 0.7,
-    hoverUpPct: 0.7,
-    indentPx: 16,
-    ghostOverlapPct: 0.7,
-    ghostOverlapUpPct: 0.7,
-    ghostOverlapDownPct: 0.7,
-    hoverClearMs: 80,
-    directionLockPx: 6,
-  } as const;
+  const isCoarsePointer = React.useMemo(() => {
+    try {
+      return typeof window !== 'undefined' && !!window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
+    } catch {
+      return false;
+    }
+  }, []);
+
+  // Drag/hover thresholds tuned for both mouse and touch.
+  const DRAG = React.useMemo(() => {
+    const base = {
+      hoverDownPct: 0.7,
+      hoverUpPct: 0.7,
+      indentPx: 16,
+      ghostOverlapPct: 0.7,
+      ghostOverlapUpPct: 0.7,
+      ghostOverlapDownPct: 0.7,
+    };
+    if (isCoarsePointer) {
+      return {
+        ...base,
+        hoverClearMs: 0,
+        directionLockPx: 0,
+      } as const;
+    }
+    return {
+      ...base,
+      hoverClearMs: 80,
+      directionLockPx: 6,
+    } as const;
+  }, [isCoarsePointer]);
   const lastPointerYRef = useRef<number>(0);
   const lastDragYRef = useRef<number>(0);
   const genUid = React.useCallback(() => `u${Date.now().toString(36)}${Math.random().toString(36).slice(2,8)}`, []);
@@ -763,6 +783,10 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
   if (bg) {
     dialogStyle.background = bg;
     if (text) dialogStyle.color = text;
+    // Used by sticky title/toolbar backgrounds.
+    // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+    // @ts-ignore
+    dialogStyle['--editor-surface'] = bg;
   }
 
   async function onPickColor(color: string) {
@@ -874,49 +898,51 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
           <button className="icon-close" onClick={onClose}>✕</button>
         </div>
         <div className="dialog-body">
-          <div style={{ display: 'flex', gap: 12, marginBottom: 8 }}>
-            <input placeholder="Checklist title" value={title} onChange={(e) => setTitle(e.target.value)} style={{ flex: 1, background: 'transparent', border: 'none', color: 'inherit', fontWeight: 600, fontSize: 18 }} />
-          </div>
-          <div
-            className="rt-toolbar"
-            style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 8 }}
-            onMouseDown={(e) => e.preventDefault()}
-            onPointerDown={(e) => e.preventDefault()}
-            onPointerUp={(e) => e.preventDefault()}
-          >
-            <button
-              className="tiny"
-              type="button"
-              tabIndex={-1}
-              onPointerDownCapture={(e) => { e.preventDefault(); e.stopPropagation(); skipNextToolbarClickRef.current = true; applyChecklistMarkAcrossLine('bold'); }}
-              onPointerUp={(e) => { e.preventDefault(); e.stopPropagation(); }}
-              onMouseDownCapture={(e) => { e.preventDefault(); e.stopPropagation(); }}
-              onMouseUp={(e) => e.preventDefault()}
-              onClick={() => { if (skipNextToolbarClickRef.current) { skipNextToolbarClickRef.current = false; return; } applyChecklistMarkAcrossLine('bold'); }}
-              aria-pressed={isCurrentLineMarked('bold')}
-            >B</button>
-            <button
-              className="tiny"
-              type="button"
-              tabIndex={-1}
-              onPointerDownCapture={(e) => { e.preventDefault(); e.stopPropagation(); skipNextToolbarClickRef.current = true; applyChecklistMarkAcrossLine('italic'); }}
-              onPointerUp={(e) => { e.preventDefault(); e.stopPropagation(); }}
-              onMouseDownCapture={(e) => { e.preventDefault(); e.stopPropagation(); }}
-              onMouseUp={(e) => e.preventDefault()}
-              onClick={() => { if (skipNextToolbarClickRef.current) { skipNextToolbarClickRef.current = false; return; } applyChecklistMarkAcrossLine('italic'); }}
-              aria-pressed={isCurrentLineMarked('italic')}
-            >I</button>
-            <button
-              className="tiny"
-              type="button"
-              tabIndex={-1}
-              onPointerDownCapture={(e) => { e.preventDefault(); e.stopPropagation(); skipNextToolbarClickRef.current = true; applyChecklistMarkAcrossLine('underline'); }}
-              onPointerUp={(e) => { e.preventDefault(); e.stopPropagation(); }}
-              onMouseDownCapture={(e) => { e.preventDefault(); e.stopPropagation(); }}
-              onMouseUp={(e) => e.preventDefault()}
-              onClick={() => { if (skipNextToolbarClickRef.current) { skipNextToolbarClickRef.current = false; return; } applyChecklistMarkAcrossLine('underline'); }}
-              aria-pressed={isCurrentLineMarked('underline')}
-            >U</button>
+          <div className="rt-sticky-header">
+            <div style={{ display: 'flex', gap: 12, marginBottom: 8 }}>
+              <input placeholder="Checklist title" value={title} onChange={(e) => setTitle(e.target.value)} style={{ flex: 1, background: 'transparent', border: 'none', color: 'inherit', fontWeight: 600, fontSize: 18 }} />
+            </div>
+            <div
+              className="rt-toolbar"
+              style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 0 }}
+              onMouseDown={(e) => e.preventDefault()}
+              onPointerDown={(e) => e.preventDefault()}
+              onPointerUp={(e) => e.preventDefault()}
+            >
+              <button
+                className="tiny"
+                type="button"
+                tabIndex={-1}
+                onPointerDownCapture={(e) => { e.preventDefault(); e.stopPropagation(); skipNextToolbarClickRef.current = true; applyChecklistMarkAcrossLine('bold'); }}
+                onPointerUp={(e) => { e.preventDefault(); e.stopPropagation(); }}
+                onMouseDownCapture={(e) => { e.preventDefault(); e.stopPropagation(); }}
+                onMouseUp={(e) => e.preventDefault()}
+                onClick={() => { if (skipNextToolbarClickRef.current) { skipNextToolbarClickRef.current = false; return; } applyChecklistMarkAcrossLine('bold'); }}
+                aria-pressed={isCurrentLineMarked('bold')}
+              >B</button>
+              <button
+                className="tiny"
+                type="button"
+                tabIndex={-1}
+                onPointerDownCapture={(e) => { e.preventDefault(); e.stopPropagation(); skipNextToolbarClickRef.current = true; applyChecklistMarkAcrossLine('italic'); }}
+                onPointerUp={(e) => { e.preventDefault(); e.stopPropagation(); }}
+                onMouseDownCapture={(e) => { e.preventDefault(); e.stopPropagation(); }}
+                onMouseUp={(e) => e.preventDefault()}
+                onClick={() => { if (skipNextToolbarClickRef.current) { skipNextToolbarClickRef.current = false; return; } applyChecklistMarkAcrossLine('italic'); }}
+                aria-pressed={isCurrentLineMarked('italic')}
+              >I</button>
+              <button
+                className="tiny"
+                type="button"
+                tabIndex={-1}
+                onPointerDownCapture={(e) => { e.preventDefault(); e.stopPropagation(); skipNextToolbarClickRef.current = true; applyChecklistMarkAcrossLine('underline'); }}
+                onPointerUp={(e) => { e.preventDefault(); e.stopPropagation(); }}
+                onMouseDownCapture={(e) => { e.preventDefault(); e.stopPropagation(); }}
+                onMouseUp={(e) => e.preventDefault()}
+                onClick={() => { if (skipNextToolbarClickRef.current) { skipNextToolbarClickRef.current = false; return; } applyChecklistMarkAcrossLine('underline'); }}
+                aria-pressed={isCurrentLineMarked('underline')}
+              >U</button>
+            </div>
           </div>
 
           {((previewItems ?? items).length === 0) && (
@@ -1035,12 +1061,16 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
                         }}
                         onDragLeave={() => { if (hoverIndex === realIdx) setHoverIndex(null); if (rafRef.current) { cancelAnimationFrame(rafRef.current); rafRef.current = null; } }}
                       >
-                        <div className="drag-handle" style={{ width: 32, cursor: 'grab', userSelect: 'none', WebkitUserSelect: 'none', MozUserSelect: 'none', msUserSelect: 'none', touchAction: 'none' }} onMouseDown={(e) => { e.preventDefault(); }}
+                        <div
+                          className="drag-gutter"
+                          style={{ cursor: 'grab', userSelect: 'none', WebkitUserSelect: 'none', MozUserSelect: 'none', msUserSelect: 'none', touchAction: 'none' }}
+                          onMouseDown={(e) => { e.preventDefault(); }}
                           onPointerDown={(e) => {
                             // Critical for mobile: prevent the page/dialog from starting a scroll gesture.
                             try { e.preventDefault(); } catch {}
                             try { e.stopPropagation(); } catch {}
                             (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+                            checklistAutoScrollPointerYRef.current = e.clientY;
                             const currentList = previewItems ?? items;
                             const draggedId = (typeof currentList[realIdx]?.id === 'number' ? currentList[realIdx].id : (currentList[realIdx]?.uid ?? null));
                             pointerTrackRef.current = { active: true, startX: e.clientX, startY: e.clientY, idx: realIdx, draggedId, pointerId: e.pointerId };
@@ -1070,10 +1100,12 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
                                 const srcEl = nodes[srcDomIdx];
                                 if (srcEl) {
                                   const rect = srcEl.getBoundingClientRect();
+                                  // Keep the ghost anchored under the pointer immediately.
+                                  dragOffsetRef.current = { x: (e.clientX - rect.left), y: (e.clientY - rect.top) };
                                   const ghost = srcEl.cloneNode(true) as HTMLElement;
                                   ghost.style.position = 'fixed';
                                   ghost.style.left = rect.left + 'px';
-                                  ghost.style.top = rect.top + 'px';
+                                  ghost.style.top = (e.clientY - (dragOffsetRef.current.y || 0)) + 'px';
                                   ghost.style.width = rect.width + 'px';
                                   ghost.style.pointerEvents = 'none';
                                   ghost.style.zIndex = '9999';
@@ -1171,7 +1203,6 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
                           }}
                           onPointerUp={(e) => {
                             try { (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId); } catch {}
-                            const p = pointerTrackRef.current;
                             pointerTrackRef.current = null;
                             if (previewItems) {
                               const yarr = yarrayRef.current;
@@ -1221,8 +1252,21 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
                             // cleanup ghost and classes
                             endDragCleanup();
                           }}
-                        >≡</div>
-                        <div className={`checkbox-visual ${it.checked ? 'checked' : ''}`} onClick={() => toggleChecked(realIdx)}>{it.checked && (<svg viewBox="0 0 24 24" fill="none" aria-hidden focusable="false"><path d="M20 6L9 17l-5-5" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" /></svg>)}</div>
+                        >
+                          <div className="drag-handle" aria-hidden>≡</div>
+                          <div
+                            className={`checkbox-visual ${it.checked ? 'checked' : ''}`}
+                            onClick={(e) => { e.stopPropagation(); toggleChecked(realIdx); }}
+                            onPointerDown={(e) => { e.stopPropagation(); }}
+                            onPointerUp={(e) => { e.stopPropagation(); }}
+                          >
+                            {it.checked && (
+                              <svg viewBox="0 0 24 24" fill="none" aria-hidden focusable="false">
+                                <path d="M20 6L9 17l-5-5" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" />
+                              </svg>
+                            )}
+                          </div>
+                        </div>
                         <div style={{ flex: 1 }}>
                           <ChecklistItemRT
                             value={it.content || ''}

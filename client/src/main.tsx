@@ -11,10 +11,11 @@ function applySavedPrefs() {
 				'prefs.checkboxSize': '--checklist-checkbox-size',
 				'prefs.checklistTextSize': '--checklist-text-size',
 				'prefs.noteWidth': '--note-card-width',
+				'prefs.imageThumbSize': '--image-thumb-size',
 				'prefs.fontFamily': '--app-font-family',
 				'prefs.noteLineSpacing': '--note-line-height',
 			};
-			const pxKeys = new Set(['prefs.checklistSpacing', 'prefs.checkboxSize', 'prefs.checklistTextSize', 'prefs.noteWidth']);
+			const pxKeys = new Set(['prefs.checklistSpacing', 'prefs.checkboxSize', 'prefs.checklistTextSize', 'prefs.noteWidth', 'prefs.imageThumbSize']);
 			Object.entries(map).forEach(([key, cssVar]) => {
 				const v = localStorage.getItem(key);
 				if (v === null || v === '') return;

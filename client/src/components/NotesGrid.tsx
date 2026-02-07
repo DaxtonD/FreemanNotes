@@ -16,6 +16,7 @@ import {
 } from '@dnd-kit/core';
 import NoteCard from "./NoteCard";
 import { useAuth } from "../authContext";
+import { getOrCreateDeviceProfile } from "../lib/deviceProfile";
 import TakeNoteBar from "./TakeNoteBar";
 import { DEFAULT_SORT_CONFIG, type SortConfig } from '../sortTypes';
 
@@ -748,6 +749,15 @@ export default function NotesGrid({ selectedLabelIds = [], searchQuery = '', sor
     const observedChildren = new WeakSet<Element>();
     let childRO: ResizeObserver | null = null;
     if (!token) return;
+
+    const myDeviceKey = (() => {
+      try {
+        return getOrCreateDeviceProfile().deviceKey;
+      } catch {
+        return null;
+      }
+    })();
+
     let ws: WebSocket | null = null;
     try {
       const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
@@ -870,6 +880,16 @@ export default function NotesGrid({ selectedLabelIds = [], searchQuery = '', sor
             }
             case 'user-prefs-updated': {
               const payload = msg.payload || {};
+
+              // Per-device prefs: ignore updates coming from other deviceKeys.
+              // (Allow legacy/global events with no deviceKey.)
+              const incomingDeviceKey = (typeof payload.deviceKey === 'string' && payload.deviceKey)
+                ? String(payload.deviceKey)
+                : null;
+              if (incomingDeviceKey && myDeviceKey && incomingDeviceKey !== myDeviceKey) {
+                break;
+              }
+
               try {
                 // Mirror server-saved prefs into the DOM + localStorage for other sessions.
                 if (typeof payload.noteWidth === 'number') {
@@ -883,6 +903,10 @@ export default function NotesGrid({ selectedLabelIds = [], searchQuery = '', sor
                 if (typeof payload.noteLineSpacing === 'number') {
                   document.documentElement.style.setProperty('--note-line-height', String(Number(payload.noteLineSpacing)));
                   try { localStorage.setItem('prefs.noteLineSpacing', String(Number(payload.noteLineSpacing))); } catch {}
+                }
+                if (typeof payload.imageThumbSize === 'number') {
+                  document.documentElement.style.setProperty('--image-thumb-size', `${Number(payload.imageThumbSize)}px`);
+                  try { localStorage.setItem('prefs.imageThumbSize', String(Number(payload.imageThumbSize))); } catch {}
                 }
                 if (typeof payload.fontFamily === 'string' && payload.fontFamily) {
                   document.documentElement.style.setProperty('--app-font-family', String(payload.fontFamily));

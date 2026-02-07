@@ -235,12 +235,14 @@ export default function NoteCard({ note, onChange }: { note: Note, onChange?: ()
   React.useEffect(() => {
     const el = imagesWrapRef.current;
     if (!el) return;
-    const THUMB_W = 96;
     const GAP = 6;
     const compute = () => {
       try {
+        const css = getComputedStyle(document.documentElement);
+        const thumbRaw = css.getPropertyValue('--image-thumb-size') || '';
+        const thumbW = Math.max(24, parseInt(String(thumbRaw).trim(), 10) || 96);
         const w = el.clientWidth || 0;
-        const perRow = Math.max(1, Math.floor((w + GAP) / (THUMB_W + GAP)));
+        const perRow = Math.max(1, Math.floor((w + GAP) / (thumbW + GAP)));
         setThumbsPerRow(perRow);
       } catch {}
     };
@@ -251,9 +253,11 @@ export default function NoteCard({ note, onChange }: { note: Note, onChange?: ()
       ro.observe(el);
     } catch {}
     window.addEventListener('resize', compute);
+    window.addEventListener('notes-grid:recalc', compute as any);
     return () => {
       try { ro && ro.disconnect(); } catch {}
       window.removeEventListener('resize', compute);
+      window.removeEventListener('notes-grid:recalc', compute as any);
     };
   }, []);
 

@@ -19,10 +19,10 @@ export default function Sidebar({
 }) {
   const { token } = useAuth();
   const [labels, setLabels] = useState<Array<{ id: number; name: string }>>([]);
-  const [open, setOpen] = useState(true);
-  const [sortingOpen, setSortingOpen] = useState(true);
-  const [filtersListOpen, setFiltersListOpen] = useState(true);
-  const [groupingListOpen, setGroupingListOpen] = useState(true);
+  const [open, setOpen] = useState(false);
+  const [sortingOpen, setSortingOpen] = useState(false);
+  const [filtersListOpen, setFiltersListOpen] = useState(false);
+  const [groupingListOpen, setGroupingListOpen] = useState(false);
   useEffect(() => {
     if (!token) { setLabels([]); return; }
     fetch('/api/labels', { headers: { Authorization: `Bearer ${token}` } })
@@ -79,6 +79,56 @@ export default function Sidebar({
     } catch {}
     // collapse the Sorting drop-down when returning to default view
     try { setSortingOpen(false); } catch {}
+    try { setFiltersListOpen(false); } catch {}
+    try { setGroupingListOpen(false); } catch {}
+    // Clear label filters when returning to default view.
+    try { onClearLabels && onClearLabels(); } catch {}
+    try { setOpen(false); } catch {}
+  };
+
+  const toggleLabelsOpen = () => {
+    setOpen((wasOpen) => {
+      const next = !wasOpen;
+      if (!next) {
+        // When Labels filter is collapsed, clear filters and return to default view.
+        try { onClearLabels && onClearLabels(); } catch {}
+        try { resetToDefault(); } catch {}
+      }
+      return next;
+    });
+  };
+
+  const toggleSortingOpen = () => {
+    setSortingOpen((wasOpen) => {
+      const next = !wasOpen;
+      if (!next) {
+        // When Sorting is collapsed/cleared, clear Sorting + Filters + Grouping + label filters.
+        try { resetToDefault(); } catch {}
+      }
+      return next;
+    });
+  };
+
+  const toggleFiltersOpen = () => {
+    setFiltersListOpen((wasOpen) => {
+      const next = !wasOpen;
+      if (!next) {
+        // Clear filter state when the Filters section is collapsed.
+        try { setSmartFilter('none'); } catch {}
+      }
+      return next;
+    });
+  };
+
+  const toggleGroupingOpen = () => {
+    setGroupingListOpen((wasOpen) => {
+      const next = !wasOpen;
+      if (!next) {
+        // Clear grouping when the Grouping section is collapsed.
+        try { setSort({ groupBy: 'none' }); } catch {}
+      }
+      return next;
+    });
   };
 
   return (
@@ -101,7 +151,7 @@ export default function Sidebar({
           </span>
           {!collapsed && <span className="text">Reminders</span>}
         </div>
-        <div className="sidebar-item" onClick={() => setOpen(o => !o)} style={{ cursor: 'pointer' }} title="Labels">
+        <div className="sidebar-item" onClick={toggleLabelsOpen} style={{ cursor: 'pointer' }} title="Labels">
           <span className="icon" aria-hidden>
             <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden>
               <path d="M6 3h12v18l-6-4-6 4V3z"/>
@@ -129,7 +179,7 @@ export default function Sidebar({
           </div>
         )}
 
-        <div className="sidebar-item" onClick={() => setSortingOpen(o => !o)} style={{ cursor: 'pointer' }} title="Sorting">
+        <div className="sidebar-item" onClick={toggleSortingOpen} style={{ cursor: 'pointer' }} title="Sorting">
           <span className="icon" aria-hidden>
             <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden>
               <path d="M3 18h6v-2H3v2zm0-5h12v-2H3v2zm0-7v2h18V6H3z"/>
@@ -169,7 +219,7 @@ export default function Sidebar({
               </span>
             </div>
 
-            <div className="sidebar-item" onClick={() => setFiltersListOpen(o => !o)} style={{ cursor: 'pointer', marginTop: 4 }} title="Filters">
+            <div className="sidebar-item" onClick={toggleFiltersOpen} style={{ cursor: 'pointer', marginTop: 4 }} title="Filters">
               <span className="text">
                 <span className="sidebar-indicator leading"><span className={"chev" + (filtersListOpen ? " open" : "")}>▶</span></span>
                 Filters
@@ -188,7 +238,7 @@ export default function Sidebar({
               </div>
             )}
 
-            <div className="sidebar-item" onClick={() => setGroupingListOpen(o => !o)} style={{ cursor: 'pointer', marginTop: 4 }} title="Grouping">
+            <div className="sidebar-item" onClick={toggleGroupingOpen} style={{ cursor: 'pointer', marginTop: 4 }} title="Grouping">
               <span className="text">
                 <span className="sidebar-indicator leading"><span className={"chev" + (groupingListOpen ? " open" : "")}>▶</span></span>
                 Grouping

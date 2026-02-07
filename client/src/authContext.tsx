@@ -66,6 +66,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         document.documentElement.style.setProperty('--note-line-height', String((user as any).noteLineSpacing));
         localStorage.setItem('prefs.noteLineSpacing', String((user as any).noteLineSpacing));
       }
+      if (typeof (user as any).imageThumbSize === 'number') {
+        document.documentElement.style.setProperty('--image-thumb-size', String((user as any).imageThumbSize) + 'px');
+        localStorage.setItem('prefs.imageThumbSize', String((user as any).imageThumbSize));
+      }
       if ((user as any).checkboxBg) {
         document.documentElement.style.setProperty('--checkbox-bg', (user as any).checkboxBg);
         localStorage.setItem('prefs.checkboxBg', (user as any).checkboxBg);

@@ -32,6 +32,63 @@ model User {
   labels         Label[]
   notes          Note[]         @relation("OwnerNotes")
   notePrefs      NotePref[]
+  deviceProfiles UserDeviceProfile[]
+  deviceClients  UserDeviceClient[]
+}
+
+// A per-user named device profile (e.g. "Pixel 8", "Work Laptop").
+// Multiple browser installs on the same physical device can map to the same profile.
+model UserDeviceProfile {
+  id         Int               @id @default(autoincrement())
+  userId     Int
+  name       String
+  createdAt  DateTime          @default(now())
+  updatedAt  DateTime          @updatedAt
+  lastSeenAt DateTime          @default(now())
+  user       User              @relation(fields: [userId], references: [id])
+  prefs      UserDevicePrefs?
+  clients    UserDeviceClient[]
+
+  @@unique([userId, name])
+  @@index([userId])
+}
+
+// A specific browser client installation/profile, keyed by a client-generated stable id.
+model UserDeviceClient {
+  id         Int               @id @default(autoincrement())
+  userId     Int
+  deviceKey  String
+  profileId  Int
+  createdAt  DateTime          @default(now())
+  updatedAt  DateTime          @updatedAt
+  lastSeenAt DateTime          @default(now())
+  user       User              @relation(fields: [userId], references: [id])
+  profile    UserDeviceProfile @relation(fields: [profileId], references: [id])
+
+  @@unique([userId, deviceKey])
+  @@index([profileId])
+  @@index([userId])
+}
+
+model UserDevicePrefs {
+  id               Int               @id @default(autoincrement())
+  profileId        Int               @unique
+  themeChoice      String?           @default("system")
+  checklistSpacing Int?
+  checkboxSize     Int?
+  checklistTextSize Int?
+  noteLineSpacing  Float?
+  noteWidth        Int?
+  fontFamily       String?
+  dragBehavior     String?
+  animationSpeed   String?
+  animationBehavior String?
+  animationsEnabled Boolean?         @default(true)
+  chipDisplayMode  String?
+  imageThumbSize   Int?
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+  profile          UserDeviceProfile @relation(fields: [profileId], references: [id])
 }
 
 model Invite {
