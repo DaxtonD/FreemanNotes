@@ -1,9 +1,15 @@
-import React, { useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
 export default function ImageDialog({ onClose, onAdd }: { onClose: () => void; onAdd: (url?: string | null) => void }) {
   const [url, setUrl] = useState("");
   const fileRef = useRef<HTMLInputElement | null>(null);
+  useEffect(() => {
+    window.dispatchEvent(new Event('freemannotes:editor-modal-open'));
+    return () => {
+      window.dispatchEvent(new Event('freemannotes:editor-modal-close'));
+    };
+  }, []);
 
   function onChooseFile() {
     fileRef.current?.click();

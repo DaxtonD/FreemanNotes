@@ -144,6 +144,12 @@ router.patch('/api/auth/me', async (req: Request, res: Response) => {
   if ('checkboxBorder' in body) data.checkboxBorder = (body as any).checkboxBorder;
   try {
     const updated = await prisma.user.update({ where: { id: (user as any).id }, data });
+    // Push updated preferences to this user's other connected clients
+    try {
+      const payload: any = {};
+      for (const k of Object.keys(data || {})) payload[k] = (updated as any)[k];
+      notifyUser((user as any).id, 'user-prefs-updated', payload);
+    } catch {}
     // @ts-ignore
     delete updated.passwordHash;
     res.json({ user: updated });

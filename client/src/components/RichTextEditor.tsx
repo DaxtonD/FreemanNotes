@@ -24,6 +24,14 @@ export default function RichTextEditor({ note, onClose, onSaved, noteBg, onImage
   const clientIdRef = React.useRef<string>((() => {
     try { return `c${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`; } catch { return `c${Math.random()}`; }
   })());
+
+  React.useEffect(() => {
+    window.dispatchEvent(new Event('freemannotes:editor-modal-open'));
+    return () => {
+      window.dispatchEvent(new Event('freemannotes:editor-modal-close'));
+    };
+  }, []);
+
   const [title, setTitle] = React.useState<string>(note.title || '');
   const [maximized, setMaximized] = React.useState<boolean>(false);
   const [showPalette, setShowPalette] = React.useState(false);

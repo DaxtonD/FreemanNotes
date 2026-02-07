@@ -16,6 +16,14 @@ import { WebsocketProvider } from 'y-websocket';
 export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImagesUpdated }:
   { note: any; onClose: () => void; onSaved?: (payload: { items: Array<{ id: number; content: string; checked: boolean; ord: number; indent: number }>; title: string }) => void; noteBg?: string; onImagesUpdated?: (images: Array<{ id:number; url:string }>) => void }) {
   const { token, user } = useAuth();
+
+  useEffect(() => {
+    window.dispatchEvent(new Event('freemannotes:editor-modal-open'));
+    return () => {
+      window.dispatchEvent(new Event('freemannotes:editor-modal-close'));
+    };
+  }, []);
+
   const clientIdRef = useRef<string>((() => {
     try { return `c${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`; } catch { return `c${Math.random()}`; }
   })());
@@ -168,6 +176,9 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
   const ghostRef = useRef<HTMLDivElement | null>(null);
   const docDragOverRef = useRef<((e: DragEvent) => void) | undefined>(undefined);
   const dragOffsetRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
+  const checklistAutoScrollRafRef = useRef<number | null>(null);
+  const checklistAutoScrollActiveRef = useRef(false);
+  const checklistAutoScrollPointerYRef = useRef<number>(0);
   const clearHoverTimeoutRef = useRef<number | null>(null);
   const dragStartRef = useRef<{ x: number; y: number } | null>(null);
   const dragDirectionRef = useRef<'vertical' | 'horizontal' | null>(null);
@@ -190,6 +201,59 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
   const lastDragYRef = useRef<number>(0);
   const genUid = React.useCallback(() => `u${Date.now().toString(36)}${Math.random().toString(36).slice(2,8)}`, []);
   const getKey = React.useCallback((it: any) => (typeof it.id === 'number' ? it.id : (it.uid || `tmp-${Math.random().toString(36).slice(2,6)}`)), []);
+
+  function getChecklistScrollContainer(): HTMLElement | null {
+    const body = document.querySelector('.image-dialog .dialog-body') as HTMLElement | null;
+    if (body) return body;
+    return (document.querySelector('.image-dialog') as HTMLElement | null);
+  }
+
+  function stopChecklistAutoScroll() {
+    checklistAutoScrollActiveRef.current = false;
+    if (checklistAutoScrollRafRef.current != null) {
+      cancelAnimationFrame(checklistAutoScrollRafRef.current);
+      checklistAutoScrollRafRef.current = null;
+    }
+  }
+
+  function startChecklistAutoScroll() {
+    if (checklistAutoScrollRafRef.current != null) return;
+    checklistAutoScrollActiveRef.current = true;
+    const tick = () => {
+      if (!checklistAutoScrollActiveRef.current) {
+        checklistAutoScrollRafRef.current = null;
+        return;
+      }
+
+      const scroller = getChecklistScrollContainer();
+      if (!scroller) {
+        checklistAutoScrollRafRef.current = requestAnimationFrame(tick);
+        return;
+      }
+
+      const rect = scroller.getBoundingClientRect();
+      const y = checklistAutoScrollPointerYRef.current;
+      const edge = Math.max(56, Math.min(96, rect.height * 0.18));
+      const maxSpeed = 14;
+
+      let delta = 0;
+      if (y < rect.top + edge) {
+        const strength = Math.max(0, Math.min(1, (rect.top + edge - y) / edge));
+        delta = -Math.max(1, Math.round(Math.pow(strength, 1.65) * maxSpeed));
+      } else if (y > rect.bottom - edge) {
+        const strength = Math.max(0, Math.min(1, (y - (rect.bottom - edge)) / edge));
+        delta = Math.max(1, Math.round(Math.pow(strength, 1.65) * maxSpeed));
+      }
+
+      if (delta !== 0) {
+        scroller.scrollTop = scroller.scrollTop + delta;
+      }
+
+      checklistAutoScrollRafRef.current = requestAnimationFrame(tick);
+    };
+
+    checklistAutoScrollRafRef.current = requestAnimationFrame(tick);
+  }
 
   // Setup Yjs provider and bind checklist CRDT
   useEffect(() => {
@@ -627,6 +691,7 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
   }
 
   function endDragCleanup() {
+    stopChecklistAutoScroll();
     if (ghostRef.current) { ghostRef.current.remove(); ghostRef.current = null; }
     if (docDragOverRef.current) { document.removeEventListener('dragover', docDragOverRef.current); docDragOverRef.current = undefined; }
     document.querySelectorAll('.checklist-item.drag-source').forEach(el => el.classList.remove('drag-source'));
@@ -866,7 +931,7 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
                     const realIdx = currentList.indexOf(it);
                     const shiftClass = shiftClassForIndex(realIdx, currentList);
                     return (
-                      <div key={it.key ?? realIdx} className={`checklist-item ${shiftClass}`} style={{ display: 'flex', gap: 8, alignItems: 'flex-start', marginLeft: (it.indent || 0) * 18 }} draggable={false}
+                      <div key={it.key ?? realIdx} className={`checklist-item ${shiftClass}`} style={{ marginLeft: (it.indent || 0) * 18 }} draggable={false}
                         onPointerCancel={() => { pointerTrackRef.current = null; }}
                         
                         onDragOver={(e) => {
@@ -970,8 +1035,11 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
                         }}
                         onDragLeave={() => { if (hoverIndex === realIdx) setHoverIndex(null); if (rafRef.current) { cancelAnimationFrame(rafRef.current); rafRef.current = null; } }}
                       >
-                        <div className="drag-handle" style={{ width: 32, cursor: 'grab', userSelect: 'none', WebkitUserSelect: 'none', MozUserSelect: 'none', msUserSelect: 'none' }} onMouseDown={(e) => { e.preventDefault(); }}
+                        <div className="drag-handle" style={{ width: 32, cursor: 'grab', userSelect: 'none', WebkitUserSelect: 'none', MozUserSelect: 'none', msUserSelect: 'none', touchAction: 'none' }} onMouseDown={(e) => { e.preventDefault(); }}
                           onPointerDown={(e) => {
+                            // Critical for mobile: prevent the page/dialog from starting a scroll gesture.
+                            try { e.preventDefault(); } catch {}
+                            try { e.stopPropagation(); } catch {}
                             (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
                             const currentList = previewItems ?? items;
                             const draggedId = (typeof currentList[realIdx]?.id === 'number' ? currentList[realIdx].id : (currentList[realIdx]?.uid ?? null));
@@ -982,6 +1050,9 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
                           onPointerMove={(e) => {
                             const p = pointerTrackRef.current;
                             if (!p || !p.active) return;
+                            // With touch-action:none this is usually redundant, but keep it to reduce scroll jitter.
+                            try { e.preventDefault(); } catch {}
+                            checklistAutoScrollPointerYRef.current = e.clientY;
                             const dx = e.clientX - p.startX;
                             const dy = e.clientY - p.startY;
                             const TH = DRAG.directionLockPx;
@@ -1027,6 +1098,7 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
                               if (ghostRef.current) {
                                 ghostRef.current.style.left = sourceLeftRef.current + 'px';
                                 ghostRef.current.style.top = (e.clientY - (dragOffsetRef.current.y || 0)) + 'px';
+                                startChecklistAutoScroll();
                               }
                               // compute hover index using ghost overlap to avoid jitter
                               const nodes = Array.from(document.querySelectorAll('.image-dialog .checklist-item:not(.completed)')) as HTMLElement[];
@@ -1092,6 +1164,9 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
                               } else {
                                 setPreviewItems(null);
                               }
+                            }
+                            else {
+                              stopChecklistAutoScroll();
                             }
                           }}
                           onPointerUp={(e) => {
@@ -1177,10 +1252,10 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
                       const realIdx = currentList.indexOf(it);
                       const shiftClass = '';
                       return (
-                        <div key={it.key ?? realIdx} className={`checklist-item completed ${shiftClass}`} style={{ display: 'flex', gap: 8, alignItems: 'flex-start', marginLeft: (it.indent || 0) * 18 }} draggable={false}>
+                        <div key={it.key ?? realIdx} className={`checklist-item completed ${shiftClass}`} style={{ marginLeft: (it.indent || 0) * 18 }} draggable={false}>
                           <div style={{ width: 20 }} />
                           <div className={`checkbox-visual ${it.checked ? 'checked' : ''}`} onClick={() => toggleChecked(realIdx)}>{it.checked && (<svg viewBox="0 0 24 24" fill="none" aria-hidden focusable="false"><path d="M20 6L9 17l-5-5" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" /></svg>)}</div>
-                          <div style={{ flex: 1, textDecoration: 'line-through', display: 'flex', alignItems: 'center' }}>
+                          <div style={{ flex: 1, textDecoration: 'line-through', minWidth: 0 }}>
                             <div className="rt-html" dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(String(it.content || ''), { USE_PROFILES: { html: true } }) }} />
                           </div>
                           {/* up/down controls removed in favor of drag reorder */}

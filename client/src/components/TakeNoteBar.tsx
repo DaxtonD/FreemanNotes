@@ -6,6 +6,7 @@ import TextAlign from '@tiptap/extension-text-align';
 import Collaboration from '@tiptap/extension-collaboration';
 import * as Y from 'yjs';
 import { WebsocketProvider } from 'y-websocket';
+import { makeWebSocketUrl } from '../lib/ws';
 import { useAuth } from '../authContext';
 import ChecklistItemRT from './ChecklistItemRT';
 import ColorPalette from './ColorPalette';
@@ -289,9 +290,7 @@ export default function TakeNoteBar({ onCreated }: { onCreated?: () => void }): 
         try {
           const ydoc = new Y.Doc();
           const room = `note-${noteId}`;
-          const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
-          const serverUrl = `${proto}://${window.location.host}/collab`;
-          const provider = new WebsocketProvider(serverUrl, room, ydoc);
+          const provider = new WebsocketProvider(makeWebSocketUrl('/collab'), room, ydoc);
           // Create a headless temporary editor bound to the Yjs doc and set content
           const tempEditor = new Editor({
             extensions: [

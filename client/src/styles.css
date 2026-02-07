@@ -18,6 +18,10 @@
   --checklist-item-shift: 6px;
   --note-card-width: 288px; /* fixed card width; change this to experiment (or via prefs) */
   --note-card-max-width: 420px; /* optional max width preference placeholder */
+  /* Max card height for preview. Tuned to roughly fit ~18 checklist rows on typical settings. */
+  --note-card-max-height: 672px;
+  /* Multi-line clamp for plain-text preview (TEXT notes). */
+  --note-text-preview-lines: 14;
   --app-font-family: Inter, system-ui, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   --header-height: 64px;
 }
@@ -38,7 +42,6 @@ body{
   background:var(--bg);
   color: var(--fg);
 }
-
 /* Header */
 .app-header{
   height: var(--header-height);
@@ -140,6 +143,70 @@ body{
   transition: width 180ms ease;
 }
 
+/* Swap-mode masonry columns (no grid reflow during hover; swap only on drop) */
+.notes-masonry{
+  display: flex;
+  align-items: flex-start;
+  gap: var(--gap);
+  margin: 0;
+  transition: width 180ms ease;
+}
+.notes-masonry-col{
+  width: var(--note-card-width);
+  /* Critical: keep the preferred note width fixed; do not let flexbox shrink columns */
+  flex: 0 0 var(--note-card-width);
+  min-width: var(--note-card-width);
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap);
+}
+
+/* Improve mobile drag UX (dnd-kit): avoid text selection/callout and reduce double-tap zoom interference */
+.notes-masonry [data-note-id],
+.notes-grid.notes-grid--swap [data-note-id]{
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+  touch-action: manipulation;
+}
+
+/* During an active swap drag, prevent native touch-scroll/overscroll so the
+   drag remains stable while our controlled auto-scroll moves the page. */
+html.is-note-swap-dragging,
+html.is-note-swap-dragging body,
+html.is-note-swap-dragging .main-area{
+  touch-action: none;
+  overscroll-behavior: contain;
+}
+
+/* While an editor modal is open, prevent accidental interaction with notes behind it */
+html.is-editor-modal-open .notes-area{
+  pointer-events: none;
+}
+
+/* Drag swap visuals */
+.note-drag-source{
+  visibility: hidden;
+}
+.note-drag-target .note-card{
+  outline: 2px solid rgba(255, 204, 0, 0.85);
+  outline-offset: 3px;
+}
+.note-drag-ghost{
+  z-index: 9999;
+  pointer-events: none;
+  will-change: transform;
+}
+.note-drag-ghost .note-card{
+  box-shadow: 0 18px 40px rgba(0,0,0,0.55);
+}
+
+/* Manual drag-reorder should not use dense packing; dense causes cross-column repacks
+   that look like “entire columns swap” when swapping two notes of different heights. */
+.notes-grid.notes-grid--manual{
+  grid-auto-flow: row;
+}
+
 /* while user is actively resizing, disable transitions to avoid visual glitches */
 .is-resizing .notes-grid > div,
 .is-resizing .note-card {
@@ -207,12 +274,13 @@ body{
 .note-html ul, .note-html ol { margin: 8px 0 8px 20px; }
 
 /* Checklist item / drag handle styles */
-.checklist-item { padding: 4px 6px; border-radius:6px; background: transparent; margin-bottom: var(--checklist-gap); }
+.checklist-item { padding: 4px 6px; border-radius:6px; background: transparent; margin-bottom: var(--checklist-gap); display:flex; align-items:flex-start; gap:8px; }
 .image-dialog .checklist-item:hover { background: rgba(255,255,255,0.06); }
 :root[data-theme="light"] .image-dialog .checklist-item:hover { background: rgba(0,0,0,0.06); }
 .take-note-expanded .checklist-item:hover { background: rgba(255,255,255,0.06); }
 :root[data-theme="light"] .take-note-expanded .checklist-item:hover { background: rgba(0,0,0,0.06); }
-.checklist-item .drag-handle { opacity: 0.9; color: inherit; display:flex; align-items:center; justify-content:center; margin-right:6px }
+.checklist-item .drag-handle { opacity: 0.9; color: inherit; display:flex; align-items:center; justify-content:center; height: var(--checklist-checkbox-size); line-height: 1; font-size: 18px; margin-right:0 }
+.checklist-item .drag-handle{ touch-action:none; }
 .take-note-input{ padding:4px 6px; border-radius:4px; font-size: var(--checklist-text-size); resize: none; width:100%; min-height:22px; background: transparent; border: none; color: inherit; outline: none; font-family: inherit; }
 .take-note-input{ overflow: hidden; }
 .take-note-input::placeholder{ color: var(--muted); }
@@ -234,6 +302,8 @@ body{
   box-shadow: 0 1px 0 rgba(0,0,0,0.25) inset;
 }
 .checkbox-visual, .note-checkbox { padding: calc(var(--checklist-checkbox-size) * 0.08); margin-right: 8px; box-sizing: border-box; }
+.checklist-item .checkbox-visual, .checklist-item .note-checkbox { margin-right: 0; }
+.note-item .note-checkbox { margin-right: 0; }
 .checkbox-visual svg, .note-checkbox svg { width: 100%; height: 100%; display:block; /* ensure SVG inherits `color` */ stroke: currentColor; fill: none; }
 .note-checkbox svg path { stroke-linecap:round; stroke-linejoin:round; }
 /* scale checkmark stroke relative to checkbox size (increased multiplier for better visibility at small sizes) */
@@ -294,21 +364,110 @@ body{
   flex-direction:column;
   /* fill the grid cell width; keep height/content independent to avoid overlap */
   width: 100%;
+  position: relative;
   background:var(--card);
   border-radius:8px;
   padding:12px;
   margin:0;
   break-inside:avoid;
   box-shadow: 0 1px 0 rgba(0,0,0,0.6);
-  /* allow cards to grow with content (images + full body text) */
-  max-height: none;
+  /* Allow header/chips to grow; body preview is capped separately. */
   overflow: visible;
   transition: transform 300ms cubic-bezier(.2,.9,.2,1), opacity 260ms ease;
   will-change: transform, opacity;
 }
 .notes-grid > div { display: block; width: 100%; margin: 0; transition: transform 300ms cubic-bezier(.2,.9,.2,1); will-change: transform; }
-.note-title{font-weight:600;margin-bottom:8px;color: inherit;}
-.note-body{color:inherit;white-space:pre-wrap;font-size:14px;line-height:1.35; overflow: visible; max-height: none; flex: 0 0 auto;} 
+.note-title{
+  font-weight: 750;
+  font-size: 1.18em;
+  letter-spacing: 0.1px;
+  color: inherit;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  line-clamp: 2;
+  -webkit-line-clamp: 2;
+
+  /* Edge-to-edge title strip inside the padded card */
+  margin: -12px -12px 10px -12px;
+  padding: 10px 12px;
+  background: var(--note-title-bg, rgba(255,255,255,0.07));
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+  border-top-left-radius: 8px;
+  border-top-right-radius: 8px;
+}
+
+:root[data-theme="light"] .note-title{
+  background: var(--note-title-bg, linear-gradient(180deg, rgba(0,0,0,0.085), rgba(0,0,0,0.055)));
+  border-bottom-color: rgba(0,0,0,0.10);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.75);
+}
+.note-body{
+  color:inherit;
+  font-size: var(--checklist-text-size);
+  line-height: var(--note-line-height, 1.38);
+  /* Clamp content to card max-height and show "..." indicator via overlay */
+  overflow: hidden;
+  flex: 1 1 auto;
+  position: relative;
+  max-height: var(--note-card-max-height);
+}
+
+/* Subtle "more" indicator when the preview is clipped.
+   Full-width at the very bottom of the card (in the footer zone). */
+.note-card[data-clipped="1"]::after{
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 64px;
+  pointer-events: none;
+  background: linear-gradient(to bottom, rgba(0,0,0,0), rgba(0,0,0,0.55));
+  mix-blend-mode: multiply;
+  z-index: 18;
+}
+.note-card[data-clipped="1"]::before{
+  content: "…";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 10px;
+  text-align: center;
+  font-weight: 800;
+  letter-spacing: 0.8px;
+  opacity: 0.7;
+  pointer-events: none;
+  z-index: 19;
+}
+
+/* Checklist preview: allow wrapping up to 4 lines per item */
+.note-item-text{
+  font-size: var(--checklist-text-size);
+  overflow: hidden;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+.note-item-text .rt-html{
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  line-clamp: 4;
+  -webkit-line-clamp: 4;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  text-overflow: ellipsis;
+}
+.note-item-text .rt-html p,
+.note-item-text .rt-html ul,
+.note-item-text .rt-html ol,
+.note-item-text .rt-html li{
+  margin: 0;
+  padding: 0;
+}
+.note-item-text .rt-html p{ display: inline; }
+
 .note-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:12px;opacity:0.95}
 .note-card:hover .note-actions{opacity:1}
 
@@ -382,7 +541,7 @@ body{
 }
 
 /* Chips */
-.collab-chips{display:flex;gap:6px;margin-bottom:8px}
+.collab-chips{display:flex;gap:6px;margin-bottom:8px;flex-wrap:wrap;align-items:flex-start;max-width:100%}
 .chip{background: var(--chip-bg, rgba(255,255,255,0.06));padding:4px 8px;border-radius:999px;font-size:12px;color: inherit;}
 :root[data-theme="light"] .chip{ background: rgba(0,0,0,0.06); box-shadow: inset 0 0 0 1px rgba(0,0,0,0.04); }
 .label-chips{
