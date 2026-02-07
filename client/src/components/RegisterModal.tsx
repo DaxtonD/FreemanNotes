@@ -13,6 +13,7 @@ export default function RegisterModal({ onClose }: { onClose: () => void }) {
   const [error, setError] = useState<string | null>(null);
   const [registrationEnabled, setRegistrationEnabled] = useState<boolean | null>(null);
   const [photoFile, setPhotoFile] = useState<File | null>(null);
+  const [photoPreviewUrl, setPhotoPreviewUrl] = useState<string | null>(null);
 
   // Simple password check: only ensure passwords match
   const matches = confirmPassword.length > 0 && password === confirmPassword;
@@ -59,7 +60,21 @@ export default function RegisterModal({ onClose }: { onClose: () => void }) {
   function onPhotoChange(e: React.ChangeEvent<HTMLInputElement>) {
     const f = e.target.files?.[0] || null;
     setPhotoFile(f);
+    try {
+      setPhotoPreviewUrl((prev) => {
+        try { if (prev) URL.revokeObjectURL(prev); } catch {}
+        return f ? URL.createObjectURL(f) : null;
+      });
+    } catch {
+      setPhotoPreviewUrl(null);
+    }
   }
+
+  useEffect(() => {
+    return () => {
+      try { if (photoPreviewUrl) URL.revokeObjectURL(photoPreviewUrl); } catch {}
+    };
+  }, [photoPreviewUrl]);
 
   function fileToDataUrl(file: File): Promise<string> {
     return new Promise((resolve, reject) => {
@@ -97,6 +112,16 @@ export default function RegisterModal({ onClose }: { onClose: () => void }) {
           <div style={{ marginBottom: 12 }}>
             <label style={{ display: 'block', marginBottom: 6 }}>Profile photo (optional):</label>
             <input type="file" accept="image/*" onChange={onPhotoChange} />
+            {photoPreviewUrl && (
+              <div style={{ marginTop: 10, display: 'flex', alignItems: 'center', gap: 10 }}>
+                <img
+                  src={photoPreviewUrl}
+                  alt="Selected profile preview"
+                  style={{ width: 64, height: 64, borderRadius: '50%', objectFit: 'cover' }}
+                />
+                <div style={{ color: 'var(--muted)', fontSize: 13 }}>Preview</div>
+              </div>
+            )}
           </div>
           <div style={{ display: 'grid', rowGap: 6, margin: '10px 2px 12px' }} aria-live="polite">
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--muted)' }}>

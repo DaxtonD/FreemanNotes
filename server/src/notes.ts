@@ -307,10 +307,12 @@ router.patch('/api/notes/:id', async (req: Request, res: Response) => {
           update: { color },
           create: { noteId, userId: user.id, color }
         });
+        try { notifyUser(user.id, 'note-color-changed', { noteId, color }); } catch {}
         return res.json({ prefs: pref });
       }
       // delete preference if color null/empty
         await (prisma as any).notePref.deleteMany({ where: { noteId, userId: user.id } });
+      try { notifyUser(user.id, 'note-color-changed', { noteId, color: '' }); } catch {}
       return res.json({ ok: true });
     } catch (err) {
       res.status(500).json({ error: String(err) });

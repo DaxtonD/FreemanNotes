@@ -10,11 +10,26 @@ import ImageLightbox from './ImageLightbox';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faPalette } from '@fortawesome/free-solid-svg-icons';
 import DOMPurify from 'dompurify';
+import MoreMenu from './MoreMenu';
 import * as Y from 'yjs';
 import { WebsocketProvider } from 'y-websocket';
 
-export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImagesUpdated }:
-  { note: any; onClose: () => void; onSaved?: (payload: { items: Array<{ id: number; content: string; checked: boolean; ord: number; indent: number }>; title: string }) => void; noteBg?: string; onImagesUpdated?: (images: Array<{ id:number; url:string }>) => void }) {
+export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImagesUpdated, onColorChanged, moreMenu }:
+  {
+    note: any;
+    onClose: () => void;
+    onSaved?: (payload: { items: Array<{ id: number; content: string; checked: boolean; ord: number; indent: number }>; title: string }) => void;
+    noteBg?: string;
+    onImagesUpdated?: (images: Array<{ id:number; url:string }>) => void;
+    onColorChanged?: (color: string) => void;
+    moreMenu?: {
+      onDelete: () => void;
+      onAddLabel: () => void;
+      onUncheckAll?: () => void;
+      onCheckAll?: () => void;
+      onSetWidth: (span: 1 | 2 | 3) => void;
+    };
+  }) {
   const { token, user } = useAuth();
 
   useEffect(() => {
@@ -54,6 +69,7 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
   const [hoverIndex, setHoverIndex] = useState<number | null>(null);
   const itemRefs = useRef<Array<HTMLTextAreaElement | null>>([]);
   const [autoFocusIndex, setAutoFocusIndex] = useState<number | null>(null);
+  const [activeRowKey, setActiveRowKey] = useState<string | number | null>(null);
   const [title, setTitle] = useState<string>(note.title || '');
   // prefer explicit `noteBg` passed from the parent (NoteCard); fallback to viewer-specific color
   const [bg, setBg] = useState<string>(noteBg ?? ((note as any).viewerColor || note.color || ''));
@@ -77,6 +93,8 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
   const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
   const [collaborators, setCollaborators] = useState<{ id:number; email:string }[]>([]);
   const itemEditorRefs = useRef<Array<any | null>>([]);
+  const [showMore, setShowMore] = useState(false);
+  const moreBtnRef = useRef<HTMLButtonElement | null>(null);
 
   function getCurrentChecklistEditor(): any | null {
     let ed = activeChecklistEditor.current as any;
@@ -107,40 +125,47 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
     const ed = getCurrentChecklistEditor() as any;
     if (!ed) return;
     const sel: any = ed.state?.selection;
-    if (!sel || !sel.empty) {
+    if (!sel) return;
+
+    // If the user has a real selection, just toggle as normal.
+    if (!sel.empty) {
       const chain = ed.chain().focus();
-      if (mark === 'bold') chain.toggleBold().run();
-      else if (mark === 'italic') chain.toggleItalic().run();
-      else chain.toggleUnderline().run();
-      try {
-        const restorePos = sel?.from;
-        requestAnimationFrame(() => {
-          try {
-            const ch = ed.chain().focus();
-            if (typeof restorePos === 'number') ch.setTextSelection(restorePos);
-            ch.run();
-          } catch {}
-        });
-      } catch {}
+      if (mark === 'bold') chain.toggleBold();
+      else if (mark === 'italic') chain.toggleItalic();
+      else chain.toggleUnderline();
+      chain.run();
+      try { setToolbarTick(t => t + 1); } catch (e) {}
       return;
     }
-    const $from = sel.$from; let depth = $from.depth; while (depth > 0 && !$from.node(depth).isBlock) depth--;
-    const from = $from.start(depth); const to = $from.end(depth);
+
+    // Empty cursor: apply across the current line (block).
+    let from = sel.from;
+    let to = sel.to;
+    try {
+      const $from = sel.$from;
+      let depth = $from.depth;
+      while (depth > 0 && !$from.node(depth).isBlock) depth--;
+      from = $from.start(depth);
+      to = $from.end(depth);
+    } catch (e) {}
+
     const chain = ed.chain().focus().setTextSelection({ from, to });
-    if (mark === 'bold') chain.toggleBold().run();
-    else if (mark === 'italic') chain.toggleItalic().run();
-    else chain.toggleUnderline().run();
-    try { ed.chain().focus().setTextSelection(sel.from).run(); } catch {}
+    if (mark === 'bold') chain.toggleBold();
+    else if (mark === 'italic') chain.toggleItalic();
+    else chain.toggleUnderline();
+    chain.run();
+
+    try { ed.chain().focus().setTextSelection(sel.from).run(); } catch (e) {}
     try {
       const restorePos = sel.from;
       requestAnimationFrame(() => {
         try {
-          try { (ed as any).view?.focus?.(); } catch {}
+          try { (ed as any).view?.focus?.(); } catch (e) {}
           ed.chain().focus().setTextSelection(restorePos).run();
-        } catch {}
+        } catch (e) {}
       });
-    } catch {}
-    try { setToolbarTick(t => t + 1); } catch {}
+    } catch (e) {}
+    try { setToolbarTick(t => t + 1); } catch (e) {}
   }
 
   function isCurrentLineMarked(mark: 'bold' | 'italic' | 'underline'): boolean {
@@ -803,6 +828,7 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
       window.alert('Failed to save color preference');
     }
     setBg(next);
+    try { (onColorChanged as any)?.(next); } catch {}
   }
 
   function onAddImageUrl(url?: string | null) {
@@ -892,10 +918,12 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
 
   const dialog = (
     <div className="image-dialog-backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget) { save(); } }}>
-      <div className="image-dialog" role="dialog" aria-modal style={{ width: 'min(1000px, 86vw)', ...dialogStyle }}>
+      <div className="image-dialog checklist-editor editor-dialog" role="dialog" aria-modal style={{ width: 'min(1000px, 86vw)', ...dialogStyle }}>
         <div className="dialog-header">
           <strong>Edit checklist</strong>
-          <button className="icon-close" onClick={onClose}>✕</button>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <button className="icon-close" onClick={onClose}>✕</button>
+          </div>
         </div>
         <div className="dialog-body">
           <div className="rt-sticky-header">
@@ -956,8 +984,16 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
                     const currentList = previewItems ?? items;
                     const realIdx = currentList.indexOf(it);
                     const shiftClass = shiftClassForIndex(realIdx, currentList);
+                    const rowKey = (() => {
+                      try { return getKey(it); } catch { return (it.key ?? realIdx); }
+                    })();
+                    const isActive = activeRowKey != null && String(activeRowKey) === String(rowKey);
                     return (
-                      <div key={it.key ?? realIdx} className={`checklist-item ${shiftClass}`} style={{ marginLeft: (it.indent || 0) * 18 }} draggable={false}
+                      <div
+                        key={it.key ?? realIdx}
+                        className={`checklist-item ${shiftClass}${isActive ? ' is-active' : ''}`}
+                        style={{ marginLeft: (it.indent || 0) * 18 }}
+                        draggable={false}
                         onPointerCancel={() => { pointerTrackRef.current = null; }}
                         
                         onDragOver={(e) => {
@@ -1273,11 +1309,33 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
                             onChange={(html) => updateItem(realIdx, html)}
                             onEnter={() => addItemAt(realIdx + 1)}
                             autoFocus={autoFocusIndex === realIdx}
-                            onFocus={(ed) => { activeChecklistEditor.current = ed; itemEditorRefs.current[realIdx] = ed; setToolbarTick(t => t + 1); if (autoFocusIndex === realIdx) setAutoFocusIndex(null); }}
+                            onFocus={(ed) => {
+                              activeChecklistEditor.current = ed;
+                              itemEditorRefs.current[realIdx] = ed;
+                              try { setActiveRowKey(getKey(it)); } catch {}
+                              setToolbarTick(t => t + 1);
+                              if (autoFocusIndex === realIdx) setAutoFocusIndex(null);
+                            }}
                           />
                         </div>
                         {/* up/down controls removed in favor of drag reorder */}
-                        <button className="delete-item" onClick={(e) => { e.stopPropagation(); deleteItemAt(realIdx); }} aria-label="Delete item">✕</button>
+                        <button
+                          className="delete-item"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            // Only allow deletion when the row is already selected/active.
+                            // This prevents a single tap in the right-side area from both selecting and deleting.
+                            if (!(activeRowKey != null && String(activeRowKey) === String(rowKey))) {
+                              try { setActiveRowKey(rowKey); } catch {}
+                              try { setAutoFocusIndex(realIdx); } catch {}
+                              return;
+                            }
+                            deleteItemAt(realIdx);
+                          }}
+                          aria-label="Delete item"
+                        >
+                          ✕
+                        </button>
                       </div>
                     );
 
@@ -1295,15 +1353,42 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
                       const currentList = previewItems ?? items;
                       const realIdx = currentList.indexOf(it);
                       const shiftClass = '';
+                      const rowKey = (() => {
+                        try { return getKey(it); } catch { return (it.key ?? realIdx); }
+                      })();
+                      const isActive = (() => {
+                        try {
+                          return activeRowKey != null && String(activeRowKey) === String(rowKey);
+                        } catch { return false; }
+                      })();
                       return (
-                        <div key={it.key ?? realIdx} className={`checklist-item completed ${shiftClass}`} style={{ marginLeft: (it.indent || 0) * 18 }} draggable={false}>
+                        <div
+                          key={it.key ?? realIdx}
+                          className={`checklist-item completed ${shiftClass}${isActive ? ' is-active' : ''}`}
+                          style={{ marginLeft: (it.indent || 0) * 18 }}
+                          draggable={false}
+                          onClick={(e) => { try { e.stopPropagation(); } catch {} try { setActiveRowKey(rowKey); } catch {} }}
+                        >
                           <div style={{ width: 20 }} />
                           <div className={`checkbox-visual ${it.checked ? 'checked' : ''}`} onClick={() => toggleChecked(realIdx)}>{it.checked && (<svg viewBox="0 0 24 24" fill="none" aria-hidden focusable="false"><path d="M20 6L9 17l-5-5" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" /></svg>)}</div>
                           <div style={{ flex: 1, textDecoration: 'line-through', minWidth: 0 }}>
                             <div className="rt-html" dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(String(it.content || ''), { USE_PROFILES: { html: true } }) }} />
                           </div>
                           {/* up/down controls removed in favor of drag reorder */}
-                          <button className="delete-item" onClick={(e) => { e.stopPropagation(); deleteItemAt(realIdx); }} aria-label="Delete item">✕</button>
+                          <button
+                            className="delete-item"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              if (!(activeRowKey != null && String(activeRowKey) === String(rowKey))) {
+                                try { setActiveRowKey(rowKey); } catch {}
+                                return;
+                              }
+                              deleteItemAt(realIdx);
+                            }}
+                            aria-label="Delete item"
+                          >
+                            ✕
+                          </button>
                         </div>
                       );
                     })}
@@ -1377,6 +1462,16 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
                     </svg>
                   </button>
 
+                  {moreMenu && (
+                    <button
+                      ref={moreBtnRef}
+                      className="tiny editor-more"
+                      onClick={(e) => { e.stopPropagation(); setShowMore(s => !s); }}
+                      aria-label="More"
+                      title="More"
+                    >⋮</button>
+                  )}
+
                 </div>
                 <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
                   <button className="btn" onClick={onClose}>Cancel</button>
@@ -1390,6 +1485,18 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
           if (typeof document !== 'undefined') {
             const portal = createPortal(dialog, document.body);
             return (<>{portal}
+              {moreMenu && showMore && (
+                <MoreMenu
+                  anchorRef={moreBtnRef as any}
+                  itemsCount={4}
+                  onClose={() => setShowMore(false)}
+                  onDelete={moreMenu.onDelete}
+                  onAddLabel={moreMenu.onAddLabel}
+                  onUncheckAll={moreMenu.onUncheckAll}
+                  onCheckAll={moreMenu.onCheckAll}
+                  onSetWidth={moreMenu.onSetWidth}
+                />
+              )}
               {showPalette && <ColorPalette anchorRef={undefined as any} onPick={onPickColor} onClose={() => setShowPalette(false)} />}
               {showReminderPicker && <ReminderPicker onClose={() => setShowReminderPicker(false)} onSet={(iso) => { setShowReminderPicker(false); if (iso) window.alert(`Reminder set (UI-only): ${iso}`); }} />}
               {showCollaborator && (

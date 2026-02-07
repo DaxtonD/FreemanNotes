@@ -98,8 +98,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }
 
   async function uploadPhoto(dataUrl: string) {
-    if (!token) throw new Error('Not authenticated');
-    const data = await uploadMyPhoto(token, dataUrl);
+    // After registration/login, `setToken()` may not have propagated yet,
+    // but we synchronously store the token in localStorage. Use that as a fallback.
+    const effectiveToken = token || localStorage.getItem('fn_token');
+    if (!effectiveToken) throw new Error('Not authenticated');
+    const data = await uploadMyPhoto(effectiveToken, dataUrl);
     if (data && data.user) setUser(data.user);
   }
 

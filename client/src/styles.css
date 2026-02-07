@@ -51,6 +51,8 @@ html,body,#root{height:100%;margin:0;font-family:var(--app-font-family)}
 
 body{
   background:var(--bg);
+  --main-pad-y: 24px;
+  --main-pad-x: 32px;
   color: var(--fg);
 }
 /* Header */
@@ -60,7 +62,8 @@ body{
   align-items:center;
   justify-content:space-between;
   padding:0 16px;
-  border-bottom:1px solid rgba(255,255,255,0.04);
+  /* Slide up into the top edge as we scroll, then freeze there. */
+  top: calc(-1 * var(--main-pad-y));
   background:linear-gradient(180deg, rgba(255,255,255,0.02), transparent);
   position:sticky;
   top:0;
@@ -85,6 +88,7 @@ body{
 
 /* Layout */
 .app-body{display:flex;height:calc(100vh - var(--header-height))}
+.app-root.phone .app-body{ position: relative; }
 .sidebar{
   width:max-content;
   min-width: var(--sidebar-min-width);
@@ -148,7 +152,56 @@ body{
 .sidebar.collapsed .sidebar-item .text { display:none; }
 .sidebar-section hr { border: none; border-top: 1px solid rgba(255,255,255,0.06); margin: 8px 0; }
 :root[data-theme="light"] .sidebar-section hr { border-top-color: rgba(0,0,0,0.08); }
-.main-area{flex:1;padding:24px 32px;overflow:auto}
+.main-area{flex:1;padding:var(--main-pad-y) var(--main-pad-x);overflow:auto}
+
+/* Phone-only: slide-out drawer sidebar (menu button toggles open/closed). */
+.mobile-sidebar-backdrop{
+  position: fixed;
+  left: 0;
+  right: 0;
+  top: var(--header-height);
+  bottom: 0;
+  background: rgba(0,0,0,0.45);
+  backdrop-filter: blur(1px);
+  z-index: 110;
+  touch-action: none;
+}
+:root[data-theme="light"] .mobile-sidebar-backdrop{ background: rgba(0,0,0,0.25); }
+
+.mobile-sidebar-drawer{
+  position: fixed;
+  left: 0;
+  top: var(--header-height);
+  height: calc(100vh - var(--header-height));
+  width: min(84vw, 320px);
+  max-width: 360px;
+  transform: translateX(-110%);
+  transition: transform 220ms cubic-bezier(.2,0,.2,1);
+  z-index: 120;
+  pointer-events: none;
+}
+.mobile-sidebar-drawer.open{
+  transform: translateX(0);
+  pointer-events: auto;
+}
+.mobile-sidebar-drawer .sidebar{
+  width: 100%;
+  min-width: 0;
+  height: 100%;
+  padding: 18px 16px;
+  background: var(--bg);
+  border-right: 1px solid rgba(255,255,255,0.08);
+  box-shadow: 18px 0 40px rgba(0,0,0,0.55);
+}
+:root[data-theme="light"] .mobile-sidebar-drawer .sidebar{
+  border-right-color: rgba(0,0,0,0.10);
+  box-shadow: 18px 0 40px rgba(0,0,0,0.16);
+}
+
+/* On phones, the sidebar is a drawer: never show the collapsed/icon-only mode. */
+.app-root.phone .sidebar.collapsed{ width: auto; min-width: 0; padding: 18px 16px; }
+.app-root.phone .sidebar .sidebar-item .icon{ display: none; }
+.app-root.phone .sidebar .sidebar-item .text{ display: inline; }
 
 /* Sidebar items */
 .sidebar-item{padding:8px 6px;border-radius:6px;color:var(--muted);margin-bottom:6px}
@@ -157,6 +210,120 @@ body{
 
 /* Notes sections & masonry grid */
 .notes-area{display:block}
+
+/* Keep the quick-create bar visible while scrolling (desktop/tablet). */
+.take-note-sticky{
+  position: sticky;
+  top: calc(-1 * var(--main-pad-y));
+  z-index: 45;
+  padding: var(--main-pad-y) 0 8px;
+  margin: 0 0 6px;
+  background: linear-gradient(180deg, var(--bg) 72%, rgba(0,0,0,0));
+  backdrop-filter: blur(6px);
+}
+:root[data-theme="light"] .take-note-sticky{
+  background: linear-gradient(180deg, var(--bg) 72%, rgba(255,255,255,0));
+}
+
+/* Mobile: replace the take-note bar with a fixed FAB. */
+.mobile-add-note{ display:none; }
+.mobile-add-fab{
+  width: 56px;
+  height: 56px;
+  border-radius: 999px;
+  border: none;
+  background: var(--accent);
+  color: #000;
+  font-size: 30px;
+  line-height: 1;
+  box-shadow: 0 10px 26px rgba(0,0,0,0.55);
+}
+:root[data-theme="light"] .mobile-add-fab{ color:#fff; }
+.mobile-add-menu{
+  position: absolute;
+  right: 0;
+  bottom: 66px;
+  background: var(--card);
+  border: 1px solid rgba(255,255,255,0.10);
+  border-radius: 12px;
+  padding: 8px;
+  min-width: 180px;
+  box-shadow: 0 12px 30px rgba(0,0,0,0.6);
+}
+:root[data-theme="light"] .mobile-add-menu{
+  border-color: rgba(0,0,0,0.10);
+  box-shadow: 0 12px 30px rgba(0,0,0,0.18);
+}
+.mobile-add-menu-item{
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  text-align: left;
+  background: transparent;
+  border: none;
+  color: inherit;
+  padding: 10px 12px;
+  border-radius: 10px;
+  cursor: pointer;
+  font-weight: 650;
+}
+.mobile-add-menu-item svg{ width: 18px; height: 18px; flex: 0 0 auto; opacity: 0.95; }
+.mobile-add-menu-item:hover{ background: rgba(255,255,255,0.06); }
+:root[data-theme="light"] .mobile-add-menu-item:hover{ background: rgba(0,0,0,0.06); }
+
+@media (pointer: coarse), (max-width: 720px) {
+  body{ --main-pad-x: 8px; --main-pad-y: 14px; }
+
+  /* Keep the take-note editor available for the mobile FAB, but hide the collapsed bar. */
+  .take-note-sticky{
+    display:block;
+    position: fixed;
+    left: 0;
+    right: 0;
+    top: var(--header-height);
+    z-index: 95;
+    padding: 0 var(--main-pad-x);
+    margin: 0;
+    background: transparent;
+    backdrop-filter: none;
+    pointer-events: none;
+  }
+  .take-note-sticky .take-note-bar{ display:none; }
+  .take-note-sticky .take-note-expanded{ pointer-events: auto; }
+  .mobile-add-note{
+    display:block;
+    position: fixed;
+    right: 18px;
+    bottom: calc(18px + env(safe-area-inset-bottom));
+    z-index: 90;
+  }
+}
+
+@media (max-width: 480px) {
+  body{ --main-pad-x: 6px; }
+  .section-title{ padding-left: 2px; }
+}
+
+/* Smartphone layout (touch-first, small width): 2 columns with minimal card chrome. */
+@media (pointer: coarse) and (hover: none) and (max-width: 560px) {
+  body{ --gap: 10px; }
+
+  .note-card{
+    border-radius: 6px;
+    padding: 10px;
+    box-shadow: none;
+    border: 1px solid rgba(255,255,255,0.06);
+  }
+  :root[data-theme="light"] .note-card{ border-color: rgba(0,0,0,0.08); }
+
+  .note-title{
+    margin: -10px -10px 8px -10px;
+    padding: 8px 10px;
+    border-top-left-radius: 6px;
+    border-top-right-radius: 6px;
+  }
+}
 .section-title{color:var(--muted);font-weight:600;margin:0 0 8px 0;padding-left:6px;font-size:13px}
 .notes-grid{
   /* Grid layout with fixed track width; items can span multiple columns.
@@ -206,9 +373,23 @@ html.is-note-swap-dragging .main-area{
   overscroll-behavior: contain;
 }
 
+/* During an active rearrange drag, disable native scroll/select so pointer tracking stays smooth */
+html.is-note-rearrange-dragging,
+html.is-note-rearrange-dragging body,
+html.is-note-rearrange-dragging .main-area,
+html.is-note-rearrange-dragging .notes-area{
+  touch-action: none;
+  overscroll-behavior: contain;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
 /* While an editor modal is open, prevent accidental interaction with notes behind it */
 html.is-editor-modal-open .notes-area{
   pointer-events: none;
+}
+html.is-editor-modal-open .mobile-add-note{
+  display: none !important;
 }
 
 /* Drag swap visuals */
@@ -226,6 +407,28 @@ html.is-editor-modal-open .notes-area{
 }
 .note-drag-ghost .note-card{
   box-shadow: 0 18px 40px rgba(0,0,0,0.55);
+}
+
+/* Keep-style rearrange visuals */
+.note-rearrange-overlay{
+  z-index: 9999;
+  pointer-events: none;
+  will-change: transform;
+  transform-origin: top left;
+}
+.note-rearrange-overlay-inner{ width: 100%; height: 100%; }
+.note-rearrange-overlay .note-card{
+  box-shadow: 0 18px 40px rgba(0,0,0,0.55);
+}
+.note-rearrange-spacer{
+  border-radius: 8px;
+  background: rgba(255,255,255,0.03);
+  outline: 2px dashed rgba(255, 204, 0, 0.55);
+  outline-offset: -2px;
+}
+:root[data-theme="light"] .note-rearrange-spacer{
+  background: rgba(0,0,0,0.03);
+  outline-color: rgba(255, 170, 0, 0.55);
 }
 
 /* Manual drag-reorder should not use dense packing; dense causes cross-column repacks
@@ -318,6 +521,17 @@ html.is-editor-modal-open .notes-area{
 .rt-editor { min-height: 300px; padding: 12px 14px; border-radius: 8px; background: inherit; color: inherit; }
 .rt-item { min-height: 22px; padding: 4px 6px; border-radius: 4px; background: transparent; color: inherit; }
 .rt-item p { margin: 0; font-size: var(--checklist-text-size); }
+
+/*
+  Checklist editor: match the note-card preview alignment.
+  The editor's `.rt-item` padding makes the first line sit lower, which makes
+  the text look vertically centered relative to the checkbox when it wraps.
+*/
+.image-dialog.checklist-editor .checklist-item .rt-item{
+  padding-top: 0;
+  padding-bottom: 0;
+  min-height: 0;
+}
 .rt-editor h1, .rt-editor h2, .rt-editor h3 { margin: 8px 0; font-weight: 700; line-height: 1.22; }
 .rt-editor p { margin: 6px 0; font-size: var(--checklist-text-size); line-height: var(--note-line-height, 1.38); }
 .rt-editor ul, .rt-editor ol { margin: 8px 0 8px 20px; }
@@ -327,14 +541,48 @@ html.is-editor-modal-open .notes-area{
 .note-html ul, .note-html ol { margin: 8px 0 8px 20px; }
 
 /* Checklist item / drag handle styles */
-.checklist-item { padding: 4px 6px; border-radius:6px; background: transparent; margin-bottom: var(--checklist-gap); display:flex; align-items:flex-start; gap:8px; }
+/*
+  Important: when spacing is very tight, a large border-radius + padding makes each row
+  look like an isolated “pill”, so the perceived gap never goes below that highlight.
+  Tie both radius and vertical padding to `--checklist-gap` so users can truly tighten spacing.
+*/
+.checklist-item {
+  padding: clamp(0px, calc(var(--checklist-gap) * 0.35), 4px) 6px;
+  border-radius: clamp(0px, calc(var(--checklist-gap) * 0.6), 6px);
+  background: transparent;
+  margin-bottom: var(--checklist-gap);
+  display:flex;
+  align-items:center;
+  gap:8px;
+}
 .image-dialog .checklist-item { align-items: center; }
+.image-dialog.checklist-editor .checklist-item { align-items: center; }
+.image-dialog.checklist-editor .checklist-item .drag-gutter { align-items: center; }
 .image-dialog .checklist-item:hover { background: rgba(255,255,255,0.06); }
 :root[data-theme="light"] .image-dialog .checklist-item:hover { background: rgba(0,0,0,0.06); }
 .take-note-expanded .checklist-item:hover { background: rgba(255,255,255,0.06); }
 :root[data-theme="light"] .take-note-expanded .checklist-item:hover { background: rgba(0,0,0,0.06); }
 .checklist-item .drag-gutter { display:flex; align-items:center; gap:8px; }
-.checklist-item .drag-handle { opacity: 0.9; color: inherit; display:flex; align-items:center; justify-content:center; width: var(--checklist-drag-handle-width); min-width: var(--checklist-drag-handle-width); height: var(--checklist-drag-handle-height); min-height: var(--checklist-drag-handle-height); line-height: 1; font-size: 18px; margin-right:0 }
+.checklist-item .drag-handle {
+  opacity: 0.9;
+  color: inherit;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  width: var(--checklist-drag-handle-width);
+  min-width: var(--checklist-drag-handle-width);
+  /*
+    Don't force a fixed row height.
+    On mobile we used to set this to 44px for touch targets, but that makes
+    it impossible to tighten checklist spacing for unchecked items.
+  */
+  height: auto;
+  min-height: 0;
+  padding: clamp(0px, calc(var(--checklist-gap) * 0.55), 10px) 0;
+  line-height: 1;
+  font-size: 18px;
+  margin-right:0;
+}
 .checklist-item .drag-gutter, .checklist-item .drag-handle{ touch-action:none; }
 .take-note-input{ padding:4px 6px; border-radius:4px; font-size: var(--checklist-text-size); resize: none; width:100%; min-height:22px; background: transparent; border: none; color: inherit; outline: none; font-family: inherit; }
 .take-note-input{ overflow: hidden; }
@@ -522,6 +770,14 @@ html.is-editor-modal-open .notes-area{
   padding: 0;
 }
 .note-item-text .rt-html p{ display: inline; }
+
+/* Checklist preview spacing: use gap so it works consistently across browsers/devices */
+.note-items-list{
+  display:flex;
+  flex-direction:column;
+  gap: var(--checklist-gap);
+}
+.note-items-list .note-item{ margin-bottom: 0; }
 
 .note-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:12px;opacity:0.95}
 .note-card:hover .note-actions{opacity:1}
@@ -762,6 +1018,54 @@ html.is-editor-modal-open .notes-area{
 .image-dialog.maximized .rt-editor{
   min-height: 60vh;
 }
+
+/* Phone: fullscreen note/checklist editors (touch-friendly). */
+@media (pointer: coarse) and (max-width: 720px) {
+  .image-dialog-backdrop{ align-items: stretch; justify-content: stretch; }
+  .editor-dialog{
+    width: 100vw !important;
+    height: 100dvh;
+    max-height: none !important;
+    border-radius: 0;
+    padding: 0;
+    border: none;
+  }
+  .editor-dialog.maximized{ width: 100vw !important; max-height: none !important; }
+  .editor-dialog .dialog-header{
+    padding: calc(10px + env(safe-area-inset-top)) 12px 10px;
+    background: var(--editor-surface, var(--card));
+    border-bottom: 1px solid rgba(255,255,255,0.06);
+  }
+  :root[data-theme="light"] .editor-dialog .dialog-header{ border-bottom-color: rgba(0,0,0,0.08); }
+  .editor-dialog .dialog-footer{
+    padding: 10px 12px calc(10px + env(safe-area-inset-bottom));
+  }
+
+  /* Editor footer icons: ~200% larger on mobile (note + checklist editors). */
+  .image-dialog.editor-dialog .dialog-footer .note-actions{
+    gap: 12px;
+    flex-wrap: wrap;
+    align-items: center;
+  }
+  .image-dialog.editor-dialog .dialog-footer .note-actions .tiny{
+    width: 36px;
+    height: 36px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 10px;
+    padding: 0;
+  }
+  .image-dialog.editor-dialog .dialog-footer .note-actions .tiny svg,
+  .image-dialog.editor-dialog .dialog-footer .note-actions .palette-svg{
+    width: 36px !important;
+    height: 36px !important;
+  }
+  .image-dialog.editor-dialog .dialog-footer .note-actions .tiny.editor-more{
+    font-size: 30px;
+    line-height: 1;
+  }
+}
 /* Preferences dialog: fixed width independent of note width */
 .prefs-dialog{
   width: 420px;
@@ -804,8 +1108,20 @@ html.is-editor-modal-open .notes-area{
 .dialog-footer{ padding:12px; border-top:1px solid rgba(255,255,255,0.03); display:flex; gap:8px; align-items:center; }
 :root[data-theme="light"] .dialog-footer{ border-top:1px solid rgba(0,0,0,0.06); }
 .image-dialog .dialog-footer .note-actions{ justify-content: flex-start; }
-.delete-item{ background:transparent;border:none;color:var(--muted);cursor:pointer;opacity:0; transition:opacity 140ms; padding:4px 6px;border-radius:6px }
-.checklist-item:hover .delete-item{ opacity:1 }
+.delete-item{ background:transparent;border:none;color:var(--muted);cursor:pointer;opacity:0; transition:opacity 140ms; padding:4px 6px;border-radius:6px; align-self:center; pointer-events:none }
+.checklist-item:hover .delete-item{ opacity:1; pointer-events:auto }
+.checklist-item.is-active .delete-item{ opacity:1; pointer-events:auto }
+
+/* Checklist editor: remove Chrome focus ring/border around the rich-text item editor */
+.image-dialog.checklist-editor .checklist-item .rt-item,
+.image-dialog.checklist-editor .checklist-item .rt-item:focus,
+.image-dialog.checklist-editor .checklist-item .rt-item:focus-visible,
+.image-dialog.checklist-editor .checklist-item .ProseMirror:focus,
+.image-dialog.checklist-editor .checklist-item .ProseMirror-focused{
+  outline: none !important;
+  box-shadow: none !important;
+  border: none !important;
+}
 .btn{background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.03);padding:8px 10px;border-radius:6px;color:#fff;cursor:pointer}
 .btn:hover{background:rgba(255,255,255,0.06)}
 /* Light mode button text inherits color */
@@ -1039,6 +1355,34 @@ html.is-editor-modal-open .notes-area{
   opacity: 1;
 }
 
+/* Touch devices: remove the hover-only card footer entirely.
+   Actions remain available inside the fullscreen editors. */
+@media (pointer: coarse), (any-pointer: coarse), (hover: none), (any-hover: none) {
+  .note-card .footer-hover-zone,
+  .note-card .note-footer{ display: none !important; }
+
+  /* Let cards grow naturally to fit label chips. */
+  .note-card,
+  .note-card.has-labels{ padding-bottom: 12px !important; }
+  .label-chips{
+    position: static;
+    left: auto;
+    right: auto;
+    bottom: auto;
+    z-index: auto;
+    max-height: none;
+    overflow: visible;
+    padding: 4px 0 0;
+    margin-top: 10px;
+  }
+  .note-card.has-labels .note-images{ margin-bottom: 0; }
+}
+@media (pointer: coarse), (any-pointer: coarse), (hover: none), (any-hover: none) and (max-width: 560px) {
+  .note-card,
+  .note-card.has-labels{ padding-bottom: 10px !important; }
+  .label-chips{ margin-top: 8px; }
+}
+
 /* More menu should auto-size to content; no min/max width constraints here */
 
 /* Settings dropdown (used in header) */
@@ -1077,7 +1421,7 @@ html.is-editor-modal-open .notes-area{
 /* responsive */
 @media (max-width:640px){
   /* On small/mobile screens hide the sidebar; desktop windows (even narrow) keep it visible */
-  .sidebar{display:none}
+  .app-body > .sidebar{display:none}
   .search{max-width:40vw}
   .notes-grid{column-width:220px}
 }

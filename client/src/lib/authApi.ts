@@ -52,7 +52,7 @@ export async function updateMe(token: string, payload: any) {
 export async function uploadMyPhoto(token: string, dataUrl: string) {
   const res = await fetch('/api/auth/me/photo', {
     method: 'POST',
-    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', ...deviceHeaders() },
     body: JSON.stringify({ dataUrl })
   });
   if (!res.ok) throw new Error(await res.text());
