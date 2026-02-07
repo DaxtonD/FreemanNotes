@@ -18,8 +18,8 @@ export default function MoreMenu({
   onClose: () => void;
   onDelete: () => void;
   onAddLabel: () => void;
-  onUncheckAll: () => void;
-  onCheckAll: () => void;
+  onUncheckAll?: () => void;
+  onCheckAll?: () => void;
   onSetWidth: (span: 1 | 2 | 3) => void;
 }) {
   const rootRef = useRef<HTMLDivElement | null>(null);
@@ -80,20 +80,28 @@ export default function MoreMenu({
   }, [anchorRef, anchorPoint, itemsCount]);
 
   useLayoutEffect(() => {
-    function onDoc(e: MouseEvent) {
+    function onDoc(e: Event) {
       if (!rootRef.current) return;
       if (!rootRef.current.contains(e.target as Node)) onClose();
     }
+    document.addEventListener("pointerdown", onDoc);
     document.addEventListener("mousedown", onDoc);
-    return () => document.removeEventListener("mousedown", onDoc);
+    return () => {
+      document.removeEventListener("pointerdown", onDoc);
+      document.removeEventListener("mousedown", onDoc);
+    };
   }, [onClose]);
 
   const node = (
     <div ref={rootRef} className="more-menu" style={style} role="dialog" aria-label="More options">
       <button className="more-item" onClick={() => { onDelete(); onClose(); }}>Delete</button>
       <button className="more-item" onClick={() => { onAddLabel(); onClose(); }}>Add label</button>
-      <button className="more-item" onClick={() => { onUncheckAll(); onClose(); }}>Uncheck all</button>
-      <button className="more-item" onClick={() => { onCheckAll(); onClose(); }}>Check all</button>
+      {onUncheckAll && (
+        <button className="more-item" onClick={() => { onUncheckAll(); onClose(); }}>Uncheck all</button>
+      )}
+      {onCheckAll && (
+        <button className="more-item" onClick={() => { onCheckAll(); onClose(); }}>Check all</button>
+      )}
       <hr className="more-sep" />
       <div style={{ display: 'grid', gap: 6 }}>
         <button className="more-item" onClick={() => { onSetWidth(1); onClose(); }}>Card width: Regular</button>

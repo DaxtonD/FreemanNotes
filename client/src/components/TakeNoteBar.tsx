@@ -17,7 +17,13 @@ import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faPalette } from '@fortawesome/free-solid-svg-icons';
 import Underline from '@tiptap/extension-underline';
 
-export default function TakeNoteBar({ onCreated }: { onCreated?: () => void }): JSX.Element {
+export default function TakeNoteBar({
+  onCreated,
+  openRequest,
+}: {
+  onCreated?: () => void;
+  openRequest?: { nonce: number; mode: 'text' | 'checklist' };
+}): JSX.Element {
   const { token, user } = useAuth();
   const [expanded, setExpanded] = useState(false);
   const [mode, setMode] = useState<'text' | 'checklist'>('text');
@@ -77,6 +83,28 @@ export default function TakeNoteBar({ onCreated }: { onCreated?: () => void }): 
     }, [editor]);
 
     // Link insertion is only available in the full editor.
+
+  const lastExternalOpenRef = useRef(0);
+  useEffect(() => {
+    const nonce = Number(openRequest?.nonce || 0);
+    if (!nonce) return;
+    if (nonce === lastExternalOpenRef.current) return;
+    lastExternalOpenRef.current = nonce;
+
+    const nextMode = openRequest?.mode || 'text';
+    setMode(nextMode);
+    setExpanded(true);
+    setMaximized(false);
+
+    if (nextMode === 'checklist') {
+      setItems((cur) => (cur && cur.length ? cur : [{ content: '' }]));
+      setTimeout(() => focusItem(0), 30);
+    } else {
+      requestAnimationFrame(() => {
+        try { editor?.commands.focus('end'); } catch {}
+      });
+    }
+  }, [openRequest?.nonce, openRequest?.mode, editor]);
 
   const [items, setItems] = useState<{ content: string; checked?: boolean }[]>([]);
   const [loading, setLoading] = useState(false);

@@ -63,7 +63,7 @@ function contrastColorForBackground(hex?: string | null): string | undefined {
   return contrastWithWhite >= contrastWithBlack ? "#ffffff" : "#000000";
 }
 
-export default function NoteCard({ note, onChange }: { note: Note, onChange?: () => void }) {
+export default function NoteCard({ note, onChange, openRequest, onOpenRequestHandled }: { note: Note, onChange?: () => void, openRequest?: number, onOpenRequestHandled?: (noteId: number) => void }) {
   const noteRef = useRef<HTMLElement | null>(null);
   const bodyRef = useRef<HTMLDivElement | null>(null);
   const imagesWrapRef = useRef<HTMLDivElement | null>(null);
@@ -92,6 +92,10 @@ export default function NoteCard({ note, onChange }: { note: Note, onChange?: ()
     try { (onChange as any)?.({ type: 'images', noteId: note.id, images: next }); } catch {}
   }
 
+  function notifyColor(next: string) {
+    try { (onChange as any)?.({ type: 'color', noteId: note.id, color: next || '' }); } catch {}
+  }
+
   function setImagesWithNotify(updater: (prev: Array<{ id: number; url: string }>) => Array<{ id: number; url: string }>) {
     setImages((prev) => {
       const next = updater(prev);
@@ -114,6 +118,40 @@ export default function NoteCard({ note, onChange }: { note: Note, onChange?: ()
   const [showCompleted, setShowCompleted] = useState<boolean>(true);
   const [rtHtmlFromY, setRtHtmlFromY] = React.useState<string | null>(null);
   const [previewClipped, setPreviewClipped] = useState(false);
+
+  const isCoarsePointer = React.useMemo(() => {
+    try {
+      const mq = window.matchMedia;
+      return !!(mq && (mq('(pointer: coarse)').matches || mq('(any-pointer: coarse)').matches));
+    } catch {
+      return false;
+    }
+  }, []);
+  const previewRowAlignItems: React.CSSProperties['alignItems'] = isCoarsePointer ? 'center' : 'flex-start';
+
+  const openEditor = React.useCallback(() => {
+    if (note.type === 'CHECKLIST' || (note.items && note.items.length)) setShowEditor(true);
+    else setShowTextEditor(true);
+  }, [note.type, note.items]);
+
+  const lastOpenRequestRef = React.useRef<number>(0);
+  React.useEffect(() => {
+    const req = Number(openRequest || 0);
+    if (!req) return;
+    if (req === lastOpenRequestRef.current) return;
+    lastOpenRequestRef.current = req;
+    openEditor();
+    try { onOpenRequestHandled && onOpenRequestHandled(Number(note.id)); } catch {}
+  }, [openRequest, openEditor, onOpenRequestHandled, note.id]);
+
+  const isInteractiveTarget = React.useCallback((target: HTMLElement | null): boolean => {
+    if (!target) return false;
+    try {
+      return !!target.closest('button, a, input, textarea, select, [contenteditable="true"], [role="button"], .more-menu, .dropdown, .color-palette');
+    } catch {
+      return false;
+    }
+  }, []);
 
   const scheduleSnapPreview = React.useCallback((forceMeasure = false) => {
     if (snapRafRef.current != null) return;
@@ -394,7 +432,10 @@ export default function NoteCard({ note, onChange }: { note: Note, onChange?: ()
       const arr = ((note as any).collaborators || []).map((c:any) => {
         const u = (c && (c.user || {}));
         if (u && typeof u.id === 'number' && typeof u.email === 'string') {
-          return { collabId: Number(c.id), userId: Number(u.id), email: String(u.email), name: (typeof u.name === 'string' ? String(u.name) : undefined), userImageUrl: (typeof (u as any).userImageUrl === 'string' ? String((u as any).userImageUrl) : undefined) };
+          const img = (typeof (u as any).userImageUrl === 'string')
+            ? String((u as any).userImageUrl)
+            : (typeof (c as any).userImageUrl === 'string' ? String((c as any).userImageUrl) : undefined);
+          return { collabId: Number(c.id), userId: Number(u.id), email: String(u.email), name: (typeof u.name === 'string' ? String(u.name) : undefined), userImageUrl: img };
         }
         return null;
       }).filter(Boolean);
@@ -428,6 +469,7 @@ export default function NoteCard({ note, onChange }: { note: Note, onChange?: ()
       setBg(next);
       setTextColor(contrastColorForBackground(next));
     }
+    try { notifyColor(next); } catch {}
     setShowPalette(false);
   }
 
@@ -555,10 +597,10 @@ export default function NoteCard({ note, onChange }: { note: Note, onChange?: ()
     }
   }
 
-  function onCollaboratorSelect(selected: { id: number; email: string; name?: string }) {
+  function onCollaboratorSelect(selected: { id: number; email: string; name?: string; userImageUrl?: string }) {
     setCollaborators((s) => {
       if (s.find(x => x.userId === selected.id)) return s;
-      return [...s, { userId: selected.id, email: selected.email, name: selected.name }];
+      return [...s, { userId: selected.id, email: selected.email, name: selected.name, userImageUrl: selected.userImageUrl }];
     });
     setShowCollaborator(false);
     // Persist collaborator on server
@@ -684,6 +726,11 @@ export default function NoteCard({ note, onChange }: { note: Note, onChange?: ()
       className={`note-card${labels.length > 0 ? ' has-labels' : ''}`}
       style={styleVars}
       data-clipped={previewClipped ? '1' : undefined}
+      onClick={(e) => {
+        const t = e.target as HTMLElement | null;
+        if (isInteractiveTarget(t)) return;
+        openEditor();
+      }}
     >
       <input ref={fileRef} type="file" accept="image/*" style={{ display: "none" }} />
 
@@ -691,10 +738,10 @@ export default function NoteCard({ note, onChange }: { note: Note, onChange?: ()
         <div
           className="note-title"
           style={{ cursor: 'pointer' }}
-          onClick={() => { if (note.type === 'CHECKLIST' || (note.items && note.items.length)) setShowEditor(true); else setShowTextEditor(true); }}
+          onClick={() => { openEditor(); }}
           role="button"
           tabIndex={0}
-          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); if (note.type === 'CHECKLIST' || (note.items && note.items.length)) setShowEditor(true); else setShowTextEditor(true); } }}
+          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openEditor(); } }}
         >
           {title}
         </div>
@@ -721,31 +768,33 @@ export default function NoteCard({ note, onChange }: { note: Note, onChange?: ()
       <div
         className="note-body"
         ref={bodyRef}
-        onClick={() => { if (note.type === 'CHECKLIST' || (note.items && note.items.length)) setShowEditor(true); else setShowTextEditor(true); }}
+        onClick={() => { openEditor(); }}
       >
         {noteItems && noteItems.length > 0 ? (
           <div>
             {/** Show incomplete first, then optionally completed items. Preserve indent in preview. */}
-            {(noteItems.filter((it:any) => !it.checked)).map((it, idx) => (
-              <div key={typeof it.id === 'number' ? it.id : `i-${idx}`} className="note-item" style={{ display: 'flex', gap: 8, alignItems: 'flex-start', marginLeft: ((it.indent || 0) * 16) }}>
-                <button
-                  className={`note-checkbox ${it.checked ? 'checked' : ''}`}
-                  type="button"
-                  onClick={(e) => { e.stopPropagation(); toggleItemChecked(it.id, !it.checked); }}
-                  aria-pressed={!!it.checked}
-                  style={{ background: 'var(--checkbox-bg)', border: '2px solid var(--checkbox-border)', color: 'var(--checkbox-stroke)' }}
-                >
-                  {it.checked && (
-                    <svg viewBox="0 0 24 24" fill="none" aria-hidden focusable="false">
-                      <path d="M20 6L9 17l-5-5" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" />
-                    </svg>
-                  )}
-                </button>
-                <div className="note-item-text">
-                  <div className="rt-html" dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(String(it.content || ''), { USE_PROFILES: { html: true } }) }} />
+            <div className="note-items-list">
+              {(noteItems.filter((it:any) => !it.checked)).map((it, idx) => (
+                <div key={typeof it.id === 'number' ? it.id : `i-${idx}`} className="note-item" style={{ display: 'flex', gap: 8, alignItems: previewRowAlignItems, marginLeft: ((it.indent || 0) * 16) }}>
+                  <button
+                    className={`note-checkbox ${it.checked ? 'checked' : ''}`}
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); toggleItemChecked(it.id, !it.checked); }}
+                    aria-pressed={!!it.checked}
+                    style={{ background: 'var(--checkbox-bg)', border: '2px solid var(--checkbox-border)', color: 'var(--checkbox-stroke)' }}
+                  >
+                    {it.checked && (
+                      <svg viewBox="0 0 24 24" fill="none" aria-hidden focusable="false">
+                        <path d="M20 6L9 17l-5-5" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" />
+                      </svg>
+                    )}
+                  </button>
+                  <div className="note-item-text">
+                    <div className="rt-html" dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(String(it.content || ''), { USE_PROFILES: { html: true } }) }} />
+                  </div>
                 </div>
-              </div>
-            ))}
+              ))}
+            </div>
 
             {/** Completed items block */}
             {noteItems.some((it:any) => it.checked) && (
@@ -759,26 +808,30 @@ export default function NoteCard({ note, onChange }: { note: Note, onChange?: ()
               </div>
             )}
 
-            {showCompleted && noteItems.filter((it:any) => it.checked).map((it, idx) => (
-              <div key={`c-${typeof it.id === 'number' ? it.id : idx}`} className="note-item completed" style={{ display: 'flex', gap: 8, alignItems: 'flex-start', marginLeft: ((it.indent || 0) * 16), opacity: 0.7 }}>
-                <button
-                  className={`note-checkbox ${it.checked ? 'checked' : ''}`}
-                  type="button"
-                  onClick={(e) => { e.stopPropagation(); toggleItemChecked(it.id, !it.checked); }}
-                  aria-pressed={!!it.checked}
-                  style={{ background: 'var(--checkbox-bg)', border: '2px solid var(--checkbox-border)', color: 'var(--checkbox-stroke)' }}
-                >
-                  {it.checked && (
-                    <svg viewBox="0 0 24 24" fill="none" aria-hidden focusable="false">
-                      <path d="M20 6L9 17l-5-5" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" />
-                    </svg>
-                  )}
-                </button>
-                <div className="note-item-text" style={{ textDecoration: 'line-through' }}>
-                  <div className="rt-html" dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(String(it.content || ''), { USE_PROFILES: { html: true } }) }} />
-                </div>
+            {showCompleted && noteItems.some((it:any) => it.checked) && (
+              <div className="note-items-list" style={{ marginTop: 6 }}>
+                {noteItems.filter((it:any) => it.checked).map((it, idx) => (
+                  <div key={`c-${typeof it.id === 'number' ? it.id : idx}`} className="note-item completed" style={{ display: 'flex', gap: 8, alignItems: previewRowAlignItems, marginLeft: ((it.indent || 0) * 16), opacity: 0.7 }}>
+                    <button
+                      className={`note-checkbox ${it.checked ? 'checked' : ''}`}
+                      type="button"
+                      onClick={(e) => { e.stopPropagation(); toggleItemChecked(it.id, !it.checked); }}
+                      aria-pressed={!!it.checked}
+                      style={{ background: 'var(--checkbox-bg)', border: '2px solid var(--checkbox-border)', color: 'var(--checkbox-stroke)' }}
+                    >
+                      {it.checked && (
+                        <svg viewBox="0 0 24 24" fill="none" aria-hidden focusable="false">
+                          <path d="M20 6L9 17l-5-5" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" />
+                        </svg>
+                      )}
+                    </button>
+                    <div className="note-item-text" style={{ textDecoration: 'line-through' }}>
+                      <div className="rt-html" dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(String(it.content || ''), { USE_PROFILES: { html: true } }) }} />
+                    </div>
+                  </div>
+                ))}
               </div>
-            ))}
+            )}
           </div>
         ) : (
           (rtHtmlFromY || note.body) ? (
@@ -798,7 +851,7 @@ export default function NoteCard({ note, onChange }: { note: Note, onChange?: ()
               key={img.id}
               className="note-image"
               style={{ padding: 0, border: 'none', background: 'transparent', cursor: 'pointer' }}
-              onClick={() => { if (note.type === 'CHECKLIST' || (note.items && note.items.length)) setShowEditor(true); else setShowTextEditor(true); }}
+              onClick={() => { openEditor(); }}
             >
               <img src={img.url} alt="note image" />
               {hiddenCount > 0 && idx === visible.length - 1 && (
@@ -891,15 +944,20 @@ export default function NoteCard({ note, onChange }: { note: Note, onChange?: ()
           onClose={() => setShowCollaborator(false)}
           onSelect={onCollaboratorSelect}
           current={(() => {
-            const arr: Array<{ collabId?: number; userId: number; email: string; name?: string }> = [];
+            const arr: Array<{ collabId?: number; userId: number; email: string; name?: string; userImageUrl?: string }> = [];
             const currentUserId = (user && (user as any).id) ? Number((user as any).id) : undefined;
             const owner = (note as any).owner || null;
             if (owner && typeof owner.id === 'number' && owner.id !== currentUserId) {
-              arr.push({ userId: Number(owner.id), email: String(owner.email || ''), name: (typeof owner.name === 'string' ? owner.name : undefined) });
+              arr.push({
+                userId: Number(owner.id),
+                email: String(owner.email || ''),
+                name: (typeof owner.name === 'string' ? owner.name : undefined),
+                userImageUrl: (typeof (owner as any).userImageUrl === 'string' ? String((owner as any).userImageUrl) : undefined),
+              });
             }
             for (const c of collaborators) {
               if (typeof c.userId === 'number') {
-                arr.push({ collabId: c.collabId, userId: c.userId, email: c.email, name: c.name });
+                arr.push({ collabId: c.collabId, userId: c.userId, email: c.email, name: c.name, userImageUrl: c.userImageUrl });
               }
             }
             return arr;
@@ -918,18 +976,46 @@ export default function NoteCard({ note, onChange }: { note: Note, onChange?: ()
         <ChecklistEditor
           note={{ ...note, items: noteItems, images }}
           noteBg={bg}
+          onColorChanged={(next: string) => {
+            try {
+              const v = String(next || '');
+              setBg(v);
+              setTextColor(v ? contrastColorForBackground(v) : 'var(--muted)');
+              notifyColor(v);
+            } catch {}
+          }}
           onClose={() => setShowEditor(false)}
           onSaved={({ items, title }) => { setNoteItems(items); setTitle(title); }}
           onImagesUpdated={(imgs) => { setImagesWithNotify(() => imgs); }}
+          moreMenu={{
+            onDelete: onDeleteNote,
+            onAddLabel,
+            onUncheckAll,
+            onCheckAll,
+            onSetWidth: onSetCardWidth,
+          }}
         />
       )}
       {showTextEditor && (
         <RichTextEditor
           note={{ ...note, images }}
           noteBg={bg}
+          onColorChanged={(next: string) => {
+            try {
+              const v = String(next || '');
+              setBg(v);
+              setTextColor(v ? contrastColorForBackground(v) : 'var(--muted)');
+              notifyColor(v);
+            } catch {}
+          }}
           onClose={() => setShowTextEditor(false)}
           onSaved={({ title, body }) => { setTitle(title); note.body = body; }}
           onImagesUpdated={(imgs) => { setImagesWithNotify(() => imgs); }}
+          moreMenu={{
+            onDelete: onDeleteNote,
+            onAddLabel,
+            onSetWidth: onSetCardWidth,
+          }}
         />
       )}
     </article>

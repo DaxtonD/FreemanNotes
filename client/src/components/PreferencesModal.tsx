@@ -98,6 +98,21 @@ export default function PreferencesModal({ onClose }: { onClose: () => void }) {
     try { return (auth && (auth.user as any)?.chipDisplayMode) || 'image+text'; } catch { return 'image+text'; }
   });
 
+  const isPhone = (() => {
+    try {
+      const mq = window.matchMedia;
+      const isTouchLike = !!(mq && (mq('(pointer: coarse)').matches || mq('(any-pointer: coarse)').matches));
+      const vw = (window.visualViewport && typeof window.visualViewport.width === 'number')
+        ? window.visualViewport.width
+        : window.innerWidth;
+      const vh = (window.visualViewport && typeof window.visualViewport.height === 'number')
+        ? window.visualViewport.height
+        : window.innerHeight;
+      const shortSide = Math.min(vw, vh);
+      return isTouchLike && shortSide <= 600;
+    } catch { return false; }
+  })();
+
   // when the modal mounts, reflect current saved value into the slider
   useEffect(() => {
     const saved = (() => {
@@ -134,15 +149,19 @@ export default function PreferencesModal({ onClose }: { onClose: () => void }) {
     document.documentElement.style.setProperty('--checklist-checkbox-size', `${pendingCheckboxSize}px`);
     document.documentElement.style.setProperty('--checklist-text-size', `${pendingTextSize}px`);
     document.documentElement.style.setProperty('--note-line-height', String(pendingNoteLineSpacing));
-    // apply note/card width preference
-    document.documentElement.style.setProperty('--note-card-width', `${pendingNoteWidth}px`);
+    // Note width preference is disabled on phones (layout auto-fits card width).
+    if (!isPhone) {
+      document.documentElement.style.setProperty('--note-card-width', `${pendingNoteWidth}px`);
+    }
     document.documentElement.style.setProperty('--image-thumb-size', `${pendingImageThumbSize}px`);
     // checkbox color customization removed — theme controls visuals
     try { localStorage.setItem('prefs.checklistSpacing', String(pending)); } catch {}
     try { localStorage.setItem('prefs.checkboxSize', String(pendingCheckboxSize)); } catch {}
     try { localStorage.setItem('prefs.checklistTextSize', String(pendingTextSize)); } catch {}
     try { localStorage.setItem('prefs.noteLineSpacing', String(pendingNoteLineSpacing)); } catch {}
-    try { localStorage.setItem('prefs.noteWidth', String(pendingNoteWidth)); } catch {}
+    if (!isPhone) {
+      try { localStorage.setItem('prefs.noteWidth', String(pendingNoteWidth)); } catch {}
+    }
     try { localStorage.setItem('prefs.imageThumbSize', String(pendingImageThumbSize)); } catch {}
     try { localStorage.setItem('prefs.fontFamily', pendingFont); } catch {}
     // auto-fit removed
@@ -159,7 +178,7 @@ export default function PreferencesModal({ onClose }: { onClose: () => void }) {
     try {
       const payload: any = {
         fontFamily: pendingFont,
-        noteWidth: pendingNoteWidth,
+        ...(isPhone ? {} : { noteWidth: pendingNoteWidth }),
         dragBehavior: pendingDragBehavior,
         animationSpeed: pendingAnimSpeed,
         checklistSpacing: pending,
@@ -192,17 +211,36 @@ export default function PreferencesModal({ onClose }: { onClose: () => void }) {
   }
   function onCancel() { onClose(); }
   const [showInvite, setShowInvite] = useState(false);
-  const [photoFile, setPhotoFile] = useState<File | null>(null);
+  const [photoPreviewUrl, setPhotoPreviewUrl] = useState<string | null>(null);
+  const [photoUploading, setPhotoUploading] = useState(false);
   const [activeSection, setActiveSection] = useState<string | null>(null);
-  async function onUploadPhoto() {
+  async function onPhotoSelected(file: File | null) {
     try {
-      if (!photoFile) { window.alert('Select a photo first'); return; }
-      const dataUrl = await fileToDataUrl(photoFile);
+      // Local preview immediately
+      setPhotoPreviewUrl((prev) => {
+        try { if (prev) URL.revokeObjectURL(prev); } catch {}
+        return file ? URL.createObjectURL(file) : null;
+      });
+
+      if (!file) return;
+      setPhotoUploading(true);
+      const dataUrl = await fileToDataUrl(file);
       await (auth?.uploadPhoto?.(dataUrl));
-      window.alert('Photo updated');
+      // After upload, prefer server URL (auth.user.userImageUrl) and release local object URL.
+      setPhotoPreviewUrl((prev) => {
+        try { if (prev) URL.revokeObjectURL(prev); } catch {}
+        return null;
+      });
     } catch (err) {
       console.error('Failed to upload photo', err);
       window.alert('Failed to upload photo');
+      // If upload fails, drop preview so we don't mislead.
+      setPhotoPreviewUrl((prev) => {
+        try { if (prev) URL.revokeObjectURL(prev); } catch {}
+        return null;
+      });
+    } finally {
+      setPhotoUploading(false);
     }
   }
   function fileToDataUrl(file: File): Promise<string> {
@@ -213,6 +251,12 @@ export default function PreferencesModal({ onClose }: { onClose: () => void }) {
       reader.readAsDataURL(file);
     });
   }
+
+  React.useEffect(() => {
+    return () => {
+      try { if (photoPreviewUrl) URL.revokeObjectURL(photoPreviewUrl); } catch {}
+    };
+  }, [photoPreviewUrl]);
   return (
     <div className="image-dialog-backdrop">
       <div className="prefs-dialog" role="dialog" aria-modal>
@@ -284,15 +328,22 @@ export default function PreferencesModal({ onClose }: { onClose: () => void }) {
               <div style={{ marginBottom: 16 }}>
                 <h5 style={{ margin: 0, color: 'var(--muted)' }}>Profile Photo</h5>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                  { (auth?.user as any)?.userImageUrl ? (
+                  { photoPreviewUrl ? (
+                    <img src={photoPreviewUrl} alt="Profile preview" style={{ width: 55, height: 55, borderRadius: '50%', objectFit: 'cover' }} />
+                  ) : (auth?.user as any)?.userImageUrl ? (
                     <img src={(auth?.user as any).userImageUrl} alt="Profile" style={{ width: 55, height: 55, borderRadius: '50%', objectFit: 'cover' }} />
                   ) : (
                     <div className="avatar" style={{ width: 55, height: 55, borderRadius: '50%', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
                       {((auth?.user as any)?.name || (auth?.user as any)?.email || 'U')[0]}
                     </div>
                   )}
-                  <input type="file" accept="image/*" onChange={(e) => setPhotoFile(e.target.files?.[0] || null)} />
-                  <button className="btn" onClick={onUploadPhoto}>Upload</button>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    disabled={photoUploading}
+                    onChange={(e) => onPhotoSelected(e.target.files?.[0] || null)}
+                  />
+                  {photoUploading && <div style={{ color: 'var(--muted)', fontSize: 13 }}>Uploading…</div>}
                 </div>
               </div>
               <div style={{ display: 'block' }}>
@@ -320,11 +371,18 @@ export default function PreferencesModal({ onClose }: { onClose: () => void }) {
                   <div style={{ width: 48, textAlign: 'left' }}>{pendingTextSize}px</div>
                 </div>
                 <div style={{ height: 10 }} />
-                <div style={{ display: 'flex', gap: 12, alignItems: 'center', justifyContent: 'flex-start' }}>
-                  <label style={{ color: 'var(--muted)', minWidth: 120 }}>Note width</label>
-                  <input aria-label="note width" type="range" min={180} max={520} value={pendingNoteWidth} onChange={(e) => setPendingNoteWidth(Number(e.target.value))} />
-                  <div style={{ width: 64, textAlign: 'left' }}>{pendingNoteWidth}px</div>
-                </div>
+                  {!isPhone ? (
+                    <div style={{ display: 'flex', gap: 12, alignItems: 'center', justifyContent: 'flex-start' }}>
+                      <label style={{ color: 'var(--muted)', minWidth: 120 }}>Note width</label>
+                      <input aria-label="note width" type="range" min={180} max={520} value={pendingNoteWidth} onChange={(e) => setPendingNoteWidth(Number(e.target.value))} />
+                      <div style={{ width: 64, textAlign: 'left' }}>{pendingNoteWidth}px</div>
+                    </div>
+                  ) : (
+                    <div style={{ display: 'flex', gap: 12, alignItems: 'center', justifyContent: 'flex-start', opacity: 0.7 }}>
+                      <label style={{ color: 'var(--muted)', minWidth: 120 }}>Note width</label>
+                      <div style={{ color: 'var(--muted)' }}>Auto (disabled on mobile)</div>
+                    </div>
+                  )}
                 <div style={{ height: 10 }} />
                 <div style={{ display: 'flex', gap: 12, alignItems: 'center', justifyContent: 'flex-start' }}>
                   <label style={{ color: 'var(--muted)', minWidth: 120 }}>Image thumbnails</label>

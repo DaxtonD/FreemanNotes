@@ -17,9 +17,22 @@ import ImageDialog from './ImageDialog';
 import ImageLightbox from './ImageLightbox';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faPalette } from '@fortawesome/free-solid-svg-icons';
+import MoreMenu from './MoreMenu';
 
-export default function RichTextEditor({ note, onClose, onSaved, noteBg, onImagesUpdated }:
-  { note: any; onClose: () => void; onSaved?: (payload: { title: string; body: string }) => void; noteBg?: string; onImagesUpdated?: (images: Array<{ id:number; url:string }>) => void }) {
+export default function RichTextEditor({ note, onClose, onSaved, noteBg, onImagesUpdated, onColorChanged, moreMenu }:
+  {
+    note: any;
+    onClose: () => void;
+    onSaved?: (payload: { title: string; body: string }) => void;
+    noteBg?: string;
+    onImagesUpdated?: (images: Array<{ id:number; url:string }>) => void;
+    onColorChanged?: (color: string) => void;
+    moreMenu?: {
+      onDelete: () => void;
+      onAddLabel: () => void;
+      onSetWidth: (span: 1 | 2 | 3) => void;
+    };
+  }) {
   const { token, user } = useAuth();
   const clientIdRef = React.useRef<string>((() => {
     try { return `c${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`; } catch { return `c${Math.random()}`; }
@@ -42,6 +55,8 @@ export default function RichTextEditor({ note, onClose, onSaved, noteBg, onImage
   const [imagesOpen, setImagesOpen] = React.useState(false);
   const [lightboxUrl, setLightboxUrl] = React.useState<string | null>(null);
   const [collaborators, setCollaborators] = React.useState<{ id:number; email:string }[]>([]);
+  const [showMore, setShowMore] = React.useState(false);
+  const moreBtnRef = React.useRef<HTMLButtonElement | null>(null);
   const seededOnceRef = React.useRef<boolean>(false);
 
   // Collaborative setup via Yjs + y-websocket (room per note)
@@ -255,6 +270,7 @@ export default function RichTextEditor({ note, onClose, onSaved, noteBg, onImage
       window.alert('Failed to save color preference');
     }
     setBg(nextBg);
+    try { (onColorChanged as any)?.(nextBg); } catch {}
   }
 
   function onAddImageUrl(url?: string | null) {
@@ -338,7 +354,7 @@ export default function RichTextEditor({ note, onClose, onSaved, noteBg, onImage
 
   const dialog = (
     <div className="image-dialog-backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget) { saveTitleOnly(); } }}>
-      <div className={`image-dialog${maximized ? ' maximized' : ''}`} role="dialog" aria-modal style={{ width: maximized ? '96vw' : 'min(1000px, 86vw)', ...dialogStyle }}>
+      <div className={`image-dialog editor-dialog${maximized ? ' maximized' : ''}`} role="dialog" aria-modal style={{ width: maximized ? '96vw' : 'min(1000px, 86vw)', ...dialogStyle }}>
         <div className="dialog-header">
           <strong>Edit note</strong>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
@@ -457,6 +473,15 @@ export default function RichTextEditor({ note, onClose, onSaved, noteBg, onImage
                 <path d="M21 19V5c0-1.1-.9-2-2-2H5C3.9 3 3 3.9 3 5v14h18zM8.5 13.5l2.5 3L14.5 12l4.5 7H5l3.5-5.5z"/>
               </svg>
             </button>
+            {moreMenu && (
+              <button
+                ref={moreBtnRef}
+                className="tiny editor-more"
+                onClick={(e) => { e.stopPropagation(); setShowMore(s => !s); }}
+                aria-label="More"
+                title="More"
+              >⋮</button>
+            )}
           </div>
           <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
             <button className="btn" onClick={saveTitleOnly}>Save</button>
@@ -502,6 +527,16 @@ export default function RichTextEditor({ note, onClose, onSaved, noteBg, onImage
   if (typeof document !== 'undefined') {
     const portal = createPortal(dialog, document.body);
     return (<>{portal}
+      {moreMenu && showMore && (
+        <MoreMenu
+          anchorRef={moreBtnRef as any}
+          itemsCount={4}
+          onClose={() => setShowMore(false)}
+          onDelete={moreMenu.onDelete}
+          onAddLabel={moreMenu.onAddLabel}
+          onSetWidth={moreMenu.onSetWidth}
+        />
+      )}
       {showPalette && <ColorPalette anchorRef={undefined as any} onPick={onPickColor} onClose={() => setShowPalette(false)} />}
       {showReminderPicker && <ReminderPicker onClose={() => setShowReminderPicker(false)} onSet={(iso) => { setShowReminderPicker(false); if (iso) window.alert(`Reminder set (UI-only): ${iso}`); }} />}
       {showCollaborator && (

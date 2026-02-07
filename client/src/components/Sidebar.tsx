@@ -7,6 +7,7 @@ export default function Sidebar({
   onToggleLabel,
   onClearLabels,
   collapsed = false,
+  onRequestClose,
   sortConfig = DEFAULT_SORT_CONFIG,
   onSortConfigChange,
 }: {
@@ -14,6 +15,7 @@ export default function Sidebar({
   onToggleLabel?: (id: number) => void;
   onClearLabels?: () => void;
   collapsed?: boolean;
+  onRequestClose?: () => void;
   sortConfig?: SortConfig;
   onSortConfigChange?: (next: SortConfig) => void;
 }) {
@@ -86,6 +88,11 @@ export default function Sidebar({
     try { setOpen(false); } catch {}
   };
 
+  const goHome = () => {
+    resetToDefault();
+    try { onRequestClose && onRequestClose(); } catch {}
+  };
+
   const toggleLabelsOpen = () => {
     setOpen((wasOpen) => {
       const next = !wasOpen;
@@ -134,7 +141,7 @@ export default function Sidebar({
   return (
     <aside className={"sidebar" + (collapsed ? " collapsed" : "")}>
       <div className="sidebar-section">
-        <div className="sidebar-item active" title="Notes" style={{ cursor: 'pointer' }} onClick={resetToDefault}>
+        <div className="sidebar-item active" title="Notes" style={{ cursor: 'pointer' }} onClick={goHome}>
           <span className="icon" aria-hidden>
             <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden>
               <path d="M6 3h9l3 3v15H6zM14 3v4h4"/>

@@ -1,4 +1,5 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from 'react-dom';
 import {
   DndContext,
   DragOverlay,
@@ -74,6 +75,12 @@ export default function NotesGrid({ selectedLabelIds = [], searchQuery = '', sor
   const [hasLoadedOnce, setHasLoadedOnce] = useState(false);
   const notesRef = useRef<any[]>([]);
 
+  // Auto-detected layout bucket.
+  // "Phone" here means small viewport + touch-first; tablets keep the normal responsive layout.
+  type LayoutBucket = 'desktop' | 'phone' | 'tablet-portrait' | 'tablet-landscape';
+  const [layoutBucket, setLayoutBucket] = useState<LayoutBucket>('desktop');
+  const layoutBucketRef = useRef<LayoutBucket>('desktop');
+
   // DOM-computed column counts (updated by `updateCols()` on resize).
   // Swap-mode masonry needs these in React state so it can re-render with a
   // different number of columns (instead of showing horizontal scrollbars).
@@ -108,6 +115,76 @@ export default function NotesGrid({ selectedLabelIds = [], searchQuery = '', sor
   const draggingIdxRef = useRef<number | null>(null);
   const draggingNoteIdRef = useRef<number | null>(null);
   const suppressNextRecalcRef = useRef(false);
+
+  const [mobileAddOpen, setMobileAddOpen] = useState(false);
+  const [takeNoteOpenNonce, setTakeNoteOpenNonce] = useState(0);
+  const [takeNoteOpenMode, setTakeNoteOpenMode] = useState<'text' | 'checklist'>('text');
+
+  const openTakeNote = useCallback((mode: 'text' | 'checklist') => {
+    setMobileAddOpen(false);
+    setTakeNoteOpenMode(mode);
+    setTakeNoteOpenNonce((n) => n + 1);
+  }, []);
+
+  useEffect(() => {
+    if (!mobileAddOpen) return;
+    const onDown = (e: any) => {
+      try {
+        const target = e?.target as HTMLElement | null;
+        if (target && (target as any).closest && (target as any).closest('.mobile-add-note')) return;
+      } catch {}
+      setMobileAddOpen(false);
+    };
+    window.addEventListener('pointerdown', onDown, { capture: true } as any);
+    return () => {
+      try { window.removeEventListener('pointerdown', onDown, { capture: true } as any); } catch {}
+    };
+  }, [mobileAddOpen]);
+
+  // Keep-style rearrange drag (floating card + spacer)
+  const rearrangeDraggingRef = useRef(false);
+  const rearrangePendingRef = useRef<null | {
+    noteId: number;
+    section: 'pinned' | 'others';
+    sectionIds: number[];
+    startClientX: number;
+    startClientY: number;
+    lastClientX?: number;
+    lastClientY?: number;
+    pointerId: number;
+    pointerType: string;
+    touchArmed?: boolean;
+    longPressTimerId?: number | null;
+    captureEl?: HTMLElement | null;
+  }>(null);
+  const rearrangeActiveIdRef = useRef<number | null>(null);
+  const rearrangeSectionRef = useRef<'pinned' | 'others' | null>(null);
+  const rearrangeSpacerIndexRef = useRef<number>(-1);
+  const rearrangeRenderIdsRef = useRef<Array<number | 'spacer'>>([]);
+  const rearrangeBaseRectRef = useRef<DOMRect | null>(null);
+  const rearrangePointerStartRef = useRef<{ x: number; y: number } | null>(null);
+  const rearrangeOverlayRef = useRef<HTMLDivElement | null>(null);
+  const rearrangeSpacerRef = useRef<HTMLDivElement | null>(null);
+  const rearrangeMoveRafRef = useRef<number | null>(null);
+  const rearrangeSlotRectsRef = useRef<Array<null | { left: number; top: number; width: number; height: number; cx: number; cy: number }>>([]);
+  const rearrangeBoundsRef = useRef<null | { left: number; top: number; right: number; bottom: number }>(null);
+  const rearrangeRowSpanRef = useRef<number>(2);
+  const rearrangeColSpanRef = useRef<number>(1);
+  const rearrangeSettlingRef = useRef(false);
+  const rearrangeFlipPendingRef = useRef<null | { before: Map<number, DOMRect>; ms: number }>(null);
+  const rearrangeBodyScrollLockRef = useRef<null | {
+    x: number;
+    y: number;
+    position: string;
+    top: string;
+    left: string;
+    right: string;
+    width: string;
+    overflow: string;
+  }>(null);
+  const [rearrangeActiveId, setRearrangeActiveId] = useState<number | null>(null);
+  const [rearrangeSection, setRearrangeSection] = useState<'pinned' | 'others' | null>(null);
+  const [rearrangeRenderIds, setRearrangeRenderIds] = useState<Array<number | 'spacer'>>([]);
   const pinnedGridRef = useRef<HTMLDivElement | null>(null);
   const othersGridRef = useRef<HTMLDivElement | null>(null);
   const [pinnedLayout, setPinnedLayout] = useState<number[][] | null>(null);
@@ -149,7 +226,7 @@ export default function NotesGrid({ selectedLabelIds = [], searchQuery = '', sor
       if (tt) swapPointerRef.current = { x: tt.clientX, y: tt.clientY };
     };
     // capture so we still see moves even if other handlers run
-    window.addEventListener('pointermove', onPointerMove, { capture: true });
+    window.addEventListener('pointermove', onPointerMove, { capture: true, passive: false } as any);
     window.addEventListener('touchmove', onTouchMove, { capture: true, passive: true } as any);
     swapUnsubMoveRef.current = () => {
       try { window.removeEventListener('pointermove', onPointerMove, { capture: true } as any); } catch {}
@@ -244,6 +321,66 @@ export default function NotesGrid({ selectedLabelIds = [], searchQuery = '', sor
     } catch { return kind === 'resize' ? 600 : kind === 'swap' ? 500 : 480; }
   }
 
+  function lockBodyScrollForRearrange() {
+    if (rearrangeBodyScrollLockRef.current) return;
+    try {
+      const x = window.scrollX || 0;
+      const y = window.scrollY || 0;
+      const body = document.body;
+      rearrangeBodyScrollLockRef.current = {
+        x,
+        y,
+        position: body.style.position || '',
+        top: body.style.top || '',
+        left: body.style.left || '',
+        right: body.style.right || '',
+        width: body.style.width || '',
+        overflow: body.style.overflow || '',
+      };
+      body.style.position = 'fixed';
+      body.style.top = `-${y}px`;
+      body.style.left = `-${x}px`;
+      body.style.right = '0px';
+      body.style.width = '100%';
+      body.style.overflow = 'hidden';
+    } catch {}
+  }
+
+  function unlockBodyScrollForRearrange() {
+    const st = rearrangeBodyScrollLockRef.current;
+    if (!st) return;
+    rearrangeBodyScrollLockRef.current = null;
+    try {
+      const body = document.body;
+      body.style.position = st.position;
+      body.style.top = st.top;
+      body.style.left = st.left;
+      body.style.right = st.right;
+      body.style.width = st.width;
+      body.style.overflow = st.overflow;
+      window.scrollTo(st.x, st.y);
+    } catch {}
+  }
+
+  useLayoutEffect(() => {
+    rearrangeActiveIdRef.current = rearrangeActiveId;
+  }, [rearrangeActiveId]);
+  useLayoutEffect(() => {
+    rearrangeSectionRef.current = rearrangeSection;
+  }, [rearrangeSection]);
+  useLayoutEffect(() => {
+    rearrangeRenderIdsRef.current = rearrangeRenderIds;
+    const idx = rearrangeRenderIds.indexOf('spacer');
+    rearrangeSpacerIndexRef.current = idx;
+  }, [rearrangeRenderIds]);
+
+  useEffect(() => {
+    const root = document.documentElement;
+    if (rearrangeActiveId != null) root.classList.add('is-note-rearrange-dragging');
+    else root.classList.remove('is-note-rearrange-dragging');
+    return () => { try { root.classList.remove('is-note-rearrange-dragging'); } catch {} };
+  }, [rearrangeActiveId]);
+
   async function load() {
     setLoading(true);
     try {
@@ -302,6 +439,15 @@ export default function NotesGrid({ selectedLabelIds = [], searchQuery = '', sor
     }));
   }
 
+  function applyColorToNote(noteId: number, color: string | null | undefined) {
+    const next = (typeof color === 'string' ? color : '') || '';
+    setNotes((s) => s.map((n) => {
+      if (Number(n.id) !== Number(noteId)) return n;
+      // `viewerColor` is per-user preference (from /prefs); keep `color` untouched.
+      return { ...n, viewerColor: next.length ? next : null };
+    }));
+  }
+
   useEffect(() => { if (token) load(); else setNotes([]); }, [token]);
   useEffect(() => { notesRef.current = notes; }, [notes]);
   useEffect(() => { pinnedLayoutRef.current = pinnedLayout; }, [pinnedLayout]);
@@ -312,6 +458,7 @@ export default function NotesGrid({ selectedLabelIds = [], searchQuery = '', sor
     try { return (localStorage.getItem('prefs.dragBehavior') || 'swap'); } catch { return 'swap'; }
   })();
   const manualSwapEnabled = canManualReorder && dragBehavior === 'swap';
+  const keepRearrangeEnabled = canManualReorder && dragBehavior === 'rearrange';
   const usePinnedPlacements = manualSwapEnabled && manualDragActive;
 
   // Resize can change the target column count; ensure our cached swap layouts
@@ -466,6 +613,290 @@ export default function NotesGrid({ selectedLabelIds = [], searchQuery = '', sor
     }
     return m;
   }, [notes]);
+
+  const clampIndex = (i: number, len: number) => Math.max(0, Math.min(len, Math.floor(i)));
+
+  function captureRectsForIds(ids: number[]): Map<number, DOMRect> {
+    const before = new Map<number, DOMRect>();
+    for (const id of ids) {
+      const el = itemRefs.current.get(id);
+      if (el) before.set(id, el.getBoundingClientRect());
+    }
+    return before;
+  }
+
+  function animateFlipIds(before: Map<number, DOMRect>, ms: number) {
+    const moves: Array<{ el: HTMLElement; dx: number; dy: number }> = [];
+    for (const [id, prev] of before.entries()) {
+      const el = itemRefs.current.get(id);
+      if (!el) continue;
+      const rect = el.getBoundingClientRect();
+      const dx = prev.left - rect.left;
+      const dy = prev.top - rect.top;
+      if (dx === 0 && dy === 0) continue;
+      moves.push({ el, dx, dy });
+    }
+    if (!moves.length) return;
+
+    // Apply inverted transforms without transitions.
+    for (const m of moves) {
+      m.el.style.transition = 'none';
+      m.el.style.transform = `translate(${m.dx}px, ${m.dy}px)`;
+    }
+
+    // Force a single reflow, then animate all back to identity.
+    void document.body.getBoundingClientRect();
+    for (const m of moves) {
+      const el = m.el;
+      el.style.transition = `transform ${ms}ms cubic-bezier(.2,.9,.2,1)`;
+      el.style.transform = '';
+      const cleanup = () => {
+        try {
+          el.style.transition = '';
+          el.removeEventListener('transitionend', cleanup);
+        } catch {}
+      };
+      el.addEventListener('transitionend', cleanup);
+    }
+  }
+
+  function updateRearrangeSlotRects() {
+    const ids = rearrangeRenderIdsRef.current;
+    if (!ids.length) {
+      rearrangeSlotRectsRef.current = [];
+      rearrangeBoundsRef.current = null;
+      return;
+    }
+    const prev = rearrangeSlotRectsRef.current;
+    const rects: Array<null | { left: number; top: number; width: number; height: number; cx: number; cy: number }> = new Array(ids.length);
+
+    // `getBoundingClientRect()` includes transforms. During FLIP, elements may be
+    // mid-transition, which makes slot targeting jitter. Measure stable layout
+    // rects by temporarily disabling inline transform/transition for this pass.
+    const toRestore: Array<{ el: HTMLElement; transition: string; transform: string }> = [];
+    try {
+      for (let i = 0; i < ids.length; i++) {
+        const key = ids[i];
+        const el = (key === 'spacer')
+          ? rearrangeSpacerRef.current
+          : itemRefs.current.get(Number(key));
+        if (!el) continue;
+        toRestore.push({ el, transition: el.style.transition || '', transform: el.style.transform || '' });
+      }
+      for (const r of toRestore) {
+        r.el.style.transition = 'none';
+        r.el.style.transform = 'none';
+      }
+      // Force a single reflow so subsequent rects reflect the untransformed layout.
+      void document.body.getBoundingClientRect();
+    } catch {}
+
+    for (let i = 0; i < ids.length; i++) {
+      const key = ids[i];
+      const el = (key === 'spacer')
+        ? rearrangeSpacerRef.current
+        : itemRefs.current.get(Number(key));
+      if (!el) {
+        rects[i] = prev[i] ?? null;
+        continue;
+      }
+      const r = el.getBoundingClientRect();
+      rects[i] = {
+        left: r.left,
+        top: r.top,
+        width: r.width,
+        height: r.height,
+        cx: r.left + r.width / 2,
+        cy: r.top + r.height / 2,
+      };
+    }
+    rearrangeSlotRectsRef.current = rects;
+
+    // Track the bounding box of all slots so we can clamp overlay movement and
+    // avoid dragging into empty space beyond the last note.
+    try {
+      let minL = Number.POSITIVE_INFINITY;
+      let minT = Number.POSITIVE_INFINITY;
+      let maxR = Number.NEGATIVE_INFINITY;
+      let maxB = Number.NEGATIVE_INFINITY;
+      for (const r of rects) {
+        if (!r) continue;
+        minL = Math.min(minL, r.left);
+        minT = Math.min(minT, r.top);
+        maxR = Math.max(maxR, r.left + r.width);
+        maxB = Math.max(maxB, r.top + r.height);
+      }
+      if (Number.isFinite(minL) && Number.isFinite(minT) && Number.isFinite(maxR) && Number.isFinite(maxB)) {
+        rearrangeBoundsRef.current = { left: minL, top: minT, right: maxR, bottom: maxB };
+      } else {
+        rearrangeBoundsRef.current = null;
+      }
+    } catch {
+      rearrangeBoundsRef.current = null;
+    }
+
+    try {
+      for (const r of toRestore) {
+        r.el.style.transition = r.transition;
+        r.el.style.transform = r.transform;
+      }
+    } catch {}
+  }
+
+  function chooseNearestSlotIndex(clientX: number, clientY: number): number {
+    const rects = rearrangeSlotRectsRef.current;
+    if (!rects.length) return -1;
+
+    // Prefer the slot the pointer is currently inside (reduces jitter).
+    for (let i = 0; i < rects.length; i++) {
+      const r = rects[i];
+      if (!r) continue;
+      if (clientX >= r.left && clientX <= (r.left + r.width) && clientY >= r.top && clientY <= (r.top + r.height)) {
+        return i;
+      }
+    }
+
+    let bestIdx = -1;
+    let best = Number.POSITIVE_INFINITY;
+    for (let i = 0; i < rects.length; i++) {
+      const r = rects[i];
+      if (!r) continue;
+      const dx = clientX - r.cx;
+      const dy = clientY - r.cy;
+      const d = dx * dx + dy * dy;
+      if (d < best) {
+        best = d;
+        bestIdx = i;
+      }
+    }
+    return bestIdx;
+  }
+
+  function rectIntersectionArea(
+    a: { left: number; top: number; right: number; bottom: number },
+    b: { left: number; top: number; right: number; bottom: number },
+  ): number {
+    const left = Math.max(a.left, b.left);
+    const top = Math.max(a.top, b.top);
+    const right = Math.min(a.right, b.right);
+    const bottom = Math.min(a.bottom, b.bottom);
+    const w = right - left;
+    const h = bottom - top;
+    if (w <= 0 || h <= 0) return 0;
+    return w * h;
+  }
+
+  function chooseSlotIndexByOverlap(dragRect: { left: number; top: number; right: number; bottom: number }): { idx: number; area: number } {
+    const rects = rearrangeSlotRectsRef.current;
+    if (!rects.length) return { idx: -1, area: 0 };
+    let bestIdx = -1;
+    let bestArea = 0;
+
+    for (let i = 0; i < rects.length; i++) {
+      const r = rects[i];
+      if (!r) continue;
+      const slot = { left: r.left, top: r.top, right: r.left + r.width, bottom: r.top + r.height };
+      const area = rectIntersectionArea(dragRect, slot);
+      if (area > bestArea) {
+        bestArea = area;
+        bestIdx = i;
+      }
+    }
+    return { idx: bestIdx, area: bestArea };
+  }
+
+  function buildRenderIds(idsInSection: number[], activeId: number, spacerIndex: number): Array<number | 'spacer'> {
+    const ids = idsInSection.filter((id) => Number(id) !== Number(activeId));
+    const idx = clampIndex(spacerIndex, ids.length);
+    const next: Array<number | 'spacer'> = [];
+    for (let i = 0; i < ids.length; i++) {
+      if (i === idx) next.push('spacer');
+      next.push(ids[i]);
+    }
+    if (idx === ids.length) next.push('spacer');
+    return next;
+  }
+
+  function idsBetweenSpacerMoves(renderIds: Array<number | 'spacer'>, fromIdx: number, toIdx: number): number[] {
+    if (fromIdx === toIdx) return [];
+    const lo = Math.min(fromIdx, toIdx);
+    const hi = Math.max(fromIdx, toIdx);
+    const slice = renderIds.slice(lo, hi + 1).filter((k) => k !== 'spacer') as number[];
+    return slice.map((x) => Number(x)).filter((id) => Number.isFinite(id));
+  }
+
+  function moveRearrangeSpacerTo(newIdx: number) {
+    const current = rearrangeRenderIdsRef.current;
+    const fromIdx = current.indexOf('spacer');
+    if (fromIdx < 0) return;
+    const toIdx = clampIndex(newIdx, current.length - 1);
+    if (toIdx === fromIdx) return;
+
+    const affectedIds = idsBetweenSpacerMoves(current, fromIdx, toIdx);
+    const before = captureRectsForIds(affectedIds);
+
+    const next = [...current];
+    next.splice(fromIdx, 1);
+    next.splice(toIdx, 0, 'spacer');
+    const ms = Math.max(150, Math.min(650, getAnimMs('rearrange')));
+    rearrangeFlipPendingRef.current = { before, ms };
+    setRearrangeRenderIds(next);
+  }
+
+  // After React commits the new spacer position, update cached slot rects and
+  // run the FLIP animation in a layout effect (pre-paint) to avoid jump/jitter.
+  useLayoutEffect(() => {
+    if (rearrangeActiveId == null) return;
+    try { updateRearrangeSlotRects(); } catch {}
+    const pending = rearrangeFlipPendingRef.current;
+    if (!pending) return;
+    rearrangeFlipPendingRef.current = null;
+    try { animateFlipIds(pending.before, pending.ms); } catch {}
+  }, [rearrangeActiveId, rearrangeRenderIds]);
+
+  function endRearrangeDragCleanup() {
+    rearrangeDraggingRef.current = false;
+    rearrangePendingRef.current = null;
+    rearrangePointerStartRef.current = null;
+    rearrangeBaseRectRef.current = null;
+    rearrangeSlotRectsRef.current = [];
+    rearrangeBoundsRef.current = null;
+    rearrangeSettlingRef.current = false;
+    rearrangeRowSpanRef.current = 2;
+    rearrangeColSpanRef.current = 1;
+    try { document.documentElement.classList.remove('is-note-rearrange-dragging'); } catch {}
+    unlockBodyScrollForRearrange();
+    if (rearrangeMoveRafRef.current != null) {
+      try { cancelAnimationFrame(rearrangeMoveRafRef.current); } catch {}
+      rearrangeMoveRafRef.current = null;
+    }
+  }
+
+  function finishRearrangeDrag() {
+    setRearrangeActiveId(null);
+    setRearrangeSection(null);
+    setRearrangeRenderIds([]);
+    endRearrangeDragCleanup();
+
+    // We intentionally skip ResizeObserver-driven span/column recalcs while dragging.
+    // After we reinsert the card into the grid, force a single recalc so every
+    // wrapper gets the correct `gridRowEnd` span and cards don’t overlap.
+    try {
+      requestAnimationFrame(() => {
+        try {
+          window.dispatchEvent(new Event('notes-grid:recalc'));
+          window.dispatchEvent(new Event('resize'));
+        } catch {}
+      });
+    } catch {}
+  }
+
+  function isInteractiveTarget(target: HTMLElement | null): boolean {
+    if (!target) return false;
+    try {
+      return !!target.closest('button, a, input, textarea, select, [contenteditable="true"], [role="button"], .more-menu, .dropdown, .color-palette');
+    } catch { return false; }
+  }
 
   function getRowSpanForId(noteId: number): number {
     const el = itemRefs.current.get(noteId);
@@ -829,6 +1260,14 @@ export default function NotesGrid({ selectedLabelIds = [], searchQuery = '', sor
               })();
               break;
             }
+            case 'note-color-changed': {
+              const payload = msg.payload || {};
+              const noteId = Number(payload.noteId);
+              if (!Number.isFinite(noteId)) break;
+              const color = (typeof payload.color === 'string') ? String(payload.color) : '';
+              applyColorToNote(noteId, color);
+              break;
+            }
             case 'note-shared':
               // Reload notes so the newly shared note appears immediately
               load();
@@ -940,9 +1379,45 @@ export default function NotesGrid({ selectedLabelIds = [], searchQuery = '', sor
     let childRO: ResizeObserver | null = null;
     let scheduledRaf: number | null = null;
     function updateCols() {
+      if (rearrangeDraggingRef.current) return;
+
+      const nextBucket: LayoutBucket = (() => {
+        try {
+          const mq = window.matchMedia;
+          const isTouchLike = !!(mq && (mq('(pointer: coarse)').matches || mq('(any-pointer: coarse)').matches));
+
+          // Use the *shortest side* to classify phone vs tablet so orientation changes
+          // don't accidentally promote phones into the tablet bucket.
+          const vw = (window.visualViewport && typeof window.visualViewport.width === 'number')
+            ? window.visualViewport.width
+            : window.innerWidth;
+          const vh = (window.visualViewport && typeof window.visualViewport.height === 'number')
+            ? window.visualViewport.height
+            : window.innerHeight;
+          const shortSide = Math.min(vw, vh);
+
+          if (isTouchLike) {
+            // Typical phones: ~320-480 CSS px short side. Small tablets: ~600+.
+            if (shortSide <= 600) return 'phone';
+            // Treat anything up to ~1024 short-side as "tablet".
+            if (shortSide <= 1024) {
+              const isPortrait = vh >= vw;
+              return isPortrait ? 'tablet-portrait' : 'tablet-landscape';
+            }
+          }
+          return 'desktop';
+        } catch { return 'desktop'; }
+      })();
+      if (nextBucket !== layoutBucketRef.current) {
+        layoutBucketRef.current = nextBucket;
+        setLayoutBucket(nextBucket);
+      }
+
       const docStyle = getComputedStyle(document.documentElement);
       let cardWidth = parseInt(docStyle.getPropertyValue('--note-card-width')) || 300;
-      const gap = parseInt(docStyle.getPropertyValue('--gap')) || 16;
+      // NOTE: `--gap` can be overridden on `body` for smartphone; `docStyle` won't see that.
+      // We'll use the grid's computed style for per-grid calculations.
+      const rootGap = parseInt(docStyle.getPropertyValue('--gap')) || 16;
       // measure the main content area so sidebar doesn't affect available width.
       // If the `.main-area` appears artificially narrow for any reason, also
       // compute a fallback from the viewport width minus the sidebar and
@@ -967,19 +1442,56 @@ export default function NotesGrid({ selectedLabelIds = [], searchQuery = '', sor
       const containerPaddingRight = parseInt(getComputedStyle(container).paddingRight || '0') || 0;
       let anyColsChanged = false;
       for (const g of grids) {
+        const gStyle = getComputedStyle(g);
+        const gap = parseInt(gStyle.getPropertyValue('--gap')) || rootGap;
         const left = Math.floor(g.getBoundingClientRect().left);
         // Prefer the container's right edge (notes-area/main-area) to avoid overflowing off-screen
         const rightEdge = containerRight - containerPaddingRight;
         const availableToRight = Math.max(0, rightEdge - left);
         // Cap by the smaller of global avail and the per-grid right availability
         const gridAvail = Math.max(0, Math.min(avail, availableToRight));
-        const gridCols = Math.max(1, Math.floor((gridAvail + gap) / (cardWidth + gap)));
-        const gridTotalUncapped = gridCols * cardWidth + Math.max(0, gridCols - 1) * gap;
+        const computedCols = Math.max(1, Math.floor((gridAvail + gap) / (cardWidth + gap)));
+
+        // Layout-specific overrides.
+        // Phone: fixed 2 columns, auto-fit note width (ignore preference).
+        // Tablet portrait/landscape: keep preference, but cap column counts for a consistent feel.
+        let effectiveCols = computedCols;
+        let effectiveCardWidth = cardWidth;
+        if (nextBucket === 'phone') {
+          // Portrait phones: always 2 columns.
+          // Landscape phones: fill as many columns as fit (up to 4), still ignoring the user's pref.
+          const isLandscape = (() => {
+            try {
+              const vw = (window.visualViewport && typeof window.visualViewport.width === 'number') ? window.visualViewport.width : window.innerWidth;
+              const vh = (window.visualViewport && typeof window.visualViewport.height === 'number') ? window.visualViewport.height : window.innerHeight;
+              return vw > vh;
+            } catch { return false; }
+          })();
+
+          const minCardW = isLandscape ? 120 : 140;
+          const maxCols = isLandscape ? 4 : 2;
+          let cols = Math.floor((availableToRight + gap) / (minCardW + gap));
+          cols = Math.max(2, Math.min(maxCols, cols || 0));
+          effectiveCols = cols;
+
+          // Fit width exactly to avoid fractional leftover that can cause weirdness.
+          effectiveCardWidth = Math.max(110, Math.floor((availableToRight - Math.max(0, cols - 1) * gap) / cols));
+        } else if (nextBucket === 'tablet-portrait') {
+          effectiveCols = Math.max(2, Math.min(3, computedCols));
+        } else if (nextBucket === 'tablet-landscape') {
+          effectiveCols = Math.max(3, Math.min(4, computedCols));
+        }
+
+        // Allow per-grid override of card width (cascades to children).
+        if (nextBucket === 'phone') g.style.setProperty('--note-card-width', `${effectiveCardWidth}px`);
+        else g.style.removeProperty('--note-card-width');
+
+        const gridTotalUncapped = effectiveCols * effectiveCardWidth + Math.max(0, effectiveCols - 1) * gap;
         const gridTotal = Math.min(gridTotalUncapped, availableToRight);
         const prev = Number(g.dataset.__cols || '0');
-        if (prev !== gridCols) {
-          g.style.setProperty('--cols', String(gridCols));
-          g.dataset.__cols = String(gridCols);
+        if (prev !== effectiveCols) {
+          g.style.setProperty('--cols', String(effectiveCols));
+          g.dataset.__cols = String(effectiveCols);
           anyColsChanged = true;
         }
         // Grid uses fixed track width via CSS var; no column-width needed
@@ -989,14 +1501,14 @@ export default function NotesGrid({ selectedLabelIds = [], searchQuery = '', sor
         // computed column count into React state.
         try {
           if (g === pinnedGridRef.current) {
-            if (pinnedDomColsRef.current !== gridCols) {
-              pinnedDomColsRef.current = gridCols;
-              setPinnedDomCols(gridCols);
+            if (pinnedDomColsRef.current !== effectiveCols) {
+              pinnedDomColsRef.current = effectiveCols;
+              setPinnedDomCols(effectiveCols);
             }
           } else if (g === othersGridRef.current) {
-            if (othersDomColsRef.current !== gridCols) {
-              othersDomColsRef.current = gridCols;
-              setOthersDomCols(gridCols);
+            if (othersDomColsRef.current !== effectiveCols) {
+              othersDomColsRef.current = effectiveCols;
+              setOthersDomCols(effectiveCols);
             }
           }
         } catch {}
@@ -1007,8 +1519,15 @@ export default function NotesGrid({ selectedLabelIds = [], searchQuery = '', sor
       // expose quick diagnostics
       try {
         (window as any).__notesGridDebug = {
-          cardWidth, gap, availMain, availArea, availFallback, avail,
+          cardWidth,
+          gap: rootGap,
+          availMain,
+          availArea,
+          availFallback,
+          avail,
           grids: grids.map(g => {
+            const gStyle = getComputedStyle(g);
+            const gap = parseInt(gStyle.getPropertyValue('--gap')) || rootGap;
             const left = Math.floor(g.getBoundingClientRect().left);
             const rightEdge = containerRight - containerPaddingRight;
             const availableToRight = Math.max(0, rightEdge - left);
@@ -1026,6 +1545,7 @@ export default function NotesGrid({ selectedLabelIds = [], searchQuery = '', sor
           showGuides: (enable: boolean) => {
             for (const g of grids) {
               if (enable) {
+                const gap = parseInt(getComputedStyle(g).getPropertyValue('--gap')) || rootGap;
                 const spacing = (cardWidth + gap);
                 const rowUnit = parseInt(docStyle.getPropertyValue('--row')) || 8;
                 const rowSpacing = (rowUnit + gap);
@@ -1044,9 +1564,10 @@ export default function NotesGrid({ selectedLabelIds = [], searchQuery = '', sor
       } catch {}
       // Masonry emulation: compute gridRowEnd spans so cards pack tightly.
       try {
-        const row = parseInt(docStyle.getPropertyValue('--row')) || 8;
-        const gapPx = parseInt(docStyle.getPropertyValue('--gap')) || 16;
         for (const g of grids) {
+          const cs = getComputedStyle(g);
+          const row = parseInt(cs.getPropertyValue('--row')) || (parseInt(docStyle.getPropertyValue('--row')) || 8);
+          const gapPx = parseInt(cs.getPropertyValue('--gap')) || rootGap;
           const wraps = Array.from(g.querySelectorAll('[data-note-id]')) as HTMLElement[];
           for (const wrap of wraps) {
             const card = wrap.querySelector('.note-card') as HTMLElement | null;
@@ -1078,6 +1599,7 @@ export default function NotesGrid({ selectedLabelIds = [], searchQuery = '', sor
     }
 
     function scheduleUpdateCols() {
+      if (rearrangeDraggingRef.current) return;
       if (scheduledRaf != null) return;
       scheduledRaf = requestAnimationFrame(() => {
         scheduledRaf = null;
@@ -1092,12 +1614,17 @@ export default function NotesGrid({ selectedLabelIds = [], searchQuery = '', sor
     try {
       childRO = new ResizeObserver((entries) => {
         try {
+          if (rearrangeDraggingRef.current) return;
           const docStyle = getComputedStyle(document.documentElement);
-          const row = parseInt(docStyle.getPropertyValue('--row')) || 8;
-          const gapPx = parseInt(docStyle.getPropertyValue('--gap')) || 16;
+          const rootGap = parseInt(docStyle.getPropertyValue('--gap')) || 16;
+          const bodyGap = parseInt(getComputedStyle(document.body).getPropertyValue('--gap')) || rootGap;
           for (const entry of entries) {
             const target = entry.target as HTMLElement;
             const wrap = cardToWrap.get(target) || target;
+            const grid = (wrap as any)?.closest ? ((wrap as any).closest('.notes-grid, .notes-masonry') as HTMLElement | null) : null;
+            const cs = getComputedStyle(grid || wrap);
+            const row = parseInt(cs.getPropertyValue('--row')) || (parseInt(docStyle.getPropertyValue('--row')) || 8);
+            const gapPx = parseInt(cs.getPropertyValue('--gap')) || bodyGap;
             // Use boundingClientRect to include borders/padding; contentRect can undercount and cause overlaps.
             const h = target.getBoundingClientRect().height;
             const span = Math.max(1, Math.ceil((h + gapPx) / (row + gapPx)));
@@ -1343,6 +1870,8 @@ export default function NotesGrid({ selectedLabelIds = [], searchQuery = '', sor
     }
   }
 
+
+
   async function persistOrder(currentNotes: any[]) {
     // always save locally
     try { localStorage.setItem('notesOrder', JSON.stringify(currentNotes.map(n => n.id))); } catch (e) {}
@@ -1366,6 +1895,10 @@ export default function NotesGrid({ selectedLabelIds = [], searchQuery = '', sor
       applyImagesToNote(evt.noteId, evt.images);
       return;
     }
+    if (evt && evt.type === 'color' && typeof evt.noteId === 'number') {
+      applyColorToNote(evt.noteId, (typeof evt.color === 'string') ? String(evt.color) : '');
+      return;
+    }
     load();
   }, [token, sortConfig, searchQuery, selectedLabelIds]);
 
@@ -1373,22 +1906,383 @@ export default function NotesGrid({ selectedLabelIds = [], searchQuery = '', sor
     if (!loading && token) setHasLoadedOnce(true);
   }, [loading, token]);
 
-  if (loading && !hasLoadedOnce) return <div>Loading notes…</div>;
-
   const spanForNote = (note: any): number => {
     try {
       const raw = Number((note as any)?.cardSpan || 1);
-      return Math.max(1, Math.min(3, Number.isFinite(raw) ? raw : 1));
+      const maxSpan = layoutBucket === 'phone' ? 2 : 3;
+      return Math.max(1, Math.min(maxSpan, Number.isFinite(raw) ? raw : 1));
     } catch { return 1; }
   };
 
   const activeSwapNote = (manualSwapEnabled && swapActiveId != null) ? (noteById.get(Number(swapActiveId)) || null) : null;
 
+  const activeRearrangeNote = (keepRearrangeEnabled && rearrangeActiveId != null) ? (noteById.get(Number(rearrangeActiveId)) || null) : null;
+
+  function onRearrangePointerDown(e: React.PointerEvent, noteId: number, section: 'pinned' | 'others', sectionIds: number[], colSpan: number) {
+    if (!keepRearrangeEnabled) return;
+    if (disableNoteDnD) return;
+    if (!canManualReorder) return;
+    if ((e as any).button != null && (e as any).button !== 0) return;
+    if (isInteractiveTarget(e.target as any)) return;
+    if (rearrangeActiveIdRef.current != null || rearrangeSettlingRef.current) return;
+    const el = itemRefs.current.get(Number(noteId));
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    if (!rect || rect.width < 10 || rect.height < 10) return;
+
+    const pointerType = String((e as any).pointerType || 'mouse');
+    const pointerId = (e as any).pointerId ?? 1;
+    const captureEl = (e.currentTarget as any) as HTMLElement;
+
+    rearrangePendingRef.current = {
+      noteId: Number(noteId),
+      section,
+      sectionIds: Array.isArray(sectionIds) ? sectionIds.map((x) => Number(x)).filter((id) => Number.isFinite(id)) : [],
+      startClientX: e.clientX,
+      startClientY: e.clientY,
+      lastClientX: e.clientX,
+      lastClientY: e.clientY,
+      pointerId,
+      pointerType,
+      touchArmed: false,
+      longPressTimerId: null,
+      captureEl,
+    };
+    rearrangePointerStartRef.current = { x: e.clientX, y: e.clientY };
+    rearrangeBaseRectRef.current = rect;
+    rearrangeColSpanRef.current = Math.max(1, Math.min(3, Number(colSpan) || 1));
+    rearrangeRowSpanRef.current = (() => {
+      const raw = (el as any)?.dataset?.__rowspan;
+      const v = raw ? Number(raw) : NaN;
+      return Number.isFinite(v) && v > 0 ? v : 2;
+    })();
+    // Mobile: allow native scrolling until we intentionally commit to dragging.
+    // We arm dragging via a short long-press; if the user moves meaningfully
+    // before that, we treat it as scroll and abandon the pending drag.
+    if (pointerType === 'touch') {
+      const timerId = window.setTimeout(() => {
+        const p = rearrangePendingRef.current;
+        if (!p) return;
+        if (Number(p.pointerId) !== Number(pointerId) || Number(p.noteId) !== Number(noteId)) return;
+        if (rearrangeDraggingRef.current || rearrangeActiveIdRef.current != null || rearrangeSettlingRef.current) return;
+
+        // Only arm drag if the finger stayed nearly stationary. This prevents
+        // slow scroll gestures from being misclassified as long-press drag.
+        const lx = typeof p.lastClientX === 'number' ? p.lastClientX : p.startClientX;
+        const ly = typeof p.lastClientY === 'number' ? p.lastClientY : p.startClientY;
+        const mdx = lx - p.startClientX;
+        const mdy = ly - p.startClientY;
+        if ((mdx * mdx + mdy * mdy) > (3 * 3)) {
+          rearrangePendingRef.current = null;
+          return;
+        }
+
+        p.touchArmed = true;
+        try { p.captureEl?.setPointerCapture?.(p.pointerId as any); } catch {}
+        beginRearrangeDrag(p.sectionIds);
+      }, 220);
+      rearrangePendingRef.current.longPressTimerId = timerId as any;
+      return;
+    }
+
+    try { (e.currentTarget as any).setPointerCapture?.(pointerId); } catch {}
+    // Important: do NOT preventDefault here for mouse/pen.
+    // We only suppress default actions after the drag has actually activated.
+  }
+
+  function beginRearrangeDrag(sectionIds: number[]) {
+    const pending = rearrangePendingRef.current;
+    const baseRect = rearrangeBaseRectRef.current;
+    if (!pending || !baseRect) return;
+    const activeId = pending.noteId;
+    const startIdx = Math.max(0, sectionIds.findIndex((id) => Number(id) === Number(activeId)));
+
+    rearrangeDraggingRef.current = true;
+    setManualDragActive(true);
+    setRearrangeActiveId(activeId);
+    setRearrangeSection(pending.section);
+    setRearrangeRenderIds(buildRenderIds(sectionIds, activeId, startIdx));
+
+    // Mobile needs immediate default-action suppression; waiting for React state
+    // to toggle the class is too late and causes scroll/drag fighting.
+    try { document.documentElement.classList.add('is-note-rearrange-dragging'); } catch {}
+    if (pending.pointerType === 'touch') {
+      lockBodyScrollForRearrange();
+    }
+
+    // Initialize overlay element transform for immediate feedback.
+    requestAnimationFrame(() => {
+      const overlay = rearrangeOverlayRef.current;
+      if (!overlay) return;
+      overlay.style.transform = 'translate(0px, 0px) scale(1.03)';
+    });
+  }
+
+  function getClampedDragDelta(clientX: number, clientY: number): { dx: number; dy: number } {
+    const baseRect = rearrangeBaseRectRef.current;
+    const start = rearrangePointerStartRef.current;
+    if (!baseRect || !start) return { dx: 0, dy: 0 };
+    let dx = clientX - start.x;
+    let dy = clientY - start.y;
+    const bounds = rearrangeBoundsRef.current;
+    if (!bounds) return { dx, dy };
+
+    // Small cushion so it doesn't feel pinned to the edge.
+    const pad = 18;
+    const minLeft = bounds.left - pad;
+    const maxLeft = bounds.right - baseRect.width + pad;
+    const minTop = bounds.top - pad;
+    const maxTop = bounds.bottom - baseRect.height + pad;
+
+    const nextLeft = baseRect.left + dx;
+    const nextTop = baseRect.top + dy;
+    const clampedLeft = Math.min(Math.max(nextLeft, minLeft), maxLeft);
+    const clampedTop = Math.min(Math.max(nextTop, minTop), maxTop);
+    dx = clampedLeft - baseRect.left;
+    dy = clampedTop - baseRect.top;
+    return { dx, dy };
+  }
+
+  function scheduleOverlayMove(clientX: number, clientY: number) {
+    const baseRect = rearrangeBaseRectRef.current;
+    const start = rearrangePointerStartRef.current;
+    const overlay = rearrangeOverlayRef.current;
+    if (!baseRect || !start || !overlay) return;
+    const { dx, dy } = getClampedDragDelta(clientX, clientY);
+    overlay.style.transform = `translate(${dx}px, ${dy}px) scale(1.03)`;
+  }
+
+  useEffect(() => {
+    if (!keepRearrangeEnabled) return;
+    const onMove = (ev: PointerEvent) => {
+      const pending = rearrangePendingRef.current;
+      if (!pending) return;
+      if (pending.pointerId != null && (ev as any).pointerId != null && Number((ev as any).pointerId) !== Number(pending.pointerId)) return;
+
+      if (pending.pointerType === 'touch') {
+        pending.lastClientX = ev.clientX;
+        pending.lastClientY = ev.clientY;
+      }
+
+      const activeId = rearrangeActiveIdRef.current;
+      const sectionIds = pending.sectionIds;
+      if (!sectionIds || !sectionIds.length) return;
+
+      if (activeId == null && !rearrangeDraggingRef.current) {
+        const dx = ev.clientX - pending.startClientX;
+        const dy = ev.clientY - pending.startClientY;
+
+        if (pending.pointerType === 'touch') {
+          // If the user starts moving before long-press arms, treat as scroll.
+          const absX = Math.abs(dx);
+          const absY = Math.abs(dy);
+          const slop = 4;
+          if (!pending.touchArmed) {
+            if (absX > slop || absY > slop) {
+              try { if (pending.longPressTimerId != null) window.clearTimeout(pending.longPressTimerId); } catch {}
+              rearrangePendingRef.current = null;
+            }
+            return;
+          }
+
+          // Armed: allow drag to proceed.
+          beginRearrangeDrag(sectionIds);
+        } else {
+          const activation = 6;
+          if ((dx * dx + dy * dy) < activation * activation) {
+            return;
+          }
+          beginRearrangeDrag(sectionIds);
+        }
+      }
+
+      if (!rearrangeDraggingRef.current) return;
+
+      // Once we're actively dragging, block native actions (scroll/selection).
+      try { ev.preventDefault(); } catch {}
+
+      if (rearrangeMoveRafRef.current != null) return;
+      rearrangeMoveRafRef.current = requestAnimationFrame(() => {
+        rearrangeMoveRafRef.current = null;
+        scheduleOverlayMove(ev.clientX, ev.clientY);
+
+        // Determine new spacer index using cached slot rects.
+        const idsNow = rearrangeRenderIdsRef.current;
+        const rectsNow = rearrangeSlotRectsRef.current;
+        if (!idsNow.length || rectsNow.length !== idsNow.length) return;
+
+        // Choose the next slot based on the dragged card's projected rectangle,
+        // not the pointer location. This makes behavior consistent regardless
+        // of where the drag was initiated within the card.
+        const baseRect = rearrangeBaseRectRef.current;
+        const start = rearrangePointerStartRef.current;
+        if (!baseRect || !start) return;
+        const { dx, dy } = getClampedDragDelta(ev.clientX, ev.clientY);
+        const dragLeft = baseRect.left + dx;
+        const dragTop = baseRect.top + dy;
+        const dragRect = {
+          left: dragLeft,
+          top: dragTop,
+          right: dragLeft + baseRect.width,
+          bottom: dragTop + baseRect.height,
+        };
+        const dragCx = dragLeft + baseRect.width / 2;
+        const dragCy = dragTop + baseRect.height / 2;
+
+        const byOverlap = chooseSlotIndexByOverlap(dragRect);
+        const idx = (byOverlap.idx >= 0 && byOverlap.area > 0)
+          ? byOverlap.idx
+          : chooseNearestSlotIndex(dragCx, dragCy);
+        if (idx < 0) return;
+        const currentIdx = rearrangeSpacerIndexRef.current;
+        if (idx === currentIdx) return;
+
+        const cur = rectsNow[currentIdx] || null;
+        const cand = rectsNow[idx] || null;
+        if (!cur || !cand) return;
+
+        // Half-plane test: only allow move when the dragged card center has
+        // crossed the bisector between the current slot center and candidate slot.
+        const vx = cand.cx - cur.cx;
+        const vy = cand.cy - cur.cy;
+        const bx = (cand.cx + cur.cx) / 2;
+        const by = (cand.cy + cur.cy) / 2;
+        const dot = (dragCx - bx) * vx + (dragCy - by) * vy;
+        const dist = Math.sqrt(vx * vx + vy * vy) || 1;
+        const hysteresis = pending.pointerType === 'touch' ? 10 : 6;
+        if (dot <= hysteresis * dist) return;
+
+        moveRearrangeSpacerTo(idx);
+      });
+    };
+
+    const onUp = (ev: PointerEvent) => {
+      const pending = rearrangePendingRef.current;
+      if (!pending) return;
+      if (pending.pointerId != null && (ev as any).pointerId != null && Number((ev as any).pointerId) !== Number(pending.pointerId)) return;
+
+      try { if (pending.longPressTimerId != null) window.clearTimeout(pending.longPressTimerId); } catch {}
+
+      // If we never activated dragging, just clear pending.
+      if (!rearrangeDraggingRef.current || rearrangeActiveIdRef.current == null) {
+        rearrangePendingRef.current = null;
+        return;
+      }
+
+      const activeId = Number(rearrangeActiveIdRef.current);
+      const section = rearrangeSectionRef.current;
+      const ids = rearrangeRenderIdsRef.current;
+      const spacerIdx = ids.indexOf('spacer');
+      const afterKey = (spacerIdx >= 0) ? ids[spacerIdx + 1] : null;
+      const beforeId = (typeof afterKey === 'number') ? Number(afterKey) : null;
+
+      // Animate overlay settling into the spacer slot.
+      rearrangeSettlingRef.current = true;
+      const overlay = rearrangeOverlayRef.current;
+      const baseRect = rearrangeBaseRectRef.current;
+      const ms = Math.max(150, Math.min(650, getAnimMs('rearrange')));
+      const spacerEl = rearrangeSpacerRef.current;
+      const slotRect = spacerEl ? spacerEl.getBoundingClientRect() : null;
+
+      if (overlay && baseRect && slotRect) {
+        const finalDx = slotRect.left - baseRect.left;
+        const finalDy = slotRect.top - baseRect.top;
+        overlay.style.transition = `transform ${ms}ms cubic-bezier(.2,.9,.2,1)`;
+        overlay.style.transform = `translate(${finalDx}px, ${finalDy}px) scale(1)`;
+      }
+
+      // Update data order once.
+      if (section) {
+        setNotes((prev) => {
+          const fromIdx = prev.findIndex((n: any) => Number(n?.id) === activeId);
+          if (fromIdx < 0) return prev;
+          const item = prev[fromIdx];
+          if (!!item.pinned !== (section === 'pinned')) return prev;
+          const next = [...prev];
+          next.splice(fromIdx, 1);
+          let toIdx = next.length;
+          if (beforeId != null) {
+            const idx = next.findIndex((n: any) => Number(n?.id) === beforeId);
+            if (idx >= 0) toIdx = idx;
+          } else {
+            // end of section
+            if (section === 'pinned') {
+              let lastPinned = -1;
+              for (let i = 0; i < next.length; i++) if (!!next[i]?.pinned) lastPinned = i;
+              toIdx = lastPinned + 1;
+            } else {
+              let lastOthers = -1;
+              for (let i = 0; i < next.length; i++) if (!next[i]?.pinned) lastOthers = i;
+              toIdx = lastOthers + 1;
+            }
+          }
+          next.splice(toIdx, 0, item);
+          requestAnimationFrame(() => { try { persistOrder(next); } catch {} });
+          return next;
+        });
+      }
+
+      const cleanup = () => {
+        try {
+          if (overlay) {
+            overlay.style.transition = '';
+            overlay.removeEventListener('transitionend', cleanup);
+          }
+        } catch {}
+        setManualDragActive(false);
+        finishRearrangeDrag();
+      };
+      if (overlay) {
+        overlay.addEventListener('transitionend', cleanup);
+        // safety: if transitionend never fires
+        window.setTimeout(cleanup, ms + 80);
+      } else {
+        cleanup();
+      }
+    };
+
+    window.addEventListener('pointermove', onMove, { capture: true, passive: false } as any);
+    window.addEventListener('pointerup', onUp, { capture: true });
+    window.addEventListener('pointercancel', onUp as any, { capture: true });
+    return () => {
+      try { window.removeEventListener('pointermove', onMove, { capture: true } as any); } catch {}
+      try { window.removeEventListener('pointerup', onUp, { capture: true } as any); } catch {}
+      try { window.removeEventListener('pointercancel', onUp as any, { capture: true } as any); } catch {}
+    };
+  }, [keepRearrangeEnabled, disableNoteDnD, token]);
+
+  if (loading && !hasLoadedOnce) return <div>Loading notes…</div>;
+
   return (
     <section className="notes-area">
-      <TakeNoteBar onCreated={load} />
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-        <h3 className="section-title">Notes</h3>
+      <div className="take-note-sticky">
+        <TakeNoteBar onCreated={load} openRequest={{ nonce: takeNoteOpenNonce, mode: takeNoteOpenMode }} />
+      </div>
+
+      <div className="mobile-add-note" aria-label="Add note">
+        {mobileAddOpen && (
+          <div className="mobile-add-menu" role="menu" aria-label="Create">
+            <button type="button" className="mobile-add-menu-item" role="menuitem" onClick={() => openTakeNote('text')}>
+              <svg viewBox="0 0 24 24" aria-hidden focusable="false">
+                <path fill="currentColor" d="M6 2h9l5 5v15a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2Zm8 1.5V8h4.5L14 3.5ZM7 11h10v1.6H7V11Zm0 4h10v1.6H7V15Zm0 4h7v1.6H7V19Z"/>
+              </svg>
+              <span>New note</span>
+            </button>
+            <button type="button" className="mobile-add-menu-item" role="menuitem" onClick={() => openTakeNote('checklist')}>
+              <svg viewBox="0 0 24 24" aria-hidden focusable="false">
+                <path fill="currentColor" d="M9.2 7.2 7.9 5.9 6 7.8 5.1 6.9 4 8l2 2 3.2-3.2ZM10.5 8H20v1.6h-9.5V8Zm-1.3 6.2-1.3-1.3L6 14.8l-.9-.9L4 15l2 2 3.2-3.2ZM10.5 15H20v1.6h-9.5V15Z"/>
+              </svg>
+              <span>New checklist</span>
+            </button>
+          </div>
+        )}
+        <button
+          type="button"
+          className="mobile-add-fab"
+          aria-haspopup="menu"
+          aria-expanded={mobileAddOpen}
+          onClick={() => setMobileAddOpen((s) => !s)}
+        >+</button>
       </div>
 
       {manualSwapEnabled ? (
@@ -1433,7 +2327,6 @@ export default function NotesGrid({ selectedLabelIds = [], searchQuery = '', sor
           )}
 
           <div className="notes-section">
-            <h4 className="section-title">Others</h4>
             {otherGroups.map((g) => (
               <div key={g.key}>
                 {g.title && g.key !== 'all' && <h5 className="section-title" style={{ marginTop: 10, marginBottom: 6, color: 'var(--muted)' }}>{g.title}</h5>}
@@ -1489,159 +2382,270 @@ export default function NotesGrid({ selectedLabelIds = [], searchQuery = '', sor
                     <h5 className="section-title" style={{ marginTop: 10, marginBottom: 6, color: 'var(--muted)' }}>{g.title}</h5>
                   )}
                   <div className={"notes-grid" + (manualDragActive ? " notes-grid--manual" : "")} ref={pinnedGridRef}>
-                    {g.notes.map((n) => {
-                    const globalIdx = idToIndex.get(Number(n.id)) ?? -1;
-                    const span = Math.max(1, Math.min(3, Number((n as any).cardSpan || 1)));
-                    const place = pinnedPlacements?.get(Number(n.id)) || null;
-                    return (
-                      <div key={n.id}
-                        data-note-id={n.id}
-                        style={place
-                          ? ({ gridColumnStart: place.colStart, gridColumnEnd: `span ${place.colSpan}`, gridRowStart: place.rowStart, gridRowEnd: `span ${place.rowSpan}` } as any)
-                          : ({ gridColumn: `span ${span}` } as any)
-                        }
-                        ref={(el) => { if (el) itemRefs.current.set(n.id, el); else itemRefs.current.delete(n.id); }}
-                        draggable={canManualReorder && !disableNoteDnD}
-                        onDragStart={(e) => {
-                          if (!canManualReorder) return;
-                          draggingNoteIdRef.current = Number(n.id);
-                          e.dataTransfer.setData('text/plain', String(globalIdx));
-                          draggingIdxRef.current = globalIdx;
-                        }}
-                        onDragEnd={() => {
-                          if (!canManualReorder) return;
-                          draggingIdxRef.current = null;
-                          draggingNoteIdRef.current = null;
-                        }}
-                        onDragOver={(e) => {
-                          if (!canManualReorder) return;
-                          e.preventDefault();
-                          try {
-                            const behavior = localStorage.getItem('prefs.dragBehavior') || 'swap';
-                            const draggingIndex = draggingIdxRef.current;
-                            if (behavior === 'rearrange' && draggingIndex !== null && draggingIndex !== globalIdx) {
-                              const now = Date.now();
-                              const targetEl = e.currentTarget as HTMLElement;
-                              const rect = targetEl.getBoundingClientRect();
-                              const bufferY = Math.min(28, Math.floor(rect.height * 0.2));
-                              const bufferX = Math.min(20, Math.floor(rect.width * 0.2));
-                              const insideSafeY = e.clientY > rect.top + bufferY && e.clientY < rect.bottom - bufferY;
-                              const insideSafeX = e.clientX > rect.left + bufferX && e.clientX < rect.right - bufferX;
-                              const interval = Math.max(150, Math.floor(getAnimMs('rearrange') * 0.6));
-                              if (insideSafeY && insideSafeX && (now - lastSpliceAt.current > interval)) {
-                                moveNoteSplice(draggingIndex, globalIdx);
-                                lastSpliceAt.current = now;
-                                draggingIdxRef.current = globalIdx;
+                    {(keepRearrangeEnabled && rearrangeSection === 'pinned' && rearrangeRenderIds.length)
+                      ? rearrangeRenderIds.map((key, idx) => {
+                          if (key === 'spacer') {
+                            return (
+                              <div
+                                key="spacer"
+                                ref={rearrangeSpacerRef as any}
+                                className="note-rearrange-spacer"
+                                style={{
+                                  gridColumn: `span ${rearrangeColSpanRef.current}`,
+                                  gridRowEnd: `span ${rearrangeRowSpanRef.current}`,
+                                  height: `${rearrangeBaseRectRef.current?.height || 0}px`,
+                                } as any}
+                              />
+                            );
+                          }
+                          const id = Number(key);
+                          const n = noteById.get(id);
+                          if (!n) return null;
+                          const span = Math.max(1, Math.min(3, Number((n as any).cardSpan || 1)));
+                          const place = pinnedPlacements?.get(Number(n.id)) || null;
+                          return (
+                            <div
+                              key={n.id}
+                              data-note-id={n.id}
+                              style={place
+                                ? ({ gridColumnStart: place.colStart, gridColumnEnd: `span ${place.colSpan}`, gridRowStart: place.rowStart, gridRowEnd: `span ${place.rowSpan}` } as any)
+                                : ({ gridColumn: `span ${span}` } as any)
                               }
-                            }
-                          } catch {}
-                        }}
-                        onDrop={(e) => {
-                          if (!canManualReorder) return;
-                          e.preventDefault();
-                          const raw = Number(e.dataTransfer.getData('text/plain'));
-                          const from = Number.isFinite(raw) ? raw : (draggingIdxRef.current ?? -1);
-                          const to = globalIdx;
-                          try {
-                            const behavior = localStorage.getItem('prefs.dragBehavior') || 'swap';
-                            if (behavior === 'rearrange') moveNoteSplice(from, to);
-                            else moveNote(from, to);
-                          } catch { moveNote(from, to); }
-                          requestAnimationFrame(() => { try { persistOrder(notesRef.current); } catch {} });
-                          draggingIdxRef.current = null;
-                          draggingNoteIdRef.current = null;
-                        }}
-                      >
-                        <NoteCard note={n} onChange={handleNoteChange} />
-                      </div>
-                    );
-                    })}
+                              ref={(el) => { if (el) itemRefs.current.set(n.id, el); else itemRefs.current.delete(n.id); }}
+                            >
+                              <NoteCard note={n} onChange={handleNoteChange} />
+                            </div>
+                          );
+                        })
+                      : g.notes.map((n) => {
+                          const globalIdx = idToIndex.get(Number(n.id)) ?? -1;
+                          const span = Math.max(1, Math.min(3, Number((n as any).cardSpan || 1)));
+                          const place = pinnedPlacements?.get(Number(n.id)) || null;
+                          const sectionIds = g.notes.map((x: any) => Number(x.id)).filter((id: any) => Number.isFinite(id));
+                          const wrapperProps: any = keepRearrangeEnabled
+                            ? {
+                                draggable: false,
+                                onPointerDown: (e: any) => onRearrangePointerDown(e, Number(n.id), 'pinned', sectionIds, span),
+                              }
+                            : {
+                                draggable: canManualReorder && !disableNoteDnD,
+                                onDragStart: (e: any) => {
+                                  if (!canManualReorder) return;
+                                  draggingNoteIdRef.current = Number(n.id);
+                                  e.dataTransfer.setData('text/plain', String(globalIdx));
+                                  draggingIdxRef.current = globalIdx;
+                                },
+                                onDragEnd: () => {
+                                  if (!canManualReorder) return;
+                                  draggingIdxRef.current = null;
+                                  draggingNoteIdRef.current = null;
+                                },
+                                onDragOver: (e: any) => {
+                                  if (!canManualReorder) return;
+                                  e.preventDefault();
+                                  try {
+                                    const behavior = localStorage.getItem('prefs.dragBehavior') || 'swap';
+                                    const draggingIndex = draggingIdxRef.current;
+                                    if (behavior === 'rearrange' && draggingIndex !== null && draggingIndex !== globalIdx) {
+                                      const now = Date.now();
+                                      const targetEl = e.currentTarget as HTMLElement;
+                                      const rect = targetEl.getBoundingClientRect();
+                                      const bufferY = Math.min(28, Math.floor(rect.height * 0.2));
+                                      const bufferX = Math.min(20, Math.floor(rect.width * 0.2));
+                                      const insideSafeY = e.clientY > rect.top + bufferY && e.clientY < rect.bottom - bufferY;
+                                      const insideSafeX = e.clientX > rect.left + bufferX && e.clientX < rect.right - bufferX;
+                                      const interval = Math.max(150, Math.floor(getAnimMs('rearrange') * 0.6));
+                                      if (insideSafeY && insideSafeX && (now - lastSpliceAt.current > interval)) {
+                                        moveNoteSplice(draggingIndex, globalIdx);
+                                        lastSpliceAt.current = now;
+                                        draggingIdxRef.current = globalIdx;
+                                      }
+                                    }
+                                  } catch {}
+                                },
+                                onDrop: (e: any) => {
+                                  if (!canManualReorder) return;
+                                  e.preventDefault();
+                                  const raw = Number(e.dataTransfer.getData('text/plain'));
+                                  const from = Number.isFinite(raw) ? raw : (draggingIdxRef.current ?? -1);
+                                  const to = globalIdx;
+                                  try {
+                                    const behavior = localStorage.getItem('prefs.dragBehavior') || 'swap';
+                                    if (behavior === 'rearrange') moveNoteSplice(from, to);
+                                    else moveNote(from, to);
+                                  } catch { moveNote(from, to); }
+                                  requestAnimationFrame(() => { try { persistOrder(notesRef.current); } catch {} });
+                                  draggingIdxRef.current = null;
+                                  draggingNoteIdRef.current = null;
+                                },
+                              };
+
+                          return (
+                            <div
+                              key={n.id}
+                              data-note-id={n.id}
+                              style={place
+                                ? ({ gridColumnStart: place.colStart, gridColumnEnd: `span ${place.colSpan}`, gridRowStart: place.rowStart, gridRowEnd: `span ${place.rowSpan}` } as any)
+                                : ({ gridColumn: `span ${span}` } as any)
+                              }
+                              ref={(el) => { if (el) itemRefs.current.set(n.id, el); else itemRefs.current.delete(n.id); }}
+                              {...wrapperProps}
+                            >
+                              <NoteCard note={n} onChange={handleNoteChange} />
+                            </div>
+                          );
+                        })}
                   </div>
                 </div>
               ))}
             </div>
           )}
           <div className="notes-section">
-            <h4 className="section-title">Others</h4>
             {otherGroups.map((g) => (
               <div key={g.key}>
                 {g.title && g.key !== 'all' && (
                   <h5 className="section-title" style={{ marginTop: 10, marginBottom: 6, color: 'var(--muted)' }}>{g.title}</h5>
                 )}
                 <div className={"notes-grid" + (manualDragActive ? " notes-grid--manual" : "")} ref={othersGridRef}>
-                  {g.notes.map((n) => {
-                  const globalIdx = idToIndex.get(Number(n.id)) ?? -1;
-                  const span = Math.max(1, Math.min(3, Number((n as any).cardSpan || 1)));
-                  const place = othersPlacements?.get(Number(n.id)) || null;
-                  return (
-                    <div key={n.id}
-                      data-note-id={n.id}
-                      style={place
-                        ? ({ gridColumnStart: place.colStart, gridColumnEnd: `span ${place.colSpan}`, gridRowStart: place.rowStart, gridRowEnd: `span ${place.rowSpan}` } as any)
-                        : ({ gridColumn: `span ${span}` } as any)
-                      }
-                      ref={(el) => { if (el) itemRefs.current.set(n.id, el); else itemRefs.current.delete(n.id); }}
-                      draggable={canManualReorder && !disableNoteDnD}
-                      onDragStart={(e) => {
-                        if (!canManualReorder) return;
-                        draggingNoteIdRef.current = Number(n.id);
-                        e.dataTransfer.setData('text/plain', String(globalIdx));
-                        draggingIdxRef.current = globalIdx;
-                      }}
-                      onDragEnd={() => {
-                        if (!canManualReorder) return;
-                        draggingIdxRef.current = null;
-                        draggingNoteIdRef.current = null;
-                      }}
-                      onDragOver={(e) => {
-                        if (!canManualReorder) return;
-                        e.preventDefault();
-                        try {
-                          const behavior = localStorage.getItem('prefs.dragBehavior') || 'swap';
-                          const draggingIndex = draggingIdxRef.current;
-                          if (behavior === 'rearrange' && draggingIndex !== null && draggingIndex !== globalIdx) {
-                            const now = Date.now();
-                            const targetEl = e.currentTarget as HTMLElement;
-                            const rect = targetEl.getBoundingClientRect();
-                            const bufferY = Math.min(28, Math.floor(rect.height * 0.2));
-                            const bufferX = Math.min(20, Math.floor(rect.width * 0.2));
-                            const insideSafeY = e.clientY > rect.top + bufferY && e.clientY < rect.bottom - bufferY;
-                            const insideSafeX = e.clientX > rect.left + bufferX && e.clientX < rect.right - bufferX;
-                            const interval = Math.max(150, Math.floor(getAnimMs('rearrange') * 0.6));
-                            if (insideSafeY && insideSafeX && (now - lastSpliceAt.current > interval)) {
-                              moveNoteSplice(draggingIndex, globalIdx);
-                              lastSpliceAt.current = now;
-                              draggingIdxRef.current = globalIdx;
+                  {(keepRearrangeEnabled && rearrangeSection === 'others' && rearrangeRenderIds.length)
+                    ? rearrangeRenderIds.map((key, idx) => {
+                        if (key === 'spacer') {
+                          return (
+                            <div
+                              key="spacer"
+                              ref={rearrangeSpacerRef as any}
+                              className="note-rearrange-spacer"
+                              style={{
+                                gridColumn: `span ${rearrangeColSpanRef.current}`,
+                                gridRowEnd: `span ${rearrangeRowSpanRef.current}`,
+                                height: `${rearrangeBaseRectRef.current?.height || 0}px`,
+                              } as any}
+                            />
+                          );
+                        }
+                        const id = Number(key);
+                        const n = noteById.get(id);
+                        if (!n) return null;
+                        const span = Math.max(1, Math.min(3, Number((n as any).cardSpan || 1)));
+                        const place = othersPlacements?.get(Number(n.id)) || null;
+                        return (
+                          <div
+                            key={n.id}
+                            data-note-id={n.id}
+                            style={place
+                              ? ({ gridColumnStart: place.colStart, gridColumnEnd: `span ${place.colSpan}`, gridRowStart: place.rowStart, gridRowEnd: `span ${place.rowSpan}` } as any)
+                              : ({ gridColumn: `span ${span}` } as any)
                             }
-                          }
-                        } catch {}
-                      }}
-                      onDrop={(e) => {
-                        if (!canManualReorder) return;
-                        e.preventDefault();
-                        const raw = Number(e.dataTransfer.getData('text/plain'));
-                        const from = Number.isFinite(raw) ? raw : (draggingIdxRef.current ?? -1);
-                        const to = globalIdx;
-                        try {
-                          const behavior = localStorage.getItem('prefs.dragBehavior') || 'swap';
-                          if (behavior === 'rearrange') moveNoteSplice(from, to);
-                          else moveNote(from, to);
-                        } catch { moveNote(from, to); }
-                        requestAnimationFrame(() => { try { persistOrder(notesRef.current); } catch {} });
-                        draggingIdxRef.current = null;
-                        draggingNoteIdRef.current = null;
-                      }}
-                    >
-                      <NoteCard note={n} onChange={handleNoteChange} />
-                    </div>
-                  );
-                  })}
+                            ref={(el) => { if (el) itemRefs.current.set(n.id, el); else itemRefs.current.delete(n.id); }}
+                          >
+                            <NoteCard note={n} onChange={handleNoteChange} />
+                          </div>
+                        );
+                      })
+                    : g.notes.map((n) => {
+                        const globalIdx = idToIndex.get(Number(n.id)) ?? -1;
+                        const span = Math.max(1, Math.min(3, Number((n as any).cardSpan || 1)));
+                        const place = othersPlacements?.get(Number(n.id)) || null;
+                        const sectionIds = g.notes.map((x: any) => Number(x.id)).filter((id: any) => Number.isFinite(id));
+
+                        const wrapperProps: any = keepRearrangeEnabled
+                          ? {
+                              draggable: false,
+                              onPointerDown: (e: any) => onRearrangePointerDown(e, Number(n.id), 'others', sectionIds, span),
+                            }
+                          : {
+                              draggable: canManualReorder && !disableNoteDnD,
+                              onDragStart: (e: any) => {
+                                if (!canManualReorder) return;
+                                draggingNoteIdRef.current = Number(n.id);
+                                e.dataTransfer.setData('text/plain', String(globalIdx));
+                                draggingIdxRef.current = globalIdx;
+                              },
+                              onDragEnd: () => {
+                                if (!canManualReorder) return;
+                                draggingIdxRef.current = null;
+                                draggingNoteIdRef.current = null;
+                              },
+                              onDragOver: (e: any) => {
+                                if (!canManualReorder) return;
+                                e.preventDefault();
+                                try {
+                                  const behavior = localStorage.getItem('prefs.dragBehavior') || 'swap';
+                                  const draggingIndex = draggingIdxRef.current;
+                                  if (behavior === 'rearrange' && draggingIndex !== null && draggingIndex !== globalIdx) {
+                                    const now = Date.now();
+                                    const targetEl = e.currentTarget as HTMLElement;
+                                    const rect = targetEl.getBoundingClientRect();
+                                    const bufferY = Math.min(28, Math.floor(rect.height * 0.2));
+                                    const bufferX = Math.min(20, Math.floor(rect.width * 0.2));
+                                    const insideSafeY = e.clientY > rect.top + bufferY && e.clientY < rect.bottom - bufferY;
+                                    const insideSafeX = e.clientX > rect.left + bufferX && e.clientX < rect.right - bufferX;
+                                    const interval = Math.max(150, Math.floor(getAnimMs('rearrange') * 0.6));
+                                    if (insideSafeY && insideSafeX && (now - lastSpliceAt.current > interval)) {
+                                      moveNoteSplice(draggingIndex, globalIdx);
+                                      lastSpliceAt.current = now;
+                                      draggingIdxRef.current = globalIdx;
+                                    }
+                                  }
+                                } catch {}
+                              },
+                              onDrop: (e: any) => {
+                                if (!canManualReorder) return;
+                                e.preventDefault();
+                                const raw = Number(e.dataTransfer.getData('text/plain'));
+                                const from = Number.isFinite(raw) ? raw : (draggingIdxRef.current ?? -1);
+                                const to = globalIdx;
+                                try {
+                                  const behavior = localStorage.getItem('prefs.dragBehavior') || 'swap';
+                                  if (behavior === 'rearrange') moveNoteSplice(from, to);
+                                  else moveNote(from, to);
+                                } catch { moveNote(from, to); }
+                                requestAnimationFrame(() => { try { persistOrder(notesRef.current); } catch {} });
+                                draggingIdxRef.current = null;
+                                draggingNoteIdRef.current = null;
+                              },
+                            };
+
+                        return (
+                          <div
+                            key={n.id}
+                            data-note-id={n.id}
+                            style={place
+                              ? ({ gridColumnStart: place.colStart, gridColumnEnd: `span ${place.colSpan}`, gridRowStart: place.rowStart, gridRowEnd: `span ${place.rowSpan}` } as any)
+                              : ({ gridColumn: `span ${span}` } as any)
+                            }
+                            ref={(el) => { if (el) itemRefs.current.set(n.id, el); else itemRefs.current.delete(n.id); }}
+                            {...wrapperProps}
+                          >
+                            <NoteCard note={n} onChange={handleNoteChange} />
+                          </div>
+                        );
+                      })}
                 </div>
               </div>
             ))}
           </div>
         </>
       )}
+
+      {keepRearrangeEnabled && activeRearrangeNote && rearrangeBaseRectRef.current ? createPortal(
+        <div
+          ref={rearrangeOverlayRef}
+          className="note-rearrange-overlay"
+          style={{
+            position: 'fixed',
+            left: `${rearrangeBaseRectRef.current.left}px`,
+            top: `${rearrangeBaseRectRef.current.top}px`,
+            width: `${rearrangeBaseRectRef.current.width}px`,
+            height: `${rearrangeBaseRectRef.current.height}px`,
+          } as any}
+        >
+          <div className="note-rearrange-overlay-inner">
+            <NoteCard note={activeRearrangeNote} onChange={handleNoteChange} />
+          </div>
+        </div>,
+        document.body
+      ) : null}
     </section>
   );
 }

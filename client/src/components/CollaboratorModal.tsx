@@ -3,7 +3,13 @@ import { createPortal } from "react-dom";
 import { useAuth } from '../authContext';
 
 export default function CollaboratorModal({ onClose, onSelect, current, onRemove, ownerId }:
-  { onClose: ()=>void; onSelect: (u:{id:number;email:string;name?:string})=>void; current: Array<{ collabId?: number; userId: number; email: string; name?: string }>; onRemove: (collabId: number) => void; ownerId: number }) {
+  {
+    onClose: () => void;
+    onSelect: (u: { id: number; email: string; name?: string; userImageUrl?: string }) => void;
+    current: Array<{ collabId?: number; userId: number; email: string; name?: string; userImageUrl?: string }>;
+    onRemove: (collabId: number) => void;
+    ownerId: number;
+  }) {
   const { token, user } = useAuth();
   const [q, setQ] = useState("");
   const [users, setUsers] = useState<Array<{id:number;email:string;name?:string;userImageUrl?: string}>>([]);
