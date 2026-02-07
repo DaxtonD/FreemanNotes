@@ -30,6 +30,98 @@ async function getUserFromToken(req: Request) {
   }
 }
 
+function getDeviceHeaders(req: Request): { deviceKey: string | null; deviceName: string | null } {
+  const deviceKeyRaw = (req.headers['x-device-key'] ?? req.headers['x-device-id']) as any;
+  const deviceNameRaw = (req.headers['x-device-name'] ?? req.headers['x-device-profile']) as any;
+  const deviceKey = (typeof deviceKeyRaw === 'string' ? deviceKeyRaw : Array.isArray(deviceKeyRaw) ? deviceKeyRaw[0] : '').trim();
+  const deviceName = (typeof deviceNameRaw === 'string' ? deviceNameRaw : Array.isArray(deviceNameRaw) ? deviceNameRaw[0] : '').trim();
+  // Defensive limits.
+  const dk = deviceKey && deviceKey.length <= 128 ? deviceKey : null;
+  const dn = deviceName && deviceName.length <= 128 ? deviceName : null;
+  return { deviceKey: dk, deviceName: dn };
+}
+
+type DeviceContext = {
+  deviceKey: string;
+  deviceName: string;
+  profileId: number;
+};
+
+async function resolveDeviceContext(userId: number, req: Request): Promise<DeviceContext | null> {
+  const { deviceKey, deviceName } = getDeviceHeaders(req);
+  if (!deviceKey) return null;
+  const name = deviceName || 'Unnamed device';
+  const prismaAny = prisma as any;
+
+  // If the client key already exists, use it.
+  try {
+    const existing = await prismaAny.userDeviceClient.findUnique({
+      where: { userId_deviceKey: { userId, deviceKey } },
+      select: { profileId: true, profile: { select: { name: true } } }
+    });
+    if (existing?.profileId) {
+      try {
+        await prismaAny.userDeviceClient.update({ where: { userId_deviceKey: { userId, deviceKey } }, data: { lastSeenAt: new Date() } });
+        await prismaAny.userDeviceProfile.update({ where: { id: existing.profileId }, data: { lastSeenAt: new Date() } });
+      } catch {}
+      return { deviceKey, deviceName: existing.profile?.name || name, profileId: Number(existing.profileId) };
+    }
+  } catch {}
+
+  // Otherwise, attach this client key to an existing profile with the same name (per user), or create a new profile.
+  let profile: any = null;
+  try {
+    profile = await prismaAny.userDeviceProfile.upsert({
+      where: { userId_name: { userId, name } },
+      create: { userId, name, lastSeenAt: new Date() },
+      update: { lastSeenAt: new Date() }
+    });
+  } catch (err) {
+    // Fallback: if compound unique isn't supported in generated client yet, try a find/create.
+    try {
+      profile = await prismaAny.userDeviceProfile.findFirst({ where: { userId, name } });
+      if (!profile) profile = await prismaAny.userDeviceProfile.create({ data: { userId, name, lastSeenAt: new Date() } });
+    } catch {}
+  }
+  if (!profile?.id) return null;
+
+  try {
+    await prismaAny.userDeviceClient.create({ data: { userId, deviceKey, profileId: profile.id, lastSeenAt: new Date() } });
+  } catch {
+    // In case of race, update lastSeen.
+    try {
+      await prismaAny.userDeviceClient.update({ where: { userId_deviceKey: { userId, deviceKey } }, data: { profileId: profile.id, lastSeenAt: new Date() } });
+    } catch {}
+  }
+
+  return { deviceKey, deviceName: String(profile.name || name), profileId: Number(profile.id) };
+}
+
+function mergeEffectivePrefs(user: any, devicePrefs: any | null): any {
+  if (!devicePrefs) return user;
+  // Keep non-pref user fields intact, but allow device prefs to override preference fields.
+  const prefKeys = [
+    'themeChoice',
+    'checklistSpacing',
+    'checkboxSize',
+    'checklistTextSize',
+    'noteLineSpacing',
+    'noteWidth',
+    'fontFamily',
+    'dragBehavior',
+    'animationSpeed',
+    'animationBehavior',
+    'animationsEnabled',
+    'chipDisplayMode',
+    'imageThumbSize'
+  ];
+  const merged: any = { ...user };
+  for (const k of prefKeys) {
+    if (devicePrefs[k] !== undefined && devicePrefs[k] !== null) merged[k] = devicePrefs[k];
+  }
+  return merged;
+}
+
 // register (supports optional invite token when registration is disabled)
 router.post("/api/auth/register", async (req: Request, res: Response) => {
   const { email, password, name, inviteToken } = req.body || {};
@@ -77,6 +169,32 @@ router.post("/api/auth/register", async (req: Request, res: Response) => {
       noteWidth: 288,
       noteLineSpacing: 1.38
     } });
+    // Bind this client to a per-device profile and initialize prefs from defaults.
+    try {
+      const ctx = await resolveDeviceContext(user.id, req);
+      if (ctx) {
+        const prismaAny = prisma as any;
+        await prismaAny.userDevicePrefs.upsert({
+          where: { profileId: ctx.profileId },
+          create: {
+            profileId: ctx.profileId,
+            themeChoice: 'system',
+            checklistSpacing: user.checklistSpacing,
+            checkboxSize: user.checkboxSize,
+            checklistTextSize: user.checklistTextSize,
+            noteLineSpacing: user.noteLineSpacing,
+            noteWidth: user.noteWidth,
+            fontFamily: user.fontFamily,
+            dragBehavior: user.dragBehavior,
+            animationSpeed: user.animationSpeed,
+            chipDisplayMode: user.chipDisplayMode,
+            animationsEnabled: true,
+            imageThumbSize: 96
+          },
+          update: { lastSeenAt: new Date() }
+        });
+      }
+    } catch {}
     const token = jwt.sign({ userId: user.id }, getJwtSecret(), { expiresIn: "7d" });
     if (invite) {
       try {
@@ -105,6 +223,16 @@ router.post("/api/auth/login", async (req: Request, res: Response) => {
     const match = await bcrypt.compare(password, user.passwordHash);
     if (!match) return res.status(401).json({ error: "invalid credentials" });
     const token = jwt.sign({ userId: user.id }, getJwtSecret(), { expiresIn: "7d" });
+    // Attach device context (if present) and return effective per-device prefs merged into user.
+    try {
+      const ctx = await resolveDeviceContext(user.id, req);
+      if (ctx) {
+        const prismaAny = prisma as any;
+        const devicePrefs = await prismaAny.userDevicePrefs.findUnique({ where: { profileId: ctx.profileId } });
+        (user as any) = mergeEffectivePrefs(user, devicePrefs);
+        (user as any).device = { deviceKey: ctx.deviceKey, deviceName: ctx.deviceName };
+      }
+    } catch {}
     // @ts-ignore
     delete user.passwordHash;
     res.json({ token, user });
@@ -117,9 +245,19 @@ router.post("/api/auth/login", async (req: Request, res: Response) => {
 router.get("/api/auth/me", async (req: Request, res: Response) => {
   const user = await getUserFromToken(req);
   if (!user) return res.status(401).json({ error: "unauthenticated" });
+  let effective: any = user;
+  try {
+    const ctx = await resolveDeviceContext(user.id, req);
+    if (ctx) {
+      const prismaAny = prisma as any;
+      const devicePrefs = await prismaAny.userDevicePrefs.findUnique({ where: { profileId: ctx.profileId } });
+      effective = mergeEffectivePrefs(user, devicePrefs);
+      effective.device = { deviceKey: ctx.deviceKey, deviceName: ctx.deviceName };
+    }
+  } catch {}
   // @ts-ignore
-  delete user.passwordHash;
-  res.json({ user });
+  delete effective.passwordHash;
+  res.json({ user: effective });
 });
 
 // update current user (partial)
@@ -127,26 +265,63 @@ router.patch('/api/auth/me', async (req: Request, res: Response) => {
   const user = await getUserFromToken(req);
   if (!user) return res.status(401).json({ error: 'unauthenticated' });
   const body = req.body || {};
-  const { name, fontFamily, noteWidth, dragBehavior, animationSpeed, checklistSpacing, checkboxSize, checklistTextSize, chipDisplayMode, noteLineSpacing } = body as any;
+  const { name, fontFamily, noteWidth, dragBehavior, animationSpeed, checklistSpacing, checkboxSize, checklistTextSize, chipDisplayMode, noteLineSpacing, themeChoice, animationBehavior, animationsEnabled, imageThumbSize } = body as any;
   const data: any = {};
   if (typeof name === 'string') data.name = name;
-  if (typeof fontFamily === 'string') data.fontFamily = fontFamily;
-  if (typeof noteWidth === 'number') data.noteWidth = noteWidth;
-  if (typeof dragBehavior === 'string') data.dragBehavior = dragBehavior;
-  if (typeof animationSpeed === 'string') data.animationSpeed = animationSpeed;
-  if (typeof checklistSpacing === 'number') data.checklistSpacing = checklistSpacing;
-  if (typeof checkboxSize === 'number') data.checkboxSize = checkboxSize;
-  if (typeof checklistTextSize === 'number') data.checklistTextSize = checklistTextSize;
-  if (typeof chipDisplayMode === 'string') data.chipDisplayMode = chipDisplayMode;
-  if (typeof noteLineSpacing === 'number') data.noteLineSpacing = noteLineSpacing;
+  // Preference fields are stored per-device profile when a device key is present.
+  const prefData: any = {};
+  if (typeof fontFamily === 'string') prefData.fontFamily = fontFamily;
+  if (typeof noteWidth === 'number') prefData.noteWidth = noteWidth;
+  if (typeof dragBehavior === 'string') prefData.dragBehavior = dragBehavior;
+  if (typeof animationSpeed === 'string') prefData.animationSpeed = animationSpeed;
+  if (typeof checklistSpacing === 'number') prefData.checklistSpacing = checklistSpacing;
+  if (typeof checkboxSize === 'number') prefData.checkboxSize = checkboxSize;
+  if (typeof checklistTextSize === 'number') prefData.checklistTextSize = checklistTextSize;
+  if (typeof chipDisplayMode === 'string') prefData.chipDisplayMode = chipDisplayMode;
+  if (typeof noteLineSpacing === 'number') prefData.noteLineSpacing = noteLineSpacing;
+  if (typeof themeChoice === 'string') prefData.themeChoice = themeChoice;
+  if (typeof animationBehavior === 'string') prefData.animationBehavior = animationBehavior;
+  if (typeof animationsEnabled === 'boolean') prefData.animationsEnabled = animationsEnabled;
+  if (typeof imageThumbSize === 'number') prefData.imageThumbSize = imageThumbSize;
   // allow setting checkbox colors to string values or null to clear
   if ('checkboxBg' in body) data.checkboxBg = (body as any).checkboxBg;
   if ('checkboxBorder' in body) data.checkboxBorder = (body as any).checkboxBorder;
   try {
-    const updated = await prisma.user.update({ where: { id: (user as any).id }, data });
+    const updatedUser = await prisma.user.update({ where: { id: (user as any).id }, data });
+
+    let effective: any = updatedUser;
+    let deviceCtx: DeviceContext | null = null;
+    let updatedPrefs: any | null = null;
+    try {
+      deviceCtx = await resolveDeviceContext((user as any).id, req);
+      if (deviceCtx) {
+        const prismaAny = prisma as any;
+        if (Object.keys(prefData).length > 0) {
+          updatedPrefs = await prismaAny.userDevicePrefs.upsert({
+            where: { profileId: deviceCtx.profileId },
+            create: { profileId: deviceCtx.profileId, ...prefData },
+            update: { ...prefData }
+          });
+        } else {
+          updatedPrefs = await prismaAny.userDevicePrefs.findUnique({ where: { profileId: deviceCtx.profileId } });
+        }
+        effective = mergeEffectivePrefs(updatedUser, updatedPrefs);
+        effective.device = { deviceKey: deviceCtx.deviceKey, deviceName: deviceCtx.deviceName };
+      }
+    } catch {}
+
+    // Push updated preferences to this user's other connected clients (device-scoped)
+    try {
+      const payload: any = {};
+      for (const k of Object.keys(prefData || {})) payload[k] = (effective as any)[k];
+      // If checkbox colors were changed, those are still user-scoped.
+      for (const k of Object.keys(data || {})) payload[k] = (effective as any)[k];
+      if (deviceCtx) payload.deviceKey = deviceCtx.deviceKey;
+      notifyUser((user as any).id, 'user-prefs-updated', payload);
+    } catch {}
     // @ts-ignore
-    delete updated.passwordHash;
-    res.json({ user: updated });
+    delete effective.passwordHash;
+    res.json({ user: effective });
   } catch (err) {
     res.status(500).json({ error: String(err) });
   }

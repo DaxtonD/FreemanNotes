@@ -49,6 +49,16 @@ export default function PreferencesModal({ onClose }: { onClose: () => void }) {
       return Number(docStyle.getPropertyValue('--note-card-width')) || 300;
     } catch { return 300; }
   });
+  const [pendingImageThumbSize, setPendingImageThumbSize] = useState<number>(() => {
+    try {
+      const stored = localStorage.getItem('prefs.imageThumbSize');
+      if (stored) return Number(stored);
+      const userVal = auth && (auth.user as any)?.imageThumbSize;
+      if (typeof userVal === 'number') return userVal;
+      const docStyle = getComputedStyle(document.documentElement);
+      return Number.parseInt(String(docStyle.getPropertyValue('--image-thumb-size') || '').trim(), 10) || 96;
+    } catch { return 96; }
+  });
   const [pendingCheckboxBg, setPendingCheckboxBg] = useState<string>(() => {
     try {
       const userVal = auth && (auth.user as any)?.checkboxBg;
@@ -100,6 +110,10 @@ export default function PreferencesModal({ onClose }: { onClose: () => void }) {
       const w = localStorage.getItem('prefs.noteWidth') ?? ((auth && (auth.user as any)?.noteWidth) != null ? String((auth as any).user.noteWidth) : null);
       if (w) setPendingNoteWidth(Number(w));
     } catch {}
+    try {
+      const its = localStorage.getItem('prefs.imageThumbSize') ?? ((auth && (auth.user as any)?.imageThumbSize) != null ? String((auth as any).user.imageThumbSize) : null);
+      if (its) setPendingImageThumbSize(Number(its));
+    } catch {}
     // auto-fit removed
     try {
       const db = localStorage.getItem('prefs.dragBehavior') || (auth && (auth.user as any)?.dragBehavior) || 'swap';
@@ -122,12 +136,14 @@ export default function PreferencesModal({ onClose }: { onClose: () => void }) {
     document.documentElement.style.setProperty('--note-line-height', String(pendingNoteLineSpacing));
     // apply note/card width preference
     document.documentElement.style.setProperty('--note-card-width', `${pendingNoteWidth}px`);
+    document.documentElement.style.setProperty('--image-thumb-size', `${pendingImageThumbSize}px`);
     // checkbox color customization removed — theme controls visuals
     try { localStorage.setItem('prefs.checklistSpacing', String(pending)); } catch {}
     try { localStorage.setItem('prefs.checkboxSize', String(pendingCheckboxSize)); } catch {}
     try { localStorage.setItem('prefs.checklistTextSize', String(pendingTextSize)); } catch {}
     try { localStorage.setItem('prefs.noteLineSpacing', String(pendingNoteLineSpacing)); } catch {}
     try { localStorage.setItem('prefs.noteWidth', String(pendingNoteWidth)); } catch {}
+    try { localStorage.setItem('prefs.imageThumbSize', String(pendingImageThumbSize)); } catch {}
     try { localStorage.setItem('prefs.fontFamily', pendingFont); } catch {}
     // auto-fit removed
     try { localStorage.setItem('prefs.dragBehavior', pendingDragBehavior); } catch {}
@@ -150,7 +166,8 @@ export default function PreferencesModal({ onClose }: { onClose: () => void }) {
         checkboxSize: pendingCheckboxSize,
         checklistTextSize: pendingTextSize,
         noteLineSpacing: pendingNoteLineSpacing,
-        chipDisplayMode: pendingChipDisplayMode
+        chipDisplayMode: pendingChipDisplayMode,
+        imageThumbSize: pendingImageThumbSize
       };
       // remove checkbox color fields from payload
       await (auth?.updateMe?.(payload));
@@ -217,7 +234,7 @@ export default function PreferencesModal({ onClose }: { onClose: () => void }) {
                 <button className="btn" onClick={onCancel}>Close</button>
                 <span style={{ flex: 1 }} />
                 { (auth?.user as any)?.role === 'admin' && <button className="btn" onClick={() => setShowInvite(true)}>Send Invite</button> }
-                <button className="btn" onClick={() => auth?.logout?.()}>Sign out</button>
+                <button className="btn" onClick={() => { try { onClose(); } catch {} try { auth?.logout?.(); } catch {} }}>Sign out</button>
               </div>
             </div>
           ) : activeSection === 'about' ? (
@@ -245,7 +262,7 @@ export default function PreferencesModal({ onClose }: { onClose: () => void }) {
                 <button className="btn" onClick={onCancel}>Close</button>
                 <span style={{ flex: 1 }} />
                 { (auth?.user as any)?.role === 'admin' && <button className="btn" onClick={() => setShowInvite(true)}>Send Invite</button> }
-                <button className="btn" onClick={() => auth?.logout?.()}>Sign out</button>
+                <button className="btn" onClick={() => { try { onClose(); } catch {} try { auth?.logout?.(); } catch {} }}>Sign out</button>
               </div>
             </div>
           ) : activeSection === 'appearance' ? (
@@ -310,6 +327,12 @@ export default function PreferencesModal({ onClose }: { onClose: () => void }) {
                 </div>
                 <div style={{ height: 10 }} />
                 <div style={{ display: 'flex', gap: 12, alignItems: 'center', justifyContent: 'flex-start' }}>
+                  <label style={{ color: 'var(--muted)', minWidth: 120 }}>Image thumbnails</label>
+                  <input aria-label="image thumbnail size" type="range" min={48} max={192} step={8} value={pendingImageThumbSize} onChange={(e) => setPendingImageThumbSize(Number(e.target.value))} />
+                  <div style={{ width: 64, textAlign: 'left' }}>{pendingImageThumbSize}px</div>
+                </div>
+                <div style={{ height: 10 }} />
+                <div style={{ display: 'flex', gap: 12, alignItems: 'center', justifyContent: 'flex-start' }}>
                   <label style={{ color: 'var(--muted)', minWidth: 120 }}>App font</label>
                   <select value={pendingFont} onChange={(e) => setPendingFont(e.target.value)}>
                     <option value={'Inter, system-ui, "Segoe UI", Roboto, "Helvetica Neue", Arial'}>Inter</option>
@@ -330,7 +353,7 @@ export default function PreferencesModal({ onClose }: { onClose: () => void }) {
                 <button className="btn" onClick={onSave}>Save</button>
                 <span style={{ flex: 1 }} />
                 { (auth?.user as any)?.role === 'admin' && <button className="btn" onClick={() => setShowInvite(true)}>Send Invite</button> }
-                <button className="btn" onClick={() => auth?.logout?.()}>Sign out</button>
+                <button className="btn" onClick={() => { try { onClose(); } catch {} try { auth?.logout?.(); } catch {} }}>Sign out</button>
               </div>
             </div>
           ) : activeSection === 'colors' ? (
@@ -353,7 +376,7 @@ export default function PreferencesModal({ onClose }: { onClose: () => void }) {
                 <button className="btn" onClick={onSave}>Save</button>
                 <span style={{ flex: 1 }} />
                 { (auth?.user as any)?.role === 'admin' && <button className="btn" onClick={() => setShowInvite(true)}>Send Invite</button> }
-                <button className="btn" onClick={() => auth?.logout?.()}>Sign out</button>
+                <button className="btn" onClick={() => { try { onClose(); } catch {} try { auth?.logout?.(); } catch {} }}>Sign out</button>
               </div>
             </div>
           ) : activeSection === 'drag' ? (
@@ -382,7 +405,7 @@ export default function PreferencesModal({ onClose }: { onClose: () => void }) {
                 <button className="btn" onClick={onSave}>Save</button>
                 <span style={{ flex: 1 }} />
                 { (auth?.user as any)?.role === 'admin' && <button className="btn" onClick={() => setShowInvite(true)}>Send Invite</button> }
-                <button className="btn" onClick={() => auth?.logout?.()}>Sign out</button>
+                <button className="btn" onClick={() => { try { onClose(); } catch {} try { auth?.logout?.(); } catch {} }}>Sign out</button>
               </div>
             </div>
           ) : (
@@ -403,7 +426,7 @@ export default function PreferencesModal({ onClose }: { onClose: () => void }) {
                 <button className="btn" onClick={onSave}>Save</button>
                 <span style={{ flex: 1 }} />
                 { (auth?.user as any)?.role === 'admin' && <button className="btn" onClick={() => setShowInvite(true)}>Send Invite</button> }
-                <button className="btn" onClick={() => auth?.logout?.()}>Sign out</button>
+                <button className="btn" onClick={() => { try { onClose(); } catch {} try { auth?.logout?.(); } catch {} }}>Sign out</button>
               </div>
             </div>
           )}

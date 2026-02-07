@@ -65,7 +65,11 @@ function contrastColorForBackground(hex?: string | null): string | undefined {
 
 export default function NoteCard({ note, onChange }: { note: Note, onChange?: () => void }) {
   const noteRef = useRef<HTMLElement | null>(null);
+  const bodyRef = useRef<HTMLDivElement | null>(null);
   const imagesWrapRef = useRef<HTMLDivElement | null>(null);
+  const snapRafRef = useRef<number | null>(null);
+  const lastSnapUnitRef = useRef<number | null>(null);
+  const lastSnapBaseRef = useRef<number | null>(null);
   const theme = (() => { try { return useTheme(); } catch { return { effective: 'dark' } as any; } })();
 
   const [bg, setBg] = useState<string>((note as any).viewerColor || note.color || ""); // empty = theme card color
@@ -108,16 +112,137 @@ export default function NoteCard({ note, onChange }: { note: Note, onChange?: ()
   const [showEditor, setShowEditor] = useState(false);
   const [showTextEditor, setShowTextEditor] = useState(false);
   const [showCompleted, setShowCompleted] = useState<boolean>(true);
+  const [rtHtmlFromY, setRtHtmlFromY] = React.useState<string | null>(null);
+  const [previewClipped, setPreviewClipped] = useState(false);
+
+  const scheduleSnapPreview = React.useCallback((forceMeasure = false) => {
+    if (snapRafRef.current != null) return;
+    snapRafRef.current = requestAnimationFrame(() => {
+      snapRafRef.current = null;
+      const el = bodyRef.current;
+      if (!el) return;
+      try {
+        // Only snap when something is actually clipped; avoid shrinking previews unnecessarily.
+        const clipped = el.scrollHeight > el.clientHeight + 1;
+        if (!clipped) {
+          // Clear any previous snap.
+          if (el.style.maxHeight) el.style.maxHeight = '';
+          lastSnapUnitRef.current = null;
+          lastSnapBaseRef.current = null;
+          return;
+        }
+
+        // Measure how much vertical space the preview area *would* have without our snapping.
+        // We only clear max-height on explicit recalc/resize to avoid ResizeObserver feedback loops.
+        const prevMaxHeight = el.style.maxHeight;
+        if (forceMeasure && prevMaxHeight) {
+          el.style.maxHeight = '';
+          void el.getBoundingClientRect();
+        }
+
+        const available = el.clientHeight;
+        if (!Number.isFinite(available) || available <= 0) {
+          if (forceMeasure && prevMaxHeight) el.style.maxHeight = prevMaxHeight;
+          return;
+        }
+
+        let unit = 0;
+        // Snap to computed line-height so we don't cut text mid-line.
+        // For checklists, items can wrap (up to 4 lines), so row height isn't a stable unit.
+        const lhSource = (noteItems && noteItems.length > 0)
+          ? ((el.querySelector('.note-item-text') as HTMLElement | null) ?? el)
+          : el;
+        const lh = parseFloat(getComputedStyle(lhSource).lineHeight || '0');
+        if (Number.isFinite(lh) && lh > 0) unit = lh;
+
+        // Guardrails.
+        if (!Number.isFinite(unit) || unit < 12) {
+          if (prevMaxHeight) el.style.maxHeight = prevMaxHeight;
+          return;
+        }
+
+        // If we're re-measuring, but base space & unit haven't changed, do nothing.
+        if (
+          forceMeasure &&
+          lastSnapUnitRef.current != null &&
+          lastSnapBaseRef.current != null &&
+          Math.abs(lastSnapUnitRef.current - unit) < 0.5 &&
+          Math.abs(lastSnapBaseRef.current - available) < 0.5
+        ) {
+          return;
+        }
+
+        const remainder = available % unit;
+        // If we're already very close to a boundary, don't thrash.
+        if (remainder < 2 || unit - remainder < 2) {
+          // If we cleared max-height to measure, restore it.
+          if (forceMeasure && prevMaxHeight) el.style.maxHeight = prevMaxHeight;
+          return;
+        }
+
+        const snapped = Math.max(unit, Math.floor(available - remainder));
+        // Apply the snap (shrink a tiny amount to end on a full row/line).
+        el.style.maxHeight = `${snapped}px`;
+        lastSnapUnitRef.current = unit;
+        lastSnapBaseRef.current = available;
+      } catch {
+        // no-op
+      }
+    });
+  }, [noteItems]);
+
+  React.useEffect(() => {
+    const el = bodyRef.current;
+    if (!el) return;
+
+    const check = () => {
+      try {
+        const bodyClipped = el.scrollHeight > el.clientHeight + 1;
+        setPreviewClipped(bodyClipped);
+      } catch {}
+    };
+
+    // Run after paint so layout has settled.
+    const raf = requestAnimationFrame(() => {
+      check();
+      scheduleSnapPreview(true);
+    });
+    let ro: ResizeObserver | null = null;
+    try {
+      ro = new ResizeObserver(() => {
+        check();
+        scheduleSnapPreview();
+      });
+      ro.observe(el);
+    } catch {}
+
+    const onRecalc = () => scheduleSnapPreview(true);
+    window.addEventListener('notes-grid:recalc', onRecalc as any);
+    window.addEventListener('resize', onRecalc as any);
+
+    return () => {
+      try { cancelAnimationFrame(raf); } catch {}
+      try { ro && ro.disconnect(); } catch {}
+      try { window.removeEventListener('notes-grid:recalc', onRecalc as any); } catch {}
+      try { window.removeEventListener('resize', onRecalc as any); } catch {}
+      if (snapRafRef.current != null) {
+        try { cancelAnimationFrame(snapRafRef.current); } catch {}
+        snapRafRef.current = null;
+      }
+    };
+  }, [note.id, title, noteItems.length, showCompleted, rtHtmlFromY, note.body, images.length, labels.length, scheduleSnapPreview]);
 
   React.useEffect(() => {
     const el = imagesWrapRef.current;
     if (!el) return;
-    const THUMB_W = 96;
     const GAP = 6;
     const compute = () => {
       try {
+        const css = getComputedStyle(document.documentElement);
+        const thumbRaw = css.getPropertyValue('--image-thumb-size') || '';
+        const thumbW = Math.max(24, parseInt(String(thumbRaw).trim(), 10) || 96);
         const w = el.clientWidth || 0;
-        const perRow = Math.max(1, Math.floor((w + GAP) / (THUMB_W + GAP)));
+        const perRow = Math.max(1, Math.floor((w + GAP) / (thumbW + GAP)));
         setThumbsPerRow(perRow);
       } catch {}
     };
@@ -128,9 +253,11 @@ export default function NoteCard({ note, onChange }: { note: Note, onChange?: ()
       ro.observe(el);
     } catch {}
     window.addEventListener('resize', compute);
+    window.addEventListener('notes-grid:recalc', compute as any);
     return () => {
       try { ro && ro.disconnect(); } catch {}
       window.removeEventListener('resize', compute);
+      window.removeEventListener('notes-grid:recalc', compute as any);
     };
   }, []);
 
@@ -140,7 +267,6 @@ export default function NoteCard({ note, onChange }: { note: Note, onChange?: ()
   const ydoc = React.useMemo(() => new Y.Doc(), [note.id]);
   const providerRef = React.useRef<WebsocketProvider | null>(null);
   const yarrayRef = React.useRef<Y.Array<Y.Map<any>> | null>(null);
-  const [rtHtmlFromY, setRtHtmlFromY] = React.useState<string | null>(null);
   React.useEffect(() => {
     const room = `note-${note.id}`;
     const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
@@ -557,6 +683,7 @@ export default function NoteCard({ note, onChange }: { note: Note, onChange?: ()
       ref={(el) => { noteRef.current = el as HTMLElement | null; }}
       className={`note-card${labels.length > 0 ? ' has-labels' : ''}`}
       style={styleVars}
+      data-clipped={previewClipped ? '1' : undefined}
     >
       <input ref={fileRef} type="file" accept="image/*" style={{ display: "none" }} />
 
@@ -591,7 +718,11 @@ export default function NoteCard({ note, onChange }: { note: Note, onChange?: ()
         </div>
       )}
 
-      <div className="note-body" onClick={() => { if (note.type === 'CHECKLIST' || (note.items && note.items.length)) setShowEditor(true); else setShowTextEditor(true); }}>
+      <div
+        className="note-body"
+        ref={bodyRef}
+        onClick={() => { if (note.type === 'CHECKLIST' || (note.items && note.items.length)) setShowEditor(true); else setShowTextEditor(true); }}
+      >
         {noteItems && noteItems.length > 0 ? (
           <div>
             {/** Show incomplete first, then optionally completed items. Preserve indent in preview. */}
@@ -610,7 +741,7 @@ export default function NoteCard({ note, onChange }: { note: Note, onChange?: ()
                     </svg>
                   )}
                 </button>
-                <div style={{ fontSize: 'var(--checklist-text-size)', overflow: 'hidden', whiteSpace: 'normal', wordBreak: 'break-word', display: 'flex', alignItems: 'flex-start' }}>
+                <div className="note-item-text">
                   <div className="rt-html" dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(String(it.content || ''), { USE_PROFILES: { html: true } }) }} />
                 </div>
               </div>
@@ -643,7 +774,7 @@ export default function NoteCard({ note, onChange }: { note: Note, onChange?: ()
                     </svg>
                   )}
                 </button>
-                <div style={{ fontSize: 'var(--checklist-text-size)', textDecoration: 'line-through', display: 'flex', alignItems: 'flex-start' }}>
+                <div className="note-item-text" style={{ textDecoration: 'line-through' }}>
                   <div className="rt-html" dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(String(it.content || ''), { USE_PROFILES: { html: true } }) }} />
                 </div>
               </div>

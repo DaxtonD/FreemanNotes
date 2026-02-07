@@ -115,6 +115,8 @@ router.patch('/api/notes/order', async (req: Request, res: Response) => {
 
     const tx = ids.map((id, idx) => prisma.note.update({ where: { id }, data: { ord: idx } }));
     await prisma.$transaction(tx);
+    // Notify all sessions for this user so other devices update immediately.
+    try { notifyUser(user.id, 'notes-reordered', { ids }); } catch {}
     res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: String(err) });
