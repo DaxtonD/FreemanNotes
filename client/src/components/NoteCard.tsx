@@ -346,6 +346,33 @@ export default function NoteCard({
   const fileRef = useRef<HTMLInputElement | null>(null);
   const { token, user } = useAuth();
 
+  React.useEffect(() => {
+    const onCollectionsChanged = (ev: Event) => {
+      try {
+        const ce = ev as CustomEvent<any>;
+        const detail = ce?.detail || {};
+        if (detail?.invalidateAll) {
+          setCollectionPathById({});
+          return;
+        }
+        const ids = Array.isArray(detail?.ids) ? detail.ids : (Number.isFinite(Number(detail?.id)) ? [Number(detail.id)] : []);
+        if (!ids.length) return;
+        setCollectionPathById((prev) => {
+          const next = { ...prev };
+          for (const id of ids) {
+            try { delete (next as any)[Number(id)]; } catch {}
+          }
+          return next;
+        });
+      } catch {}
+    };
+
+    try { window.addEventListener('collections:changed', onCollectionsChanged as any); } catch {}
+    return () => {
+      try { window.removeEventListener('collections:changed', onCollectionsChanged as any); } catch {}
+    };
+  }, []);
+
   const neededCollectionIdsKey = React.useMemo(() => {
     try {
       const ids = viewerCollections
