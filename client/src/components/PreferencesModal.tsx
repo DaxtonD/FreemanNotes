@@ -3,6 +3,7 @@ import React, { useEffect, useState } from 'react';
 declare const __APP_VERSION__: string;
 import { useAuth } from '../authContext';
 import SettingsModal from './SettingsModal';
+import UserManagementModal from './UserManagementModal';
 import { useTheme } from '../themeContext';
 import { usePwaInstall } from '../lib/pwaInstall';
 
@@ -213,6 +214,7 @@ export default function PreferencesModal({ onClose }: { onClose: () => void }) {
   }
   function onCancel() { onClose(); }
   const [showInvite, setShowInvite] = useState(false);
+  const [showUserMgmt, setShowUserMgmt] = useState(false);
   const [photoPreviewUrl, setPhotoPreviewUrl] = useState<string | null>(null);
   const [photoUploading, setPhotoUploading] = useState(false);
   const [activeSection, setActiveSection] = useState<string | null>(null);
@@ -322,6 +324,12 @@ export default function PreferencesModal({ onClose }: { onClose: () => void }) {
 
                 <div className="prefs-list" role="list" aria-label="Account">
                   {(auth?.user as any)?.role === 'admin' && (
+                    <button className="prefs-item" type="button" onClick={() => setShowUserMgmt(true)} role="listitem">
+                      <span className="prefs-item__label">User management</span>
+                      <span className="prefs-item__chev" aria-hidden>›</span>
+                    </button>
+                  )}
+                  {(auth?.user as any)?.role === 'admin' && (
                     <button className="prefs-item" type="button" onClick={() => setShowInvite(true)} role="listitem">
                       <span className="prefs-item__label">Send invite</span>
                       <span className="prefs-item__chev" aria-hidden>›</span>
@@ -348,6 +356,7 @@ export default function PreferencesModal({ onClose }: { onClose: () => void }) {
                 <div style={{ marginTop: 16, display: 'flex', gap: 8, justifyContent: 'flex-start' }}>
                   <button className="btn" type="button" onClick={onCancel}>Close</button>
                   <span style={{ flex: 1 }} />
+                  {(auth?.user as any)?.role === 'admin' && <button className="btn" type="button" onClick={() => setShowUserMgmt(true)}>User management</button>}
                   {(auth?.user as any)?.role === 'admin' && <button className="btn" type="button" onClick={() => setShowInvite(true)}>Send Invite</button>}
                   <button className="btn" type="button" onClick={() => { try { onClose(); } catch {} try { auth?.logout?.(); } catch {} }}>Sign out</button>
                 </div>
@@ -562,6 +571,7 @@ export default function PreferencesModal({ onClose }: { onClose: () => void }) {
           )}
         </div>
       </div>
+      {showUserMgmt && <UserManagementModal onClose={() => setShowUserMgmt(false)} />}
       {showInvite && <SettingsModal onClose={() => setShowInvite(false)} />}
     </div>
   );

@@ -1522,6 +1522,29 @@ button.chip:focus{outline:2px solid rgba(255,255,255,0.18);outline-offset:2px;}
 .prefs-item--danger{ color: #ff6b6b; }
 :root[data-theme="light"] .prefs-item--danger{ color: #c23b3b; }
 
+/* User management modal */
+.user-mgmt{ width:min(900px,calc(100vw - 24px)); max-height:min(80vh,760px); }
+.user-mgmt__toolbar{ display:flex; gap:8px; align-items:center; }
+.user-mgmt__toolbar input{ flex:1; min-width:0; }
+.user-mgmt__list{ border:1px solid rgba(255,255,255,0.08); border-radius:10px; overflow:hidden; }
+:root[data-theme="light"] .user-mgmt__list{ border-color: rgba(0,0,0,0.10); }
+.user-mgmt__row{ display:grid; grid-template-columns: 1fr 160px 140px; gap:10px; align-items:center; padding:10px; border-top:1px solid rgba(255,255,255,0.06); }
+:root[data-theme="light"] .user-mgmt__row{ border-top-color: rgba(0,0,0,0.08); }
+.user-mgmt__row--head{ border-top:none; font-weight:700; color:var(--muted); background: rgba(255,255,255,0.03); }
+:root[data-theme="light"] .user-mgmt__row--head{ background: rgba(0,0,0,0.03); }
+.user-mgmt__usercell{ display:flex; align-items:center; gap:10px; min-width:0; }
+.user-mgmt__avatar{ width:34px; height:34px; border-radius:50%; object-fit:cover; flex:0 0 auto; }
+.user-mgmt__email{ font-weight:700; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.user-mgmt__name{ font-size:12px; color:var(--muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.user-mgmt__create{ border:1px solid rgba(255,255,255,0.08); border-radius:10px; padding:10px; }
+:root[data-theme="light"] .user-mgmt__create{ border-color: rgba(0,0,0,0.10); }
+.user-mgmt__createform{ margin-top:8px; display:grid; grid-template-columns: 1fr 1fr 1fr 160px 120px; gap:8px; }
+
+@media (max-width: 760px){
+  .user-mgmt__row{ grid-template-columns: 1fr; gap:8px; align-items:stretch; }
+  .user-mgmt__createform{ grid-template-columns: 1fr; }
+}
+
 @media (pointer: coarse) and (max-width: 720px) {
   .prefs-backdrop.phone{ align-items: stretch; justify-content: stretch; padding: 0; }
   .prefs-dialog.phone{

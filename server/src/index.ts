@@ -195,6 +195,15 @@ async function start() {
     } catch (err) {
       console.warn("Collections routes not available:", err);
     }
+
+    // Admin user management routes
+    try {
+      const adminUsersRouter = (await import("./adminUsers")).default;
+      app.use(adminUsersRouter);
+      console.log("Admin users routes registered");
+    } catch (err) {
+      console.warn("Admin users routes not available:", err);
+    }
   } catch (err) {
     console.warn("Startup DB initialization warning:", err);
   }
