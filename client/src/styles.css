@@ -1444,19 +1444,104 @@ button.chip:focus{outline:2px solid rgba(255,255,255,0.18);outline-offset:2px;}
   }
 }
 /* Preferences dialog: fixed width independent of note width */
+.prefs-backdrop{
+  padding: 16px;
+}
 .prefs-dialog{
   width: 420px;
+  max-width: min(520px, calc(100vw - 32px));
   background:#181818;   /* solid opaque background */
   color:#ffffff;        /* white text */
   border-radius:10px;
   padding:12px;
   border:1px solid rgba(255,255,255,0.04);
   display:flex; flex-direction:column; max-height:80vh;
+  box-sizing: border-box;
 }
 :root[data-theme="light"] .prefs-dialog{
   background:#ffffff;
   color:#000000;
   border:1px solid rgba(0,0,0,0.08);
+}
+
+.prefs-header{
+  gap: 10px;
+}
+.prefs-title{ text-align: center; flex: 1 1 auto; }
+.prefs-back{
+  min-width: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.prefs-body{
+  padding: 12px;
+}
+
+.prefs-list{
+  display: flex;
+  flex-direction: column;
+  border-radius: 12px;
+  border: 1px solid rgba(255,255,255,0.10);
+  background: rgba(255,255,255,0.04);
+  overflow: hidden;
+}
+:root[data-theme="light"] .prefs-list{
+  border-color: rgba(0,0,0,0.10);
+  background: rgba(0,0,0,0.03);
+}
+
+.prefs-item{
+  appearance: none;
+  -webkit-appearance: none;
+  background: transparent;
+  border: none;
+  color: inherit;
+  cursor: pointer;
+  padding: 14px 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 16px;
+  font-weight: 650;
+}
+.prefs-item + .prefs-item{
+  border-top: 1px solid rgba(255,255,255,0.08);
+}
+:root[data-theme="light"] .prefs-item + .prefs-item{
+  border-top-color: rgba(0,0,0,0.08);
+}
+.prefs-item:active{
+  background: rgba(255,255,255,0.06);
+}
+:root[data-theme="light"] .prefs-item:active{
+  background: rgba(0,0,0,0.06);
+}
+.prefs-item__label{ min-width: 0; }
+.prefs-item__chev{ opacity: 0.65; font-size: 18px; }
+.prefs-item--danger{ color: #ff6b6b; }
+:root[data-theme="light"] .prefs-item--danger{ color: #c23b3b; }
+
+@media (pointer: coarse) and (max-width: 720px) {
+  .prefs-backdrop.phone{ align-items: stretch; justify-content: stretch; padding: 0; }
+  .prefs-dialog.phone{
+    width: 100vw;
+    height: 100dvh;
+    max-width: none;
+    max-height: none;
+    border-radius: 0;
+    padding: 0;
+    border: none;
+  }
+  .prefs-dialog.phone .prefs-header{
+    padding: calc(10px + env(safe-area-inset-top)) 12px 10px;
+    background: var(--editor-surface, var(--card));
+    border-bottom: 1px solid rgba(255,255,255,0.06);
+  }
+  :root[data-theme="light"] .prefs-dialog.phone .prefs-header{ border-bottom-color: rgba(0,0,0,0.08); }
+  .prefs-dialog.phone .prefs-body{
+    padding: 12px 12px calc(12px + env(safe-area-inset-bottom));
+  }
 }
 .about-hero-group{ display:flex; flex-direction:column; align-items:flex-start; gap:10px; margin:18px auto; width:100%; max-width:420px; position:relative; padding-bottom:38px; }
 .about-hero{ display:flex; align-items:center; justify-content:flex-start; gap:20px; width:100%; }

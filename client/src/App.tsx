@@ -2,9 +2,11 @@ import React from "react";
 import Header from "./components/Header";
 import Sidebar from "./components/Sidebar";
 import AuthGate from "./components/AuthGate";
+import PwaInstallModal from "./components/PwaInstallModal";
 import { AuthProvider, useAuth } from "./authContext";
 import { ThemeProvider } from "./themeContext";
 import { DEFAULT_SORT_CONFIG, SortConfig } from './sortTypes';
+import { usePwaInstall } from './lib/pwaInstall';
 
 /**
  * Phase 1 app shell.
@@ -22,6 +24,9 @@ export default function App(): JSX.Element {
 
 function AppShell(): JSX.Element {
 	const { user, token } = useAuth();
+	const { canInstall, isInstalled } = usePwaInstall();
+	const [showPwaInstall, setShowPwaInstall] = React.useState(false);
+	const lastPwaNudgeAtRef = React.useRef<number>(0);
 	const [selectedLabelIds, setSelectedLabelIds] = React.useState<number[]>([]);
 	const [selectedCollaboratorId, setSelectedCollaboratorId] = React.useState<number | null>(null);
 	const [collectionStack, setCollectionStack] = React.useState<Array<{ id: number; name: string }>>([]);
@@ -100,6 +105,26 @@ function AppShell(): JSX.Element {
 			try { window.visualViewport?.removeEventListener('scroll', updatePhoneBucket); } catch {}
 		};
 	}, []);
+
+	React.useEffect(() => {
+		// We can’t show the native browser install prompt without a user gesture.
+		// Instead, show our own modal nudge when install becomes available.
+		if (!user) return;
+		if (isInstalled) return;
+		if (!canInstall) return;
+		try {
+			const now = Date.now();
+			const dismissedAt = Number(localStorage.getItem('pwa.installNudge.dismissedAt') || '0') || 0;
+			const coolDownMs = 7 * 24 * 60 * 60 * 1000;
+			if (dismissedAt && (now - dismissedAt) < coolDownMs) return;
+			if (lastPwaNudgeAtRef.current && (now - lastPwaNudgeAtRef.current) < 30_000) return;
+			lastPwaNudgeAtRef.current = now;
+			const t = window.setTimeout(() => {
+				try { setShowPwaInstall(true); } catch {}
+			}, 900);
+			return () => { try { window.clearTimeout(t); } catch {} };
+		} catch {}
+	}, [user, canInstall, isInstalled]);
 
 	React.useEffect(() => {
 		if (!isPhone) return;
@@ -474,6 +499,16 @@ function AppShell(): JSX.Element {
 						/>
 					</div>
 				</>
+			)}
+
+			{showPwaInstall && (
+				<PwaInstallModal
+					isPhone={isPhone}
+					onClose={() => {
+						try { localStorage.setItem('pwa.installNudge.dismissedAt', String(Date.now())); } catch {}
+						setShowPwaInstall(false);
+					}}
+				/>
 			)}
 		</div>
 	);

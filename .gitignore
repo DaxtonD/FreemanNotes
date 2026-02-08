@@ -26,3 +26,9 @@ logs/
 # Local scratch / testing artifacts
 /1.mp4
 /frames-focus/
+
+# Runtime uploads (served from /uploads)
+/uploads/
+
+# Local capture artifacts
+/drag ghosting.mp4
