@@ -25,6 +25,7 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
     moreMenu?: {
       onDelete: () => void;
       onAddLabel: () => void;
+      onMoveToCollection?: () => void;
       onUncheckAll?: () => void;
       onCheckAll?: () => void;
       onSetWidth: (span: 1 | 2 | 3) => void;
@@ -32,9 +33,19 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
   }) {
   const { token, user } = useAuth();
 
+  const backIdRef = useRef<string>((() => {
+    try { return `ce-${note?.id || 'x'}-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`; } catch { return `ce-${Math.random()}`; }
+  })());
+
   useEffect(() => {
     window.dispatchEvent(new Event('freemannotes:editor-modal-open'));
+    try {
+      const id = backIdRef.current;
+      const onBack = () => { try { onClose(); } catch {} };
+      window.dispatchEvent(new CustomEvent('freemannotes:back/register', { detail: { id, onBack } }));
+    } catch {}
     return () => {
+      try { window.dispatchEvent(new CustomEvent('freemannotes:back/unregister', { detail: { id: backIdRef.current } })); } catch {}
       window.dispatchEvent(new Event('freemannotes:editor-modal-close'));
     };
   }, []);
@@ -196,6 +207,13 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
   const ymetaRef = React.useRef<Y.Map<any> | null>(null);
   const debouncedSyncTimer = React.useRef<number | null>(null);
   const syncedRef = React.useRef<boolean>(false);
+  const dirtyRef = React.useRef<boolean>(false);
+
+  const markDirty = React.useCallback(() => {
+    if (dirtyRef.current) return;
+    dirtyRef.current = true;
+    try { window.dispatchEvent(new CustomEvent('freemannotes:draft/dirty', { detail: { noteId: Number(note?.id) } })); } catch {}
+  }, [note?.id]);
 
   const rafRef = useRef<number | null>(null);
   const ghostRef = useRef<HTMLDivElement | null>(null);
@@ -361,7 +379,8 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
     };
     provider.on('sync', onSync);
 
-    const updateFromY = () => {
+    const updateFromY = (_events?: any, transaction?: any) => {
+      try { if (transaction && transaction.local) markDirty(); } catch {}
       try {
         const arr = yarr.toArray().map((m, idx) => ({
           id: (typeof m.get('id') === 'number' ? Number(m.get('id')) : undefined),
@@ -422,7 +441,7 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
         }
       } catch {}
     };
-    yarr.observeDeep(updateFromY);
+    yarr.observeDeep(updateFromY as any);
 
     return () => {
       try { yarr.unobserveDeep(updateFromY as any); } catch {}
@@ -928,7 +947,7 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
         <div className="dialog-body">
           <div className="rt-sticky-header">
             <div style={{ display: 'flex', gap: 12, marginBottom: 8 }}>
-              <input placeholder="Checklist title" value={title} onChange={(e) => setTitle(e.target.value)} style={{ flex: 1, background: 'transparent', border: 'none', color: 'inherit', fontWeight: 600, fontSize: 18 }} />
+              <input placeholder="Checklist title" value={title} onChange={(e) => { setTitle(e.target.value); try { markDirty(); } catch {} }} style={{ flex: 1, background: 'transparent', border: 'none', color: 'inherit', fontWeight: 600, fontSize: 18 }} />
             </div>
             <div
               className="rt-toolbar"
@@ -1488,9 +1507,10 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
               {moreMenu && showMore && (
                 <MoreMenu
                   anchorRef={moreBtnRef as any}
-                  itemsCount={4}
+                  itemsCount={moreMenu.onMoveToCollection ? 5 : 4}
                   onClose={() => setShowMore(false)}
                   onDelete={moreMenu.onDelete}
+                  onMoveToCollection={moreMenu.onMoveToCollection}
                   onAddLabel={moreMenu.onAddLabel}
                   onUncheckAll={moreMenu.onUncheckAll}
                   onCheckAll={moreMenu.onCheckAll}

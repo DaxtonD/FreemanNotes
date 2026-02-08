@@ -21,13 +21,53 @@ export default function App(): JSX.Element {
 }
 
 function AppShell(): JSX.Element {
-	const { user } = useAuth();
+	const { user, token } = useAuth();
 	const [selectedLabelIds, setSelectedLabelIds] = React.useState<number[]>([]);
+	const [selectedCollaboratorId, setSelectedCollaboratorId] = React.useState<number | null>(null);
+	const [collectionStack, setCollectionStack] = React.useState<Array<{ id: number; name: string }>>([]);
 	const [sidebarCollapsed, setSidebarCollapsed] = React.useState(false);
 	const [sidebarDrawerOpen, setSidebarDrawerOpen] = React.useState(false);
 	const [isPhone, setIsPhone] = React.useState(false);
 	const [searchQuery, setSearchQuery] = React.useState('');
 	const [sortConfig, setSortConfig] = React.useState<SortConfig>(DEFAULT_SORT_CONFIG);
+	const selectedCollectionId = collectionStack.length ? Number(collectionStack[collectionStack.length - 1].id) : null;
+
+	// Mobile back button handling (Android/PWA): close overlays instead of exiting.
+	const backStackRef = React.useRef<Array<{ id: string; onBack: () => void }>>([]);
+	const backRootArmedRef = React.useRef(false);
+	const lastRootBackAtRef = React.useRef<number>(0);
+	const allowExitOnceRef = React.useRef(false);
+
+	const clearAllFilters = React.useCallback(() => {
+		setSelectedLabelIds([]);
+		setSelectedCollaboratorId(null);
+		setCollectionStack([]);
+		setSearchQuery('');
+		setSortConfig(DEFAULT_SORT_CONFIG);
+	}, []);
+
+	const selectCollectionById = React.useCallback(async (collectionId: number, fallbackName?: string) => {
+		const id = Number(collectionId);
+		if (!Number.isFinite(id)) return;
+		if (!token) {
+			setCollectionStack([{ id, name: String(fallbackName || id) }]);
+			return;
+		}
+		try {
+			const res = await fetch(`/api/collections/${encodeURIComponent(String(id))}/breadcrumb`, {
+				headers: { Authorization: `Bearer ${token}` },
+			});
+			if (!res.ok) throw new Error(await res.text());
+			const data = await res.json();
+			const bc = Array.isArray((data as any)?.breadcrumb) ? (data as any).breadcrumb : [];
+			const next = bc.map((c: any) => ({ id: Number(c.id), name: String(c.name || '') }))
+				.filter((c: any) => Number.isFinite(c.id) && c.name.length);
+			if (next.length) setCollectionStack(next);
+			else setCollectionStack([{ id, name: String(fallbackName || id) }]);
+		} catch {
+			setCollectionStack([{ id, name: String(fallbackName || id) }]);
+		}
+	}, [token]);
 	const toggleLabel = (id: number) => {
 		setSelectedLabelIds((s) => s.includes(id) ? s.filter(x => x !== id) : [...s, id]);
 	};
@@ -62,6 +102,96 @@ function AppShell(): JSX.Element {
 	}, []);
 
 	React.useEffect(() => {
+		if (!isPhone) return;
+		if (backRootArmedRef.current) return;
+		backRootArmedRef.current = true;
+		try {
+			// Mark the current entry as our base, then push a sentinel so Back has something to pop to.
+			history.replaceState({ ...(history.state || {}), __freemannotes_base: true }, document.title);
+			history.pushState({ ...(history.state || {}), __freemannotes_sentinel: true }, document.title);
+		} catch {}
+	}, [isPhone]);
+
+	React.useEffect(() => {
+		if (!isPhone) return;
+		const stack = backStackRef.current;
+
+		const onRegister = (e: any) => {
+			try {
+				const d = e?.detail;
+				const id = String(d?.id || '');
+				const onBack = d?.onBack;
+				if (!id || typeof onBack !== 'function') return;
+				// De-dupe by id
+				for (let i = stack.length - 1; i >= 0; i--) {
+					if (stack[i]?.id === id) stack.splice(i, 1);
+				}
+				stack.push({ id, onBack });
+				try {
+					history.pushState({ ...(history.state || {}), __freemannotes_overlay: true, __freemannotes_overlay_id: id }, document.title);
+				} catch {}
+			} catch {}
+		};
+		const onUnregister = (e: any) => {
+			try {
+				const d = e?.detail;
+				const id = String(d?.id || '');
+				if (!id) return;
+				for (let i = stack.length - 1; i >= 0; i--) {
+					if (stack[i]?.id === id) stack.splice(i, 1);
+				}
+			} catch {}
+		};
+
+		const onPopState = (ev: PopStateEvent) => {
+			try {
+				if (!isPhone) return;
+				if (stack.length > 0) {
+					const top = stack.pop();
+					try { top?.onBack?.(); } catch {}
+					return;
+				}
+				// At root with no overlays: don't exit the app; bounce back to the sentinel.
+				const st: any = ev?.state;
+				const isBase = !st || !!st.__freemannotes_base;
+				if (isBase) {
+					if (allowExitOnceRef.current) {
+						allowExitOnceRef.current = false;
+						return;
+					}
+					const now = Date.now();
+					const last = lastRootBackAtRef.current || 0;
+					lastRootBackAtRef.current = now;
+					const within = (now - last) <= 800;
+					if (within) {
+						const ok = window.confirm('Exit FreemanNotes?');
+						if (ok) {
+							allowExitOnceRef.current = true;
+							window.setTimeout(() => {
+								try { history.back(); } catch {}
+								try { (window as any).close?.(); } catch {}
+							}, 0);
+							return;
+						}
+					}
+					window.setTimeout(() => {
+						try { history.go(1); } catch {}
+					}, 0);
+				}
+			} catch {}
+		};
+
+		window.addEventListener('freemannotes:back/register', onRegister as any);
+		window.addEventListener('freemannotes:back/unregister', onUnregister as any);
+		window.addEventListener('popstate', onPopState);
+		return () => {
+			window.removeEventListener('freemannotes:back/register', onRegister as any);
+			window.removeEventListener('freemannotes:back/unregister', onUnregister as any);
+			window.removeEventListener('popstate', onPopState);
+		};
+	}, [isPhone]);
+
+	React.useEffect(() => {
 		if (!sidebarDrawerOpen) return;
 		function onKeyDown(e: KeyboardEvent) {
 			if (e.key === 'Escape') setSidebarDrawerOpen(false);
@@ -90,6 +220,7 @@ function AppShell(): JSX.Element {
 		// Open zone: allow edge-swipe anywhere near the left side.
 		// (Some browsers reserve the extreme edge for Back; if so, the user can start slightly in.)
 		const OPEN_ZONE_MAX_X = 140;
+		const NOTE_CARD_OPEN_EDGE_PX = 24; // if gesture starts on a note card, only allow open from extreme-left edge
 		const OPEN_DX = 28;
 		const CLOSE_DX = 34;
 		const MAX_DY = 80;
@@ -114,6 +245,18 @@ function AppShell(): JSX.Element {
 
 		function beginAt(x: number, y: number, target: EventTarget | null, pid: number | null, tid: number | null) {
 			if (isInteractiveTarget(target)) return false;
+			let startedOnNoteCard = false;
+			try {
+				const el = target as HTMLElement | null;
+				startedOnNoteCard = !!(el && el.closest && el.closest('.note-card'));
+			} catch {}
+
+			// Only arm the gesture if we started in a relevant region.
+			// Also: avoid treating note drags as sidebar opens.
+			const canStartOpen = (!sidebarDrawerOpen && x <= OPEN_ZONE_MAX_X && (!startedOnNoteCard || x <= NOTE_CARD_OPEN_EDGE_PX));
+			const canStartClose = (sidebarDrawerOpen && x <= DRAWER_REGION_PX);
+			if (!canStartOpen && !canStartClose) return false;
+
 			startX = x;
 			startY = y;
 			lastX = x;
@@ -122,8 +265,8 @@ function AppShell(): JSX.Element {
 			pointerId = pid;
 			touchId = tid;
 			// Open: start near the left edge.
-			startedOnEdge = (!sidebarDrawerOpen && startX <= OPEN_ZONE_MAX_X);
-			startedInDrawerRegion = (sidebarDrawerOpen && startX <= DRAWER_REGION_PX);
+			startedOnEdge = canStartOpen;
+			startedInDrawerRegion = canStartClose;
 			return true;
 		}
 
@@ -174,7 +317,8 @@ function AppShell(): JSX.Element {
 				if (pointerId != null) return;
 				if (isInteractiveTarget(e.target)) return;
 
-				beginAt(e.clientX, e.clientY, e.target, e.pointerId, null);
+				const ok = beginAt(e.clientX, e.clientY, e.target, e.pointerId, null);
+				if (!ok) return;
 				try { (e.target as any)?.setPointerCapture?.(e.pointerId); } catch {}
 			} catch {}
 		}
@@ -275,12 +419,28 @@ function AppShell(): JSX.Element {
 						onToggleLabel={toggleLabel}
 						onClearLabels={clearLabels}
 						collapsed={sidebarCollapsed}
+						collectionStack={collectionStack}
+						onCollectionStackChange={setCollectionStack}
 						sortConfig={sortConfig}
 						onSortConfigChange={setSortConfig}
 					/>
 				)}
 				<main className="main-area">
-					<AuthGate selectedLabelIds={selectedLabelIds} searchQuery={searchQuery} sortConfig={sortConfig} />
+					<AuthGate
+						selectedLabelIds={selectedLabelIds}
+						selectedCollectionId={selectedCollectionId}
+						collectionStack={collectionStack}
+						selectedCollaboratorId={selectedCollaboratorId}
+						searchQuery={searchQuery}
+						sortConfig={sortConfig}
+						onClearAllFilters={clearAllFilters}
+						onSetSelectedLabelIds={setSelectedLabelIds}
+						onSetSelectedCollaboratorId={setSelectedCollaboratorId}
+						onSelectCollectionById={selectCollectionById}
+						onSetCollectionStack={setCollectionStack}
+						onSetSearchQuery={setSearchQuery}
+						onSortConfigChange={setSortConfig}
+					/>
 				</main>
 			</div>
 
@@ -306,6 +466,8 @@ function AppShell(): JSX.Element {
 							onToggleLabel={toggleLabel}
 							onClearLabels={clearLabels}
 							collapsed={false}
+							collectionStack={collectionStack}
+							onCollectionStackChange={setCollectionStack}
 							sortConfig={sortConfig}
 							onSortConfigChange={setSortConfig}
 							onRequestClose={() => setSidebarDrawerOpen(false)}

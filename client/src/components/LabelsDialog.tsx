@@ -25,6 +25,22 @@ export default function LabelsDialog({ noteId, onClose, onUpdated }: { noteId: n
     .catch(() => {});
   }, [token, noteId]);
 
+  // Prevent interaction with notes behind the modal.
+  // Use the shared open/close depth events so NotesGrid owns the global lock.
+  useEffect(() => {
+    try {
+      window.dispatchEvent(new Event('freemannotes:editor-modal-open'));
+      return () => {
+        // Delay the close signal one tick so the same gesture can't click-through.
+        setTimeout(() => {
+          try { window.dispatchEvent(new Event('freemannotes:editor-modal-close')); } catch {}
+        }, 0);
+      };
+    } catch {
+      return;
+    }
+  }, []);
+
   async function attach(nameOrId: string | number) {
     if (!token) return;
     setSaving(true);
@@ -92,8 +108,32 @@ export default function LabelsDialog({ noteId, onClose, onUpdated }: { noteId: n
   }
 
   const dialog = (
-    <div className="image-dialog-backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className="image-dialog" role="dialog" aria-modal style={{ width: 360 }}>
+    <div
+      className="image-dialog-backdrop"
+      onPointerDown={(e) => {
+        // Close on pointer-down to avoid click-through (don't wait for click).
+        if (e.target !== e.currentTarget) return;
+        e.preventDefault();
+        e.stopPropagation();
+        setTimeout(() => onClose(), 0);
+      }}
+      onClick={(e) => {
+        // If we close on pointerdown, ignore the synthetic click.
+        if (e.target === e.currentTarget) {
+          e.preventDefault();
+          e.stopPropagation();
+        }
+      }}
+    >
+      <div
+        className="image-dialog"
+        role="dialog"
+        aria-modal
+        style={{ width: 360 }}
+        onPointerDown={(e) => { e.stopPropagation(); }}
+        onMouseDown={(e) => { e.stopPropagation(); }}
+        onClick={(e) => { e.stopPropagation(); }}
+      >
         <div className="dialog-header">
           <strong>Labels</strong>
           <button className="icon-close" onClick={onClose}>✕</button>

@@ -186,6 +186,15 @@ async function start() {
     } catch (err) {
       console.warn("Notes routes not available:", err);
     }
+
+    // Collections routes
+    try {
+      const collectionsRouter = (await import("./collections")).default;
+      app.use(collectionsRouter);
+      console.log("Collections routes registered");
+    } catch (err) {
+      console.warn("Collections routes not available:", err);
+    }
   } catch (err) {
     console.warn("Startup DB initialization warning:", err);
   }

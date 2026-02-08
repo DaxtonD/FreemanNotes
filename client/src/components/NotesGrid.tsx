@@ -19,10 +19,12 @@ import NoteCard from "./NoteCard";
 import { useAuth } from "../authContext";
 import { getOrCreateDeviceProfile } from "../lib/deviceProfile";
 import TakeNoteBar from "./TakeNoteBar";
+import MobileCreateModal from "./MobileCreateModal";
 import { DEFAULT_SORT_CONFIG, type SortConfig } from '../sortTypes';
 
 type NoteLabelLite = { id: number; name: string };
 type NoteImageLite = { id: number; url: string };
+type ViewerCollectionLite = { id: number; name: string; parentId: number | null };
 
 const SwapNoteItem = React.memo(function SwapNoteItem({
   note,
@@ -59,16 +61,46 @@ const SwapNoteItem = React.memo(function SwapNoteItem({
       ref={setRefs}
       className={cls.trim()}
       style={style}
-      // Let dnd-kit handle dragging; avoid accidental drags on taps via sensors.
-      {...(disabled ? {} : attributes)}
-      {...(disabled ? {} : listeners)}
     >
-      <NoteCard note={note} onChange={onChange} />
+      <NoteCard
+        note={note}
+        onChange={onChange}
+        dragHandleAttributes={disabled ? undefined : (attributes as any)}
+        dragHandleListeners={disabled ? undefined : (listeners as any)}
+      />
     </div>
   );
 });
 
-export default function NotesGrid({ selectedLabelIds = [], searchQuery = '', sortConfig = DEFAULT_SORT_CONFIG }: { selectedLabelIds?: number[], searchQuery?: string, sortConfig?: SortConfig }) {
+export default function NotesGrid({
+  selectedLabelIds = [],
+  selectedCollectionId = null,
+  collectionStack = [],
+  selectedCollaboratorId = null,
+  searchQuery = '',
+  sortConfig = DEFAULT_SORT_CONFIG,
+  onClearAllFilters,
+  onSetSelectedLabelIds,
+  onSetSelectedCollaboratorId,
+  onSelectCollectionById,
+  onSetCollectionStack,
+  onSetSearchQuery,
+  onSortConfigChange,
+}: {
+  selectedLabelIds?: number[];
+  selectedCollectionId?: number | null;
+  collectionStack?: Array<{ id: number; name: string }>;
+  selectedCollaboratorId?: number | null;
+  searchQuery?: string;
+  sortConfig?: SortConfig;
+  onClearAllFilters?: () => void;
+  onSetSelectedLabelIds?: (ids: number[]) => void;
+  onSetSelectedCollaboratorId?: (id: number | null) => void;
+  onSelectCollectionById?: (collectionId: number, fallbackName?: string) => void;
+  onSetCollectionStack?: (next: Array<{ id: number; name: string }>) => void;
+  onSetSearchQuery?: (q: string) => void;
+  onSortConfigChange?: (next: SortConfig) => void;
+}) {
   const { token } = useAuth();
   const [notes, setNotes] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -110,6 +142,19 @@ export default function NotesGrid({ selectedLabelIds = [], searchQuery = '', sor
     else root.classList.remove('is-editor-modal-open');
     return () => { try { root.classList.remove('is-editor-modal-open'); } catch {} };
   }, [disableNoteDnD]);
+
+  // Safety: if the depth counter ever gets out of sync, recover so the grid
+  // doesn't become permanently unclickable.
+  useEffect(() => {
+    if (editorModalDepth <= 0) return;
+    const timerId = window.setTimeout(() => {
+      try {
+        const hasAnyModal = !!document.querySelector('[aria-modal="true"]');
+        if (!hasAnyModal) setEditorModalDepth(0);
+      } catch {}
+    }, 400);
+    return () => { try { window.clearTimeout(timerId); } catch {} };
+  }, [editorModalDepth]);
   const itemRefs = useRef(new Map<number, HTMLElement>());
   const lastSpliceAt = useRef<number>(0);
   const draggingIdxRef = useRef<number | null>(null);
@@ -119,11 +164,23 @@ export default function NotesGrid({ selectedLabelIds = [], searchQuery = '', sor
   const [mobileAddOpen, setMobileAddOpen] = useState(false);
   const [takeNoteOpenNonce, setTakeNoteOpenNonce] = useState(0);
   const [takeNoteOpenMode, setTakeNoteOpenMode] = useState<'text' | 'checklist'>('text');
+  const [mobileCreateMode, setMobileCreateMode] = useState<null | 'text' | 'checklist'>(null);
+
+  const activeCollection = useMemo(() => {
+    const stack = Array.isArray(collectionStack) ? collectionStack : [];
+    if (!stack.length) return null;
+    const leaf = stack[stack.length - 1];
+    const id = Number((leaf as any)?.id);
+    const path = stack.map((s) => String((s as any)?.name || '')).filter(Boolean).join(' / ');
+    if (!Number.isFinite(id) || !path) return null;
+    return { id, path };
+  }, [collectionStack]);
 
   const openTakeNote = useCallback((mode: 'text' | 'checklist') => {
     setMobileAddOpen(false);
-    setTakeNoteOpenMode(mode);
-    setTakeNoteOpenNonce((n) => n + 1);
+
+    // Mobile: open a dedicated fullscreen create modal; note is created only on Save.
+    setMobileCreateMode(mode);
   }, []);
 
   useEffect(() => {
@@ -304,6 +361,7 @@ export default function NotesGrid({ selectedLabelIds = [], searchQuery = '', sor
   const [manualDragActive, setManualDragActive] = useState(false);
   const [swapActiveId, setSwapActiveId] = useState<number | null>(null);
   const [swapTargetId, setSwapTargetId] = useState<number | null>(null);
+  const [swapOverlayRect, setSwapOverlayRect] = useState<null | { width: number; height: number }>(null);
   const swapCandidateIdRef = useRef<number | null>(null);
   const swapDwellTimerRef = useRef<number | null>(null);
   const swapAnimColsRef = useRef<null | { section: 'pinned' | 'others'; heights: number[] }>(null);
@@ -448,6 +506,16 @@ export default function NotesGrid({ selectedLabelIds = [], searchQuery = '', sor
     }));
   }
 
+  function applyCollectionsToNote(noteId: number, collections: ViewerCollectionLite[]) {
+    const nextCollections = (Array.isArray(collections) ? collections : [])
+      .filter((c) => c && typeof (c as any).id === 'number' && typeof (c as any).name === 'string')
+      .map((c: any) => ({ id: Number(c.id), name: String(c.name), parentId: (c.parentId == null ? null : Number(c.parentId)) }));
+    setNotes((s) => s.map((n) => {
+      if (Number(n.id) !== Number(noteId)) return n;
+      return { ...n, viewerCollections: nextCollections };
+    }));
+  }
+
   useEffect(() => { if (token) load(); else setNotes([]); }, [token]);
   useEffect(() => { notesRef.current = notes; }, [notes]);
   useEffect(() => { pinnedLayoutRef.current = pinnedLayout; }, [pinnedLayout]);
@@ -500,6 +568,10 @@ export default function NotesGrid({ selectedLabelIds = [], searchQuery = '', sor
     startSwapPointerTracking((evt as any).activatorEvent);
     startSwapAutoScroll();
     setSwapActiveId(id);
+    const el = itemRefs.current.get(id);
+    const r = el?.getBoundingClientRect?.();
+    if (r && r.width > 0 && r.height > 0) setSwapOverlayRect({ width: r.width, height: r.height });
+    else setSwapOverlayRect(null);
     setSwapTargetId(null);
     swapCandidateIdRef.current = null;
     clearSwapDwellTimer();
@@ -554,6 +626,7 @@ export default function NotesGrid({ selectedLabelIds = [], searchQuery = '', sor
     setSwapActiveId(null);
     setSwapTargetId(null);
     setManualDragActive(false);
+    setSwapOverlayRect(null);
   }
 
   // While swap-dragging, disable native touch scrolling so auto-scroll is controlled
@@ -894,7 +967,7 @@ export default function NotesGrid({ selectedLabelIds = [], searchQuery = '', sor
   function isInteractiveTarget(target: HTMLElement | null): boolean {
     if (!target) return false;
     try {
-      return !!target.closest('button, a, input, textarea, select, [contenteditable="true"], [role="button"], .more-menu, .dropdown, .color-palette');
+      return !!target.closest('button, a, input, textarea, select, [contenteditable="true"], .more-menu, .dropdown, .color-palette');
     } catch { return false; }
   }
 
@@ -1172,7 +1245,7 @@ export default function NotesGrid({ selectedLabelIds = [], searchQuery = '', sor
     requestAnimationFrame(() => {
       try { window.dispatchEvent(new Event('notes-grid:recalc')); } catch {}
     });
-  }, [selectedLabelIds, searchQuery, notes]);
+  }, [selectedLabelIds, selectedCollectionId, searchQuery, notes, sortConfig?.groupBy, sortConfig?.sortKey, sortConfig?.sortDir, sortConfig?.smartFilter]);
 
   // Subscribe to lightweight server events to refresh list on share/unshare and update chips
   useEffect(() => {
@@ -1266,6 +1339,19 @@ export default function NotesGrid({ selectedLabelIds = [], searchQuery = '', sor
               if (!Number.isFinite(noteId)) break;
               const color = (typeof payload.color === 'string') ? String(payload.color) : '';
               applyColorToNote(noteId, color);
+              break;
+            }
+            case 'note-collections-changed': {
+              const payload = msg.payload || {};
+              const noteId = Number(payload.noteId);
+              if (!Number.isFinite(noteId)) break;
+              const collections = Array.isArray(payload.collections) ? payload.collections : [];
+              applyCollectionsToNote(noteId, collections);
+              break;
+            }
+            case 'note-collection-changed': {
+              // Legacy single-collection event; reload to pick up names/membership.
+              load();
               break;
             }
             case 'note-shared':
@@ -1661,6 +1747,7 @@ export default function NotesGrid({ selectedLabelIds = [], searchQuery = '', sor
 
   const { pinned, others, pinnedGroups, otherGroups } = useMemo(() => {
     const labelIds = Array.isArray(selectedLabelIds) ? selectedLabelIds : [];
+    const colId = (selectedCollectionId == null ? null : Number(selectedCollectionId));
     const q = (searchQuery || '').trim().toLowerCase();
 
     const matchesLabels = (n: any): boolean => {
@@ -1680,8 +1767,45 @@ export default function NotesGrid({ selectedLabelIds = [], searchQuery = '', sor
       return false;
     };
 
-    const pinnedRaw = notes.filter(n => n.pinned).filter(matchesLabels).filter(matchesSearch);
-    const othersRaw = notes.filter(n => !n.pinned).filter(matchesLabels).filter(matchesSearch);
+    const matchesCollection = (n: any): boolean => {
+      if (colId == null || !Number.isFinite(colId)) return true;
+      const viewerCollections = Array.isArray(n.viewerCollections) ? n.viewerCollections : [];
+      for (const c of viewerCollections) {
+        const id = (c && typeof (c as any).id === 'number') ? Number((c as any).id) : null;
+        if (id != null && Number.isFinite(id) && Number(id) === Number(colId)) return true;
+      }
+
+      // Fallback for older payload shapes.
+      const noteCollections = Array.isArray(n.noteCollections) ? n.noteCollections : [];
+      for (const nc of noteCollections) {
+        const id = (nc && typeof (nc as any).collectionId === 'number')
+          ? Number((nc as any).collectionId)
+          : (typeof (nc as any)?.collection?.id === 'number' ? Number((nc as any).collection.id) : null);
+        if (id != null && Number.isFinite(id) && Number(id) === Number(colId)) return true;
+      }
+      return false;
+    };
+
+    const collabId = (selectedCollaboratorId == null ? null : Number(selectedCollaboratorId));
+    const matchesCollaborator = (n: any): boolean => {
+      if (collabId == null || !Number.isFinite(collabId)) return true;
+      try {
+        const ownerId = (typeof (n as any)?.owner?.id === 'number') ? Number((n as any).owner.id)
+          : (typeof (n as any)?.ownerId === 'number' ? Number((n as any).ownerId) : null);
+        if (ownerId != null && Number(ownerId) === Number(collabId)) return true;
+
+        const cols = Array.isArray((n as any)?.collaborators) ? (n as any).collaborators : [];
+        for (const c of cols) {
+          const uid = (typeof c?.user?.id === 'number') ? Number(c.user.id)
+            : (typeof c?.userId === 'number' ? Number(c.userId) : null);
+          if (uid != null && Number(uid) === Number(collabId)) return true;
+        }
+      } catch {}
+      return false;
+    };
+
+    const pinnedRaw = notes.filter(n => n.pinned).filter(matchesLabels).filter(matchesCollection).filter(matchesCollaborator).filter(matchesSearch);
+    const othersRaw = notes.filter(n => !n.pinned).filter(matchesLabels).filter(matchesCollection).filter(matchesCollaborator).filter(matchesSearch);
     const pinnedSorted = applySort(pinnedRaw);
     const othersSorted = applySort(othersRaw);
     return {
@@ -1690,7 +1814,135 @@ export default function NotesGrid({ selectedLabelIds = [], searchQuery = '', sor
       pinnedGroups: groupNotes(pinnedSorted),
       otherGroups: groupNotes(othersSorted),
     };
-  }, [notes, selectedLabelIds, searchQuery, sortConfig]);
+  }, [notes, selectedLabelIds, selectedCollectionId, selectedCollaboratorId, searchQuery, sortConfig]);
+
+  const gridContext = useMemo(() => {
+    type Chip = { id: string; text: string; onClear?: () => void };
+    const chips: Chip[] = [];
+    const stack = Array.isArray(collectionStack) ? collectionStack : [];
+    const colPath = stack.length ? stack.map((s) => String(s.name || '')).filter(Boolean).join(' / ') : '';
+
+    if (colPath) {
+      chips.push({
+        id: 'collection',
+        text: `Collection: ${colPath}`,
+        onClear: () => {
+          try { onSetCollectionStack && onSetCollectionStack([]); } catch {}
+        },
+      });
+    }
+
+    const labelIds = Array.isArray(selectedLabelIds) ? selectedLabelIds : [];
+    if (labelIds.length) {
+      const nameById = new Map<number, string>();
+      for (const n of notes) {
+        const nls = Array.isArray((n as any)?.noteLabels) ? (n as any).noteLabels : [];
+        for (const nl of nls) {
+          const lid = (typeof nl?.label?.id === 'number') ? Number(nl.label.id) : null;
+          const nm = (typeof nl?.label?.name === 'string') ? String(nl.label.name) : null;
+          if (lid != null && nm) nameById.set(lid, nm);
+        }
+      }
+      const labelNames = labelIds.map((id) => nameById.get(Number(id)) || `#${Number(id)}`).join(', ');
+      chips.push({
+        id: 'labels',
+        text: `Labels: ${labelNames}`,
+        onClear: () => {
+          try { onSetSelectedLabelIds && onSetSelectedLabelIds([]); } catch {}
+        },
+      });
+    }
+
+    const cid = (selectedCollaboratorId == null ? null : Number(selectedCollaboratorId));
+    if (cid != null && Number.isFinite(cid)) {
+      let collabName = '';
+      try {
+        outer: for (const n of notes) {
+          const owner = (n as any)?.owner;
+          if (owner && typeof owner.id === 'number' && Number(owner.id) === cid) {
+            collabName = String(owner.name || owner.email || cid);
+            break outer;
+          }
+          const cols = Array.isArray((n as any)?.collaborators) ? (n as any).collaborators : [];
+          for (const c of cols) {
+            const u = c?.user;
+            if (u && typeof u.id === 'number' && Number(u.id) === cid) {
+              collabName = String(u.name || u.email || cid);
+              break outer;
+            }
+          }
+        }
+      } catch {}
+      chips.push({
+        id: 'collaborator',
+        text: `With: ${collabName || String(cid)}`,
+        onClear: () => {
+          try { onSetSelectedCollaboratorId && onSetSelectedCollaboratorId(null); } catch {}
+        },
+      });
+    }
+
+    const q = (searchQuery || '').trim();
+    if (q) {
+      chips.push({
+        id: 'search',
+        text: `Search: ${q}`,
+        onClear: () => {
+          try { onSetSearchQuery && onSetSearchQuery(''); } catch {}
+        },
+      });
+    }
+
+    const cfg = sortConfig || DEFAULT_SORT_CONFIG;
+    if (cfg.sortKey !== 'default') {
+      const sortLabel = (() => {
+        if (cfg.sortKey === 'createdAt') return `Date created: ${cfg.sortDir === 'asc' ? 'Ascending' : 'Descending'}`;
+        if (cfg.sortKey === 'updatedAt') return `Date updated: ${cfg.sortDir === 'asc' ? 'Ascending' : 'Descending'}`;
+        if (cfg.sortKey === 'title') return `Alphabetical: ${cfg.sortDir === 'asc' ? 'A→Z' : 'Z→A'}`;
+        return `Sort: ${String(cfg.sortKey)}`;
+      })();
+      chips.push({
+        id: 'sort',
+        text: sortLabel,
+        onClear: () => {
+          try { onSortConfigChange && onSortConfigChange({ ...cfg, sortKey: 'default', sortDir: DEFAULT_SORT_CONFIG.sortDir }); } catch {}
+        },
+      });
+    }
+    if (cfg.groupBy && cfg.groupBy !== 'none') {
+      chips.push({
+        id: 'group',
+        text: `Grouping: ${cfg.groupBy === 'week' ? 'Week' : cfg.groupBy === 'month' ? 'Month' : String(cfg.groupBy)}`,
+        onClear: () => {
+          try { onSortConfigChange && onSortConfigChange({ ...cfg, groupBy: 'none' }); } catch {}
+        },
+      });
+    }
+    if (cfg.smartFilter && cfg.smartFilter !== 'none') {
+      const smartLabel = (() => {
+        if (cfg.smartFilter === 'dueSoon') return 'Filter: Due soon';
+        if (cfg.smartFilter === 'leastAccessed') return 'Filter: Least accessed';
+        if (cfg.smartFilter === 'mostEdited') return 'Filter: Most edited';
+        if (cfg.smartFilter === 'atRisk') return 'Filter: At risk';
+        return `Filter: ${String(cfg.smartFilter)}`;
+      })();
+      chips.push({
+        id: 'smartFilter',
+        text: smartLabel,
+        onClear: () => {
+          try { onSortConfigChange && onSortConfigChange({ ...cfg, smartFilter: 'none' }); } catch {}
+        },
+      });
+    }
+
+    const hasAnyFilter = chips.length > 0;
+    return {
+      title: colPath || 'All notes',
+      chips,
+      show: true,
+      hasAnyFilter,
+    };
+  }, [collectionStack, selectedLabelIds, selectedCollaboratorId, searchQuery, notes, sortConfig, onSetSelectedLabelIds, onSetSelectedCollaboratorId, onSetCollectionStack, onSetSearchQuery, onSortConfigChange]);
 
   // Animate only column height adjustments after a swap.
   useEffect(() => {
@@ -1887,6 +2139,27 @@ export default function NotesGrid({ selectedLabelIds = [], searchQuery = '', sor
   }
 
   const handleNoteChange = useCallback((evt?: any) => {
+    if (evt && evt.type === 'filter:collection' && typeof evt.collectionId === 'number') {
+      try { onSetSelectedCollaboratorId && onSetSelectedCollaboratorId(null); } catch {}
+      try { onSelectCollectionById && onSelectCollectionById(Number(evt.collectionId), (typeof evt.collectionName === 'string' ? String(evt.collectionName) : undefined)); } catch {}
+      return;
+    }
+    if (evt && evt.type === 'filter:collaborator' && typeof evt.userId === 'number') {
+      try { onSetSelectedCollaboratorId && onSetSelectedCollaboratorId(Number(evt.userId)); } catch {}
+      return;
+    }
+    if (evt && evt.type === 'filter:labels') {
+      const single = (typeof (evt as any).labelId === 'number') ? Number((evt as any).labelId) : null;
+      if (single != null && Number.isFinite(single)) {
+        try { onSetSelectedLabelIds && onSetSelectedLabelIds([single]); } catch {}
+        return;
+      }
+      if (Array.isArray((evt as any).labelIds)) {
+        const ids = (evt as any).labelIds.map((x: any) => Number(x)).filter((x: any) => Number.isFinite(x));
+        try { onSetSelectedLabelIds && onSetSelectedLabelIds(ids); } catch {}
+        return;
+      }
+    }
     if (evt && evt.type === 'labels' && typeof evt.noteId === 'number' && Array.isArray(evt.labels)) {
       applyLabelsToNote(evt.noteId, evt.labels);
       return;
@@ -1899,8 +2172,17 @@ export default function NotesGrid({ selectedLabelIds = [], searchQuery = '', sor
       applyColorToNote(evt.noteId, (typeof evt.color === 'string') ? String(evt.color) : '');
       return;
     }
+    if (evt && evt.type === 'collections' && typeof evt.noteId === 'number' && Array.isArray(evt.collections)) {
+      applyCollectionsToNote(evt.noteId, evt.collections);
+      return;
+    }
+    if (evt && evt.type === 'collection' && typeof evt.noteId === 'number') {
+      // Legacy single-collection event; reload to pick up names/membership.
+      load();
+      return;
+    }
     load();
-  }, [token, sortConfig, searchQuery, selectedLabelIds]);
+  }, [token, sortConfig, searchQuery, selectedLabelIds, selectedCollectionId, onSetSelectedLabelIds, onSetSelectedCollaboratorId, onSelectCollectionById]);
 
   useEffect(() => {
     if (!loading && token) setHasLoadedOnce(true);
@@ -1984,8 +2266,6 @@ export default function NotesGrid({ selectedLabelIds = [], searchQuery = '', sor
       rearrangePendingRef.current.longPressTimerId = timerId as any;
       return;
     }
-
-    try { (e.currentTarget as any).setPointerCapture?.(pointerId); } catch {}
     // Important: do NOT preventDefault here for mouse/pen.
     // We only suppress default actions after the drag has actually activated.
   }
@@ -2256,20 +2536,71 @@ export default function NotesGrid({ selectedLabelIds = [], searchQuery = '', sor
   return (
     <section className="notes-area">
       <div className="take-note-sticky">
-        <TakeNoteBar onCreated={load} openRequest={{ nonce: takeNoteOpenNonce, mode: takeNoteOpenMode }} />
+        <TakeNoteBar onCreated={load} openRequest={{ nonce: takeNoteOpenNonce, mode: takeNoteOpenMode }} activeCollection={activeCollection} />
+
+        {gridContext.show && (
+          <div className="grid-context" role="region" aria-label="Current view">
+            <div className="grid-context__text">
+              <div className="grid-context__title-row">
+                <div className="grid-context__title">{gridContext.title}</div>
+                {!!onClearAllFilters && !!(gridContext as any).hasAnyFilter && (
+                  <button
+                    type="button"
+                    className="grid-context__clear"
+                    onClick={() => {
+                      try { onClearAllFilters(); } catch {}
+                    }}
+                    aria-label="Clear all filters"
+                    title="Clear"
+                  >
+                    Clear
+                  </button>
+                )}
+              </div>
+              {!!(gridContext as any).chips?.length && (
+                <div className="grid-context__chips" aria-label="Active filters">
+                  {(gridContext as any).chips.map((c: any) => (
+                    <span key={String(c.id)} className="grid-chip">
+                      <span className="grid-chip__text" title={String(c.text || '')}>{String(c.text || '')}</span>
+                      {typeof c.onClear === 'function' && (
+                        <button
+                          type="button"
+                          className="grid-chip__clear"
+                          onClick={() => { try { c.onClear(); } catch {} }}
+                          aria-label={`Clear ${String(c.text || 'filter')}`}
+                          title="Clear"
+                        >
+                          ×
+                        </button>
+                      )}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
       </div>
+
+      {mobileAddOpen && (
+        <div
+          className="mobile-add-backdrop"
+          aria-hidden="true"
+          onPointerDown={() => setMobileAddOpen(false)}
+        />
+      )}
 
       <div className="mobile-add-note" aria-label="Add note">
         {mobileAddOpen && (
           <div className="mobile-add-menu" role="menu" aria-label="Create">
             <button type="button" className="mobile-add-menu-item" role="menuitem" onClick={() => openTakeNote('text')}>
-              <svg viewBox="0 0 24 24" aria-hidden focusable="false">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" aria-hidden focusable="false">
                 <path fill="currentColor" d="M6 2h9l5 5v15a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2Zm8 1.5V8h4.5L14 3.5ZM7 11h10v1.6H7V11Zm0 4h10v1.6H7V15Zm0 4h7v1.6H7V19Z"/>
               </svg>
               <span>New note</span>
             </button>
             <button type="button" className="mobile-add-menu-item" role="menuitem" onClick={() => openTakeNote('checklist')}>
-              <svg viewBox="0 0 24 24" aria-hidden focusable="false">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" aria-hidden focusable="false">
                 <path fill="currentColor" d="M9.2 7.2 7.9 5.9 6 7.8 5.1 6.9 4 8l2 2 3.2-3.2ZM10.5 8H20v1.6h-9.5V8Zm-1.3 6.2-1.3-1.3L6 14.8l-.9-.9L4 15l2 2 3.2-3.2ZM10.5 15H20v1.6h-9.5V15Z"/>
               </svg>
               <span>New checklist</span>
@@ -2284,6 +2615,14 @@ export default function NotesGrid({ selectedLabelIds = [], searchQuery = '', sor
           onClick={() => setMobileAddOpen((s) => !s)}
         >+</button>
       </div>
+
+      <MobileCreateModal
+        open={mobileCreateMode != null}
+        mode={(mobileCreateMode || 'text') as any}
+        onClose={() => setMobileCreateMode(null)}
+        onCreated={load}
+        activeCollection={activeCollection}
+      />
 
       {manualSwapEnabled ? (
         <DndContext
@@ -2360,10 +2699,11 @@ export default function NotesGrid({ selectedLabelIds = [], searchQuery = '', sor
               <div
                 className="note-drag-ghost"
                 style={{
-                  width: (() => {
+                  width: swapOverlayRect ? `${swapOverlayRect.width}px` : (() => {
                     const s = spanForNote(activeSwapNote);
                     return `calc(${s} * var(--note-card-width) + ${Math.max(0, s - 1)} * var(--gap))`;
                   })(),
+                  height: swapOverlayRect ? `${swapOverlayRect.height}px` : undefined,
                 }}
               >
                 <NoteCard note={activeSwapNote} onChange={handleNoteChange} />

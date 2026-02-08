@@ -4,6 +4,20 @@ All notable changes to this project will be documented in this file.
 
 Adheres to Semantic Versioning (MAJOR.MINOR.PATCH).
 
+## [0.4.6] - 2026-02-08
+
+### Added
+- Always-visible active view chips (collection path, labels, collaborator, search, sort, grouping, smart filter) with per-chip clear and a global clear-all.
+- Create-into-collection flow: when a collection filter path is active, new notes/checklists can be auto-added to the current collection on Save (toggle in the create UI).
+- Mobile fullscreen create modals for note + checklist with Save-only persistence.
+
+### Changed
+- Mobile Collections navigation no longer auto-closes the drawer when drilling into a collection.
+
+### Fixed
+- Desktop TakeNoteBar click-away behavior so it doesn't immediately close on open.
+- Mobile checklist drag behavior (handle/spacing/ghosting) to better match the main checklist editor.
+
 ## [0.4.2] - 2026-02-05
 
 ### Added

@@ -5,7 +5,35 @@ import RegisterModal from './RegisterModal';
 import LoginModal from './LoginModal';
 import type { SortConfig } from '../sortTypes';
 
-export default function AuthGate({ selectedLabelIds, searchQuery, sortConfig }: { selectedLabelIds?: number[], searchQuery?: string, sortConfig?: SortConfig }) {
+export default function AuthGate({
+  selectedLabelIds,
+  selectedCollectionId,
+  collectionStack,
+  selectedCollaboratorId,
+  searchQuery,
+  sortConfig,
+  onClearAllFilters,
+  onSetSelectedLabelIds,
+  onSetSelectedCollaboratorId,
+  onSelectCollectionById,
+  onSetCollectionStack,
+  onSetSearchQuery,
+  onSortConfigChange,
+}: {
+  selectedLabelIds?: number[];
+  selectedCollectionId?: number | null;
+  collectionStack?: Array<{ id: number; name: string }>;
+  selectedCollaboratorId?: number | null;
+  searchQuery?: string;
+  sortConfig?: SortConfig;
+  onClearAllFilters?: () => void;
+  onSetSelectedLabelIds?: (ids: number[]) => void;
+  onSetSelectedCollaboratorId?: (id: number | null) => void;
+  onSelectCollectionById?: (collectionId: number, fallbackName?: string) => void;
+  onSetCollectionStack?: (next: Array<{ id: number; name: string }>) => void;
+  onSetSearchQuery?: (q: string) => void;
+  onSortConfigChange?: (next: SortConfig) => void;
+}) {
   const { user } = useAuth();
   const [showRegister, setShowRegister] = useState(false);
   const [showLogin, setShowLogin] = useState(false);
@@ -18,7 +46,23 @@ export default function AuthGate({ selectedLabelIds, searchQuery, sortConfig }: 
       .catch(() => setRegistrationEnabled(false));
   }, []);
 
-  if (user) return <NotesGrid selectedLabelIds={selectedLabelIds || []} searchQuery={searchQuery} sortConfig={sortConfig} />;
+  if (user) return (
+    <NotesGrid
+      selectedLabelIds={selectedLabelIds || []}
+      selectedCollectionId={selectedCollectionId ?? null}
+      collectionStack={collectionStack || []}
+      selectedCollaboratorId={selectedCollaboratorId ?? null}
+      searchQuery={searchQuery}
+      sortConfig={sortConfig}
+      onClearAllFilters={onClearAllFilters}
+      onSetSelectedLabelIds={onSetSelectedLabelIds}
+      onSetSelectedCollaboratorId={onSetSelectedCollaboratorId}
+      onSelectCollectionById={onSelectCollectionById}
+      onSetCollectionStack={onSetCollectionStack}
+      onSetSearchQuery={onSetSearchQuery}
+      onSortConfigChange={onSortConfigChange}
+    />
+  );
 
   return (
     <div style={{ padding: 24, display: 'flex', flexDirection: 'column', alignItems: 'center' }}>

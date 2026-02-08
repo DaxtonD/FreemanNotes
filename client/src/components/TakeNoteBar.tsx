@@ -20,9 +20,11 @@ import Underline from '@tiptap/extension-underline';
 export default function TakeNoteBar({
   onCreated,
   openRequest,
+  activeCollection,
 }: {
   onCreated?: () => void;
   openRequest?: { nonce: number; mode: 'text' | 'checklist' };
+  activeCollection?: { id: number; path: string } | null;
 }): JSX.Element {
   const { token, user } = useAuth();
   const [expanded, setExpanded] = useState(false);
@@ -30,31 +32,52 @@ export default function TakeNoteBar({
   const [title, setTitle] = useState('');
   const [body, setBody] = useState('');
   const [maximized, setMaximized] = useState(false);
-    const editor = useEditor({
-      extensions: [
-        StarterKit.configure({
-          heading: { levels: [1, 2, 3] },
-        }),
-        TextAlign.configure({ types: ['heading', 'paragraph'] }),
-        Underline,
-        Extension.create({
-          name: 'paragraphEnterFix',
-          priority: 1000,
-          addKeyboardShortcuts() {
-            return {
-              'Shift-Enter': () => { const e = this.editor; e.commands.splitBlock(); e.commands.setParagraph(); return true; },
-              'Mod-Enter': () => { const e = this.editor; e.commands.splitBlock(); e.commands.setParagraph(); return true; },
-            };
-          },
-        }),
-      ],
-      content: '',
-      editorProps: {
-        attributes: {
-          class: 'rt-editor',
+  const editor = useEditor({
+    extensions: [
+      StarterKit.configure({
+        heading: { levels: [1, 2, 3] },
+      }),
+      TextAlign.configure({ types: ['heading', 'paragraph'] }),
+      Underline,
+      Extension.create({
+        name: 'paragraphEnterFix',
+        priority: 1000,
+        addKeyboardShortcuts() {
+          return {
+            'Shift-Enter': () => { const e = this.editor; e.commands.splitBlock(); e.commands.setParagraph(); return true; },
+            'Mod-Enter': () => { const e = this.editor; e.commands.splitBlock(); e.commands.setParagraph(); return true; },
+          };
         },
+      }),
+    ],
+    content: '',
+    editorProps: {
+      attributes: {
+        class: 'rt-editor',
       },
-    });
+    },
+  });
+
+  function shouldFullscreenOnMobile(): boolean {
+    try {
+      const mq = window.matchMedia;
+      if (!mq) return false;
+      const touchLike = mq('(pointer: coarse)').matches || mq('(any-pointer: coarse)').matches;
+      const small = mq('(max-width: 720px)').matches;
+      return !!(touchLike && small);
+    } catch {
+      return false;
+    }
+  }
+
+  const backIdRef = useRef<string>('');
+  if (!backIdRef.current) {
+    try {
+      backIdRef.current = `take-note-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+    } catch {
+      backIdRef.current = `take-note-${Math.random()}`;
+    }
+  }
 
     function toggleMarkAcrossLine(mark: 'bold' | 'italic' | 'underline') {
       if (!editor) return;
@@ -84,7 +107,13 @@ export default function TakeNoteBar({
 
     // Link insertion is only available in the full editor.
 
+  const ignoreNextDocClickRef = useRef(false);
   const lastExternalOpenRef = useRef(0);
+
+  const activeCollectionId = (activeCollection && Number.isFinite(Number(activeCollection.id))) ? Number(activeCollection.id) : null;
+  const activeCollectionPath = (activeCollection && typeof activeCollection.path === 'string') ? String(activeCollection.path) : '';
+  const [addToCurrentCollection, setAddToCurrentCollection] = useState(false);
+
   useEffect(() => {
     const nonce = Number(openRequest?.nonce || 0);
     if (!nonce) return;
@@ -93,8 +122,10 @@ export default function TakeNoteBar({
 
     const nextMode = openRequest?.mode || 'text';
     setMode(nextMode);
+    try { ignoreNextDocClickRef.current = true; } catch {}
+    try { setAddToCurrentCollection(activeCollectionId != null); } catch {}
     setExpanded(true);
-    setMaximized(false);
+    setMaximized(shouldFullscreenOnMobile());
 
     if (nextMode === 'checklist') {
       setItems((cur) => (cur && cur.length ? cur : [{ content: '' }]));
@@ -105,6 +136,49 @@ export default function TakeNoteBar({
       });
     }
   }, [openRequest?.nonce, openRequest?.mode, editor]);
+
+  // Treat the expanded create editor like a modal: disable background interactions
+  // and hook the mobile Back button to close it instead of exiting.
+  const modalDepthRef = useRef(false);
+  useEffect(() => {
+    try {
+      if (expanded && !modalDepthRef.current) {
+        modalDepthRef.current = true;
+        window.dispatchEvent(new Event('freemannotes:editor-modal-open'));
+      }
+      if (!expanded && modalDepthRef.current) {
+        modalDepthRef.current = false;
+        window.dispatchEvent(new Event('freemannotes:editor-modal-close'));
+      }
+    } catch {}
+  }, [expanded]);
+
+  useEffect(() => {
+    if (!expanded) return;
+    const id = backIdRef.current;
+    const onBack = () => {
+      try {
+        const st = overlayStateRef.current;
+        if (st.showImageDialog) { setShowImageDialog(false); return; }
+        if (st.showCollaborator) { setShowCollaborator(false); return; }
+        if (st.showReminderPicker) { setShowReminderPicker(false); return; }
+        if (st.showPalette) { setShowPalette(false); return; }
+      } catch {}
+      try {
+        // Discard on Back (do not create notes unless user explicitly clicks Save)
+        discardAndClose();
+      } catch {
+        try { discardAndClose(); } catch {}
+      }
+    };
+
+    try {
+      window.dispatchEvent(new CustomEvent('freemannotes:back/register', { detail: { id, onBack } }));
+    } catch {}
+    return () => {
+      try { window.dispatchEvent(new CustomEvent('freemannotes:back/unregister', { detail: { id } })); } catch {}
+    };
+  }, [expanded]);
 
   const [items, setItems] = useState<{ content: string; checked?: boolean }[]>([]);
   const [loading, setLoading] = useState(false);
@@ -122,6 +196,21 @@ export default function TakeNoteBar({
   const [showImageDialog, setShowImageDialog] = useState(false);
   const [imageUrl, setImageUrl] = useState<string | null>(null);
   const [selectedCollaborators, setSelectedCollaborators] = useState<Array<{id:number;email:string}>>([]);
+
+  const overlayStateRef = useRef({
+    showPalette: false,
+    showReminderPicker: false,
+    showCollaborator: false,
+    showImageDialog: false,
+  });
+  useEffect(() => {
+    overlayStateRef.current = {
+      showPalette,
+      showReminderPicker,
+      showCollaborator,
+      showImageDialog,
+    };
+  }, [showPalette, showReminderPicker, showCollaborator, showImageDialog]);
 
   function getCurrentChecklistEditor(): any | null {
     let ed = activeChecklistEditor.current as any;
@@ -209,9 +298,42 @@ export default function TakeNoteBar({
     return hasText && allMarked;
   }
 
+  function hasContentToSave(): boolean {
+    try {
+      const hasTitle = !!title.trim();
+      const hasBg = !!bg;
+      const hasExtras = !!(imageUrl || (selectedCollaborators && selectedCollaborators.length));
+      if (mode === 'checklist') {
+        const anyItem = (items || []).some((it) => !!String(it.content || '').trim() || !!it.checked);
+        return hasTitle || hasBg || hasExtras || anyItem;
+      }
+      const hasText = !!((editor?.getText() || '').trim());
+      return hasTitle || hasBg || hasExtras || hasText;
+    } catch {
+      return false;
+    }
+  }
+
+  function discardAndClose() {
+    try { setExpanded(false); } catch {}
+    try { setMaximized(false); } catch {}
+    try { setShowPalette(false); } catch {}
+    try { setShowReminderPicker(false); } catch {}
+    try { setShowCollaborator(false); } catch {}
+    try { setShowImageDialog(false); } catch {}
+    try { setTitle(''); setBody(''); setItems([]); setBg(''); setImageUrl(null); setSelectedCollaborators([]); } catch {}
+    try { editor?.commands.clearContent(); } catch {}
+  }
+
   useEffect(() => {
     function onDocClick(e: MouseEvent) {
       if (!expanded) return;
+      // When opening, the click target can be removed during the same click event,
+      // causing composedPath/contains checks to fail and immediately closing.
+      if (ignoreNextDocClickRef.current) {
+        ignoreNextDocClickRef.current = false;
+        return;
+      }
       // If an inner control intentionally prevented default (e.g. formatting buttons,
       // empty-state actions), don't treat it as a click-away.
       if (e.defaultPrevented) return;
@@ -234,13 +356,15 @@ export default function TakeNoteBar({
 
       if (e.target instanceof Node && el.contains(e.target)) return;
 
-      setExpanded(false);
-      setMaximized(false);
+      // Discard on click-away (do not create notes unless user explicitly clicks Save)
+      discardAndClose();
     }
 
     function onKey(e: KeyboardEvent) {
       if (!expanded) return;
-      if (e.key === 'Escape') { setExpanded(false); setMaximized(false); }
+      if (e.key === 'Escape') {
+        discardAndClose();
+      }
     }
 
     document.addEventListener('click', onDocClick);
@@ -304,15 +428,34 @@ export default function TakeNoteBar({
   async function save() {
     setLoading(true);
     try {
+      if (!token) throw new Error('Not authenticated');
       // For text notes, capture content JSON to seed Yjs after creation.
       const bodyJson = mode === 'text' ? (editor?.getJSON() || {}) : {};
       // Do not store body for text notes; rely on Yjs collaboration persistence.
       const payload: any = { title, body: null, type: mode === 'checklist' ? 'CHECKLIST' : 'TEXT', color: bg || null };
       if (mode === 'checklist') payload.items = items.map((it, i) => ({ content: it.content, ord: i }));
-      const res = await fetch('/api/notes', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify(payload) });
+      const res = await fetch('/api/notes', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify(payload),
+      });
       if (!res.ok) throw new Error(await res.text());
       const data = await res.json();
       const noteId = data?.note?.id;
+
+      if (noteId && addToCurrentCollection && activeCollectionId != null) {
+        try {
+          const cres = await fetch(`/api/notes/${noteId}/collections`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+            body: JSON.stringify({ collectionId: activeCollectionId }),
+          });
+          if (!cres.ok) throw new Error(await cres.text());
+        } catch (e) {
+          console.warn('Created note but failed to add to collection', e);
+          try { window.alert('Note created, but failed to add it to the current collection.'); } catch {}
+        }
+      }
       // For text notes, push initial content into the Yjs doc so it persists canonically.
       if (noteId && mode === 'text') {
         try {
@@ -356,6 +499,7 @@ export default function TakeNoteBar({
         try { await fetch(`/api/notes/${noteId}/images`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ url: imageUrl }) }); } catch {}
       }
       setTitle(''); setBody(''); setItems([]); setExpanded(false); setBg(''); setImageUrl(null); setSelectedCollaborators([]);
+      try { setAddToCurrentCollection(activeCollectionId != null); } catch {}
       editor?.commands.clearContent();
       onCreated && onCreated();
     } catch (err) {
@@ -371,11 +515,13 @@ export default function TakeNoteBar({
           className="take-note-bar"
           role="button"
           tabIndex={0}
-          onMouseDown={() => { setMode('text'); setExpanded(true); }}
-          onClick={() => { setMode('text'); setExpanded(true); }}
+          onMouseDown={(e) => { try { e.preventDefault(); } catch {} try { e.stopPropagation(); } catch {} ignoreNextDocClickRef.current = true; try { setAddToCurrentCollection(activeCollectionId != null); } catch {} setMode('text'); setExpanded(true); }}
+          onClick={(e) => { try { e.preventDefault(); } catch {} try { e.stopPropagation(); } catch {} ignoreNextDocClickRef.current = true; try { setAddToCurrentCollection(activeCollectionId != null); } catch {} setMode('text'); setExpanded(true); }}
           onKeyDown={(e) => {
             if (e.key === 'Enter' || e.key === ' ') {
               e.preventDefault();
+              ignoreNextDocClickRef.current = true;
+              try { setAddToCurrentCollection(activeCollectionId != null); } catch {}
               setMode('text');
               setExpanded(true);
             }
@@ -385,7 +531,7 @@ export default function TakeNoteBar({
           <div
             className="checkbox-visual"
             onMouseDown={(e) => { e.stopPropagation(); }}
-            onClick={(e) => { e.stopPropagation(); setMode('checklist'); setItems([{ content: '' }]); setExpanded(true); focusItem(0); }}
+            onClick={(e) => { e.stopPropagation(); ignoreNextDocClickRef.current = true; try { setAddToCurrentCollection(activeCollectionId != null); } catch {} setMode('checklist'); setItems([{ content: '' }]); setExpanded(true); focusItem(0); }}
             aria-label="Start checklist"
           >
             <svg viewBox="0 0 24 24" fill="none" aria-hidden focusable="false">
@@ -672,32 +818,48 @@ export default function TakeNoteBar({
         </div>
       )}
 
-      <div className="note-footer" aria-hidden={false} style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 10 }}>
-        <div className="note-actions" style={{ marginRight: 'auto', display: 'inline-flex', gap: 8, color: (bg ? textColor : undefined) }}>
-          <button className="tiny palette" onClick={() => setShowPalette(true)} aria-label="Change color" title="Change color">
-            <FontAwesomeIcon icon={faPalette} className="palette-svg" />
-          </button>
-          <button className="tiny" onClick={() => setShowReminderPicker(true)} aria-label="Reminder" title="Reminder">
+      <div className="note-footer" aria-hidden={false} style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 10, flexWrap: 'wrap' }}>
+        <div style={{ marginRight: 'auto', display: 'flex', flexDirection: 'column', gap: 8, minWidth: 0, color: (bg ? textColor : undefined) }}>
+          {!!activeCollectionId && !!activeCollectionPath && (
+            <label className="create-collection-toggle" title={activeCollectionPath}>
+              <input
+                type="checkbox"
+                checked={!!addToCurrentCollection}
+                onChange={(e) => setAddToCurrentCollection(!!e.target.checked)}
+              />
+              <span className="create-collection-toggle__text">Add to current collection:</span>
+              <span className="create-collection-toggle__path">{activeCollectionPath}</span>
+            </label>
+          )}
+
+          <div className="note-actions" style={{ display: 'inline-flex', gap: 8 }}>
+            <button className="tiny palette" onClick={() => setShowPalette(true)} aria-label="Change color" title="Change color">
+              <FontAwesomeIcon icon={faPalette} className="palette-svg" />
+            </button>
+            <button className="tiny" onClick={() => setShowReminderPicker(true)} aria-label="Reminder" title="Reminder">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
               <path d="M12 22c1.1 0 2-.9 2-2h-4a2 2 0 0 0 2 2z"/>
               <path d="M18 8V7a6 6 0 1 0-12 0v1c0 3.5-2 5-2 5h16s-2-1.5-2-5z"/>
             </svg>
-          </button>
-          <button className="tiny" onClick={() => setShowCollaborator(true)} aria-label="Collaborators" title="Collaborators">
+            </button>
+            <button className="tiny" onClick={() => setShowCollaborator(true)} aria-label="Collaborators" title="Collaborators">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
               <path d="M15 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4z"/>
               <path d="M6 14c-1.66 0-3 1.34-3 3v1h9.5c-.2-.63-.5-1.23-.9-1.76C11.7 15.6 9.9 14 6 14z"/>
               <path d="M20 16v2h-2v2h-2v-2h-2v-2h2v-2h2v2z" />
             </svg>
-          </button>
-          <button className="tiny" onClick={() => setShowImageDialog(true)} aria-label="Add image" title="Add image">
+            </button>
+            <button className="tiny" onClick={() => setShowImageDialog(true)} aria-label="Add image" title="Add image">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
               <path d="M21 19V5c0-1.1-.9-2-2-2H5C3.9 3 3 3.9 3 5v14h18zM8.5 13.5l2.5 3L14.5 12l4.5 7H5l3.5-5.5z"/>
             </svg>
-          </button>
+            </button>
+          </div>
         </div>
-        <button className="btn" onClick={() => { setExpanded(false); setTitle(''); setBody(''); setItems([]); setBg(''); setImageUrl(null); setSelectedCollaborators([]); }}>Cancel</button>
-        <button className="btn" onClick={save} disabled={loading || (mode==='text' ? ((editor?.getText() || '').trim().length === 0 && !title.trim()) : items.length===0)}>{loading ? 'Saving...' : 'Save'}</button>
+        <button className="btn" onClick={async () => {
+          discardAndClose();
+        }}>Cancel</button>
+        <button className="btn" onClick={save} disabled={loading || !hasContentToSave()}>{loading ? 'Saving...' : 'Save'}</button>
       </div>
 
       {showPalette && <ColorPalette anchorRef={rootRef} onPick={(c) => { setBg(c); /* keep palette open */ }} onClose={() => setShowPalette(false)} />}

@@ -6,8 +6,9 @@ import ChecklistEditor from "./ChecklistEditor";
 import RichTextEditor from "./RichTextEditor";
 import CollaboratorModal from "./CollaboratorModal";
 import MoreMenu from "./MoreMenu";
+import MoveToCollectionModal from "./MoveToCollectionModal";
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faPalette } from '@fortawesome/free-solid-svg-icons';
+import { faPalette, faUsers, faTag, faFolder } from '@fortawesome/free-solid-svg-icons';
 import LabelsDialog from "./LabelsDialog";
 import ColorPalette from "./ColorPalette";
 import ImageDialog from "./ImageDialog";
@@ -37,6 +38,7 @@ type Note = {
   type?: string;
   color?: string;
   viewerColor?: string | null;
+  viewerCollections?: Array<{ id: number; name: string; parentId: number | null }>;
   noteLabels?: Array<{ id: number; label?: { id: number; name: string } }>;
   images?: Array<{ id: number; url: string }>
   cardSpan?: number;
@@ -63,7 +65,21 @@ function contrastColorForBackground(hex?: string | null): string | undefined {
   return contrastWithWhite >= contrastWithBlack ? "#ffffff" : "#000000";
 }
 
-export default function NoteCard({ note, onChange, openRequest, onOpenRequestHandled }: { note: Note, onChange?: () => void, openRequest?: number, onOpenRequestHandled?: (noteId: number) => void }) {
+export default function NoteCard({
+  note,
+  onChange,
+  openRequest,
+  onOpenRequestHandled,
+  dragHandleAttributes,
+  dragHandleListeners,
+}: {
+  note: Note;
+  onChange?: (ev?: any) => void;
+  openRequest?: number;
+  onOpenRequestHandled?: (noteId: number) => void;
+  dragHandleAttributes?: Record<string, any>;
+  dragHandleListeners?: Record<string, any>;
+}) {
   const noteRef = useRef<HTMLElement | null>(null);
   const bodyRef = useRef<HTMLDivElement | null>(null);
   const imagesWrapRef = useRef<HTMLDivElement | null>(null);
@@ -107,8 +123,23 @@ export default function NoteCard({ note, onChange, openRequest, onOpenRequestHan
   const [showCollaborator, setShowCollaborator] = useState(false);
   const [collaborators, setCollaborators] = useState<Array<{ collabId?: number; userId: number; email: string; name?: string; userImageUrl?: string }>>([]);
   const [labels, setLabels] = useState<Array<{ id: number; name: string }>>(() => (note.noteLabels || []).map((nl:any) => nl.label).filter((l:any) => l && typeof l.id === 'number' && typeof l.name === 'string'));
+  const [viewerCollections, setViewerCollections] = React.useState<Array<{ id: number; name: string; parentId: number | null }>>(() => {
+    try {
+      const arr = (note as any).viewerCollections;
+      if (!Array.isArray(arr)) return [];
+      return arr
+        .filter((c: any) => c && typeof c.id === 'number' && typeof c.name === 'string')
+        .map((c: any) => ({ id: Number(c.id), name: String(c.name), parentId: (c.parentId == null ? null : Number(c.parentId)) }));
+    } catch {
+      return [];
+    }
+  });
   const [showMore, setShowMore] = useState(false);
   const [moreAnchorPoint, setMoreAnchorPoint] = useState<{ x:number; y:number } | null>(null);
+  const [showMoveToCollection, setShowMoveToCollection] = useState(false);
+
+  const [expandedMeta, setExpandedMeta] = React.useState<null | 'collab' | 'labels' | 'collections'>(null);
+  const [collectionPathById, setCollectionPathById] = React.useState<Record<number, string>>({});
 
   const [showPalette, setShowPalette] = useState(false);
   const [showImageDialog, setShowImageDialog] = useState(false);
@@ -118,6 +149,19 @@ export default function NoteCard({ note, onChange, openRequest, onOpenRequestHan
   const [showCompleted, setShowCompleted] = useState<boolean>(true);
   const [rtHtmlFromY, setRtHtmlFromY] = React.useState<string | null>(null);
   const [previewClipped, setPreviewClipped] = useState(false);
+
+  React.useEffect(() => {
+    try {
+      const arr = (note as any).viewerCollections;
+      if (!Array.isArray(arr)) { setViewerCollections([]); return; }
+      const next = arr
+        .filter((c: any) => c && typeof c.id === 'number' && typeof c.name === 'string')
+        .map((c: any) => ({ id: Number(c.id), name: String(c.name), parentId: (c.parentId == null ? null : Number(c.parentId)) }));
+      setViewerCollections(next);
+    } catch {
+      setViewerCollections([]);
+    }
+  }, [note.id, (note as any).viewerCollections]);
 
   const isCoarsePointer = React.useMemo(() => {
     try {
@@ -301,6 +345,63 @@ export default function NoteCard({ note, onChange, openRequest, onOpenRequestHan
 
   const fileRef = useRef<HTMLInputElement | null>(null);
   const { token, user } = useAuth();
+
+  const neededCollectionIdsKey = React.useMemo(() => {
+    try {
+      const ids = viewerCollections
+        .map((c) => Number(c.id))
+        .filter((id) => Number.isFinite(id));
+      if (expandedMeta !== 'collections') return '';
+      return ids.join(',');
+    } catch {
+      return '';
+    }
+  }, [viewerCollections, expandedMeta]);
+
+  React.useEffect(() => {
+    if (!token) return;
+    if (!viewerCollections.length) return;
+
+    const neededIds = (neededCollectionIdsKey ? neededCollectionIdsKey.split(',').map((s) => Number(s)).filter((n) => Number.isFinite(n)) : []);
+    if (!neededIds.length) return;
+
+    let cancelled = false;
+    const controller = new AbortController();
+
+    (async () => {
+      try {
+        const missing = neededIds.filter((id) => !collectionPathById[id]);
+        if (!missing.length) return;
+
+        const results = await Promise.all(missing.map(async (id) => {
+          try {
+            const res = await fetch(`/api/collections/${id}/breadcrumb`, {
+              headers: { Authorization: token ? `Bearer ${token}` : '' },
+              signal: controller.signal,
+            });
+            if (!res.ok) throw new Error(await res.text());
+            const data = await res.json();
+            const breadcrumb = Array.isArray(data?.breadcrumb) ? data.breadcrumb : [];
+            const names = breadcrumb.map((b: any) => String(b?.name || '')).filter(Boolean);
+            const path = names.join(' / ');
+            return [id, path || (viewerCollections.find((c) => Number(c.id) === id)?.name || String(id))] as const;
+          } catch {
+            return [id, viewerCollections.find((c) => Number(c.id) === id)?.name || String(id)] as const;
+          }
+        }));
+
+        if (cancelled) return;
+        const patch: Record<number, string> = {};
+        for (const [id, path] of results) patch[Number(id)] = String(path || '');
+        setCollectionPathById((prev) => ({ ...prev, ...patch }));
+      } catch {}
+    })();
+
+    return () => {
+      cancelled = true;
+      try { controller.abort(); } catch {}
+    };
+  }, [token, viewerCollections, neededCollectionIdsKey, collectionPathById]);
   // Subscribe to Yjs checklist for live card updates
   const ydoc = React.useMemo(() => new Y.Doc(), [note.id]);
   const providerRef = React.useRef<WebsocketProvider | null>(null);
@@ -676,18 +777,18 @@ export default function NoteCard({ note, onChange, openRequest, onOpenRequestHan
     : "rgba(255,255,255,0.06)";
 
     // Compute participant chips (owner + collaborators), excluding current user
-    const chipParticipants: Array<{ key: string | number; name: string; email: string; userImageUrl?: string }> = [];
+    const chipParticipants: Array<{ key: string | number; userId: number; name: string; email: string; userImageUrl?: string }> = [];
     try {
       const currentUserId = (user && (user as any).id) ? Number((user as any).id) : undefined;
       const owner = (note as any).owner || null;
       if (owner && typeof owner.id === 'number' && owner.id !== currentUserId) {
         const ownerName = (typeof owner.name === 'string' && owner.name) ? owner.name : String(owner.email || '').split("@")[0];
-        chipParticipants.push({ key: `owner-${owner.id}`, name: ownerName, email: String(owner.email || ''), userImageUrl: (typeof (owner as any).userImageUrl === 'string' ? String((owner as any).userImageUrl) : undefined) });
+        chipParticipants.push({ key: `owner-${owner.id}`, userId: Number(owner.id), name: ownerName, email: String(owner.email || ''), userImageUrl: (typeof (owner as any).userImageUrl === 'string' ? String((owner as any).userImageUrl) : undefined) });
       }
       for (const c of collaborators) {
         if (typeof c.userId === 'number' && c.userId !== currentUserId) {
           const nm = (c.name && c.name.length) ? c.name : String(c.email).split('@')[0];
-          chipParticipants.push({ key: c.collabId || `u-${c.userId}`, name: nm, email: c.email, userImageUrl: c.userImageUrl });
+          chipParticipants.push({ key: c.collabId || `u-${c.userId}`, userId: Number(c.userId), name: nm, email: c.email, userImageUrl: c.userImageUrl });
         }
       }
     } catch {}
@@ -723,8 +824,14 @@ export default function NoteCard({ note, onChange, openRequest, onOpenRequestHan
     return (
     <article
       ref={(el) => { noteRef.current = el as HTMLElement | null; }}
-      className={`note-card${labels.length > 0 ? ' has-labels' : ''}`}
+      className={`note-card${labels.length > 0 ? ' has-labels' : ''}${viewerCollections.length > 0 ? ' has-collections' : ''}${(noteItems && noteItems.length > 0) ? ' has-checklist' : ''}`}
       style={styleVars}
+      {...(!title ? (dragHandleAttributes || {}) : {})}
+      {...(!title ? (() => {
+        const ls: any = dragHandleListeners || {};
+        const { onKeyDown: _dragKeyDown, ...rest } = ls;
+        return rest;
+      })() : {})}
       data-clipped={previewClipped ? '1' : undefined}
       onClick={(e) => {
         const t = e.target as HTMLElement | null;
@@ -737,33 +844,214 @@ export default function NoteCard({ note, onChange, openRequest, onOpenRequestHan
       {title && (
         <div
           className="note-title"
+          {...(dragHandleAttributes || {})}
+          {...(() => {
+            const ls: any = dragHandleListeners || {};
+            const { onKeyDown: _dragKeyDown, ...rest } = ls;
+            return rest;
+          })()}
           style={{ cursor: 'pointer' }}
           onClick={() => { openEditor(); }}
           role="button"
           tabIndex={0}
-          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openEditor(); } }}
+          onKeyDown={(e) => {
+            try {
+              const dragKeyDown = (dragHandleListeners as any)?.onKeyDown;
+              if (typeof dragKeyDown === 'function') dragKeyDown(e);
+            } catch {}
+            if ((e as any).defaultPrevented) return;
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault();
+              openEditor();
+            }
+          }}
         >
           {title}
         </div>
       )}
 
-      {chipParticipants.length > 0 && (
-        <div className="collab-chips">
-          {chipParticipants.map(p => {
-            const mode = ((user as any)?.chipDisplayMode) || 'image+text';
-            const showImg = (mode === 'image' || mode === 'image+text') && !!p.userImageUrl;
-            const showText = (mode === 'text' || mode === 'image+text');
-            return (
-              <span key={p.key} className="chip" title={p.email} style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-                {showImg ? (
-                  <img src={p.userImageUrl!} alt="" style={{ width: 18, height: 18, borderRadius: '50%', objectFit: 'cover' }} />
-                ) : null}
-                {showText ? (<span>{p.name}</span>) : null}
-              </span>
-            );
-          })}
-        </div>
-      )}
+      {(() => {
+        const hasAnyMeta = (chipParticipants.length > 0) || (labels.length > 0) || (viewerCollections.length > 0);
+        if (!hasAnyMeta) return null;
+
+        const panelId = `note-meta-panel-${Number(note.id)}`;
+        const withPath = viewerCollections
+          .map((c) => ({ ...c, path: collectionPathById[Number(c.id)] || String(c.name || '') }))
+          .sort((a, b) => String(a.path).localeCompare(String(b.path)));
+
+        const closeOnMouseLeave = () => {
+          if (isCoarsePointer) return;
+          setExpandedMeta(null);
+        };
+
+        return (
+          <div
+            className={`note-meta${expandedMeta ? ' is-expanded' : ''}`}
+            onPointerDown={(e) => { e.stopPropagation(); }}
+            onClick={(e) => { e.stopPropagation(); }}
+            onMouseLeave={closeOnMouseLeave}
+            onBlurCapture={(e) => {
+              const next = (e.relatedTarget as HTMLElement | null);
+              if (next && (e.currentTarget as HTMLElement).contains(next)) return;
+              setExpandedMeta(null);
+            }}
+          >
+            <div className="note-meta-bar">
+              {chipParticipants.length > 0 && (
+                <button
+                  type="button"
+                  className={`chip chip--meta${expandedMeta === 'collab' ? ' is-active' : ''}`}
+                  aria-expanded={expandedMeta === 'collab'}
+                  aria-controls={panelId}
+                  title="Collaborators"
+                  onMouseEnter={() => { if (!isCoarsePointer) setExpandedMeta('collab'); }}
+                  onFocus={(e) => {
+                    // On mobile, taps often trigger focus before click. If we open on focus,
+                    // the subsequent click toggles it closed, which feels like a double-tap.
+                    // Only auto-open on keyboard focus.
+                    try {
+                      const isFocusVisible = (e.currentTarget as any)?.matches?.(':focus-visible');
+                      if (!isFocusVisible) return;
+                    } catch {}
+                    setExpandedMeta('collab');
+                  }}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setExpandedMeta((s) => s === 'collab' ? null : 'collab');
+                  }}
+                >
+                  <FontAwesomeIcon icon={faUsers} className="meta-fa-icon" />
+                  <span>{chipParticipants.length}</span>
+                </button>
+              )}
+
+              {labels.length > 0 && (
+                <button
+                  type="button"
+                  className={`chip chip--meta${expandedMeta === 'labels' ? ' is-active' : ''}`}
+                  aria-expanded={expandedMeta === 'labels'}
+                  aria-controls={panelId}
+                  title="Labels"
+                  onMouseEnter={() => { if (!isCoarsePointer) setExpandedMeta('labels'); }}
+                  onFocus={(e) => {
+                    try {
+                      const isFocusVisible = (e.currentTarget as any)?.matches?.(':focus-visible');
+                      if (!isFocusVisible) return;
+                    } catch {}
+                    setExpandedMeta('labels');
+                  }}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setExpandedMeta((s) => s === 'labels' ? null : 'labels');
+                  }}
+                >
+                  <FontAwesomeIcon icon={faTag} className="meta-fa-icon" />
+                  <span>{labels.length}</span>
+                </button>
+              )}
+
+              {viewerCollections.length > 0 && (
+                <button
+                  type="button"
+                  className={`chip chip--meta chip--meta-collections${expandedMeta === 'collections' ? ' is-active' : ''}`}
+                  aria-expanded={expandedMeta === 'collections'}
+                  aria-controls={panelId}
+                  title={`${viewerCollections.length} collections`}
+                  onMouseEnter={() => { if (!isCoarsePointer) setExpandedMeta('collections'); }}
+                  onFocus={(e) => {
+                    try {
+                      const isFocusVisible = (e.currentTarget as any)?.matches?.(':focus-visible');
+                      if (!isFocusVisible) return;
+                    } catch {}
+                    setExpandedMeta('collections');
+                  }}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setExpandedMeta((s) => s === 'collections' ? null : 'collections');
+                  }}
+                >
+                  <FontAwesomeIcon icon={faFolder} className="meta-fa-icon" />
+                  <span>{viewerCollections.length}</span>
+                </button>
+              )}
+            </div>
+
+            <div
+              id={panelId}
+              className={`note-meta-panel${expandedMeta ? ' is-open' : ''}`}
+              role="region"
+              aria-label="Note metadata"
+            >
+              {expandedMeta === 'collab' && (
+                <div className="collab-chips" aria-label="Collaborators">
+                  {chipParticipants.map((p) => {
+                    const mode = ((user as any)?.chipDisplayMode) || 'image+text';
+                    const showImg = (mode === 'image' || mode === 'image+text') && !!p.userImageUrl;
+                    const showText = (mode === 'text' || mode === 'image+text');
+                    return (
+                      <button
+                        key={p.key}
+                        type="button"
+                        className="chip"
+                        title={p.email}
+                        style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          try { (onChange as any)?.({ type: 'filter:collaborator', noteId: Number(note.id), userId: Number(p.userId), name: String(p.name || '') }); } catch {}
+                        }}
+                      >
+                        {showImg ? (
+                          <img src={p.userImageUrl!} alt="" style={{ width: 18, height: 18, borderRadius: '50%', objectFit: 'cover' }} />
+                        ) : null}
+                        {showText ? (<span>{p.name}</span>) : null}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+
+              {expandedMeta === 'labels' && (
+                <div className="label-chips" aria-label="Labels">
+                  {labels.map((l) => (
+                    <button
+                      key={l.id}
+                      type="button"
+                      className="chip"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        try { (onChange as any)?.({ type: 'filter:labels', noteId: Number(note.id), labelId: Number(l.id), labelName: String(l.name || '') }); } catch {}
+                      }}
+                    >
+                      {l.name}
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              {expandedMeta === 'collections' && (
+                <div className="note-collections" aria-label="Collections">
+                  <div className="note-collections-list" role="list">
+                    {withPath.map((c) => (
+                      <button
+                        key={c.id}
+                        type="button"
+                        className="chip note-collection-chip"
+                        title={c.path}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          try { (onChange as any)?.({ type: 'filter:collection', noteId: Number(note.id), collectionId: Number(c.id), collectionName: String(c.name || '') }); } catch {}
+                        }}
+                      >
+                        {c.path}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      })()}
 
       <div
         className="note-body"
@@ -863,11 +1151,7 @@ export default function NoteCard({ note, onChange, openRequest, onOpenRequestHan
         </div>
       )}
 
-      {labels.length > 0 && (
-        <div className="label-chips">
-          {labels.map(l => <span key={l.id} className="chip">{l.name}</span>)}
-        </div>
-      )}
+
 
       {/* Hover zone to reveal footer only near the bottom */}
       <div className="footer-hover-zone" aria-hidden />
@@ -919,13 +1203,32 @@ export default function NoteCard({ note, onChange, openRequest, onOpenRequestHan
         <MoreMenu
           anchorRef={noteRef}
           anchorPoint={moreAnchorPoint}
-          itemsCount={4}
+          itemsCount={5}
           onClose={() => setShowMore(false)}
           onDelete={onDeleteNote}
+          onMoveToCollection={() => setShowMoveToCollection(true)}
           onAddLabel={onAddLabel}
           onUncheckAll={onUncheckAll}
           onCheckAll={onCheckAll}
           onSetWidth={onSetCardWidth}
+        />
+      )}
+
+      {showMoveToCollection && (
+        <MoveToCollectionModal
+          noteId={Number(note.id)}
+          onClose={() => setShowMoveToCollection(false)}
+          onChanged={(collections) => {
+            try {
+              const next = Array.isArray(collections)
+                ? collections
+                    .map((c: any) => ({ id: Number(c.id), name: String(c.name || ''), parentId: (c.parentId == null ? null : Number(c.parentId)) }))
+                    .filter((c: any) => Number.isFinite(c.id) && c.name.length)
+                : [];
+              setViewerCollections(next);
+            } catch {}
+            try { (onChange as any)?.({ type: 'collections', noteId: Number(note.id), collections }); } catch {}
+          }}
         />
       )}
       {showLabels && (
@@ -990,6 +1293,7 @@ export default function NoteCard({ note, onChange, openRequest, onOpenRequestHan
           moreMenu={{
             onDelete: onDeleteNote,
             onAddLabel,
+            onMoveToCollection: () => setShowMoveToCollection(true),
             onUncheckAll,
             onCheckAll,
             onSetWidth: onSetCardWidth,
@@ -1014,6 +1318,7 @@ export default function NoteCard({ note, onChange, openRequest, onOpenRequestHan
           moreMenu={{
             onDelete: onDeleteNote,
             onAddLabel,
+            onMoveToCollection: () => setShowMoveToCollection(true),
             onSetWidth: onSetCardWidth,
           }}
         />

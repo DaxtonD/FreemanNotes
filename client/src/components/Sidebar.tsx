@@ -8,6 +8,8 @@ export default function Sidebar({
   onClearLabels,
   collapsed = false,
   onRequestClose,
+  collectionStack = [],
+  onCollectionStackChange,
   sortConfig = DEFAULT_SORT_CONFIG,
   onSortConfigChange,
 }: {
@@ -16,6 +18,8 @@ export default function Sidebar({
   onClearLabels?: () => void;
   collapsed?: boolean;
   onRequestClose?: () => void;
+  collectionStack?: Array<{ id: number; name: string }>;
+  onCollectionStackChange?: (next: Array<{ id: number; name: string }>) => void;
   sortConfig?: SortConfig;
   onSortConfigChange?: (next: SortConfig) => void;
 }) {
@@ -25,6 +29,11 @@ export default function Sidebar({
   const [sortingOpen, setSortingOpen] = useState(false);
   const [filtersListOpen, setFiltersListOpen] = useState(false);
   const [groupingListOpen, setGroupingListOpen] = useState(false);
+
+  const [collectionsOpen, setCollectionsOpen] = useState(false);
+  const [collections, setCollections] = useState<Array<{ id: number; name: string; parentId: number | null; hasChildren?: boolean; noteCount?: number }>>([]);
+  const [collectionsLoading, setCollectionsLoading] = useState(false);
+  const [newCollectionName, setNewCollectionName] = useState('');
   useEffect(() => {
     if (!token) { setLabels([]); return; }
     fetch('/api/labels', { headers: { Authorization: `Bearer ${token}` } })
@@ -85,7 +94,10 @@ export default function Sidebar({
     try { setGroupingListOpen(false); } catch {}
     // Clear label filters when returning to default view.
     try { onClearLabels && onClearLabels(); } catch {}
+    // Return to root collections view.
+    try { onCollectionStackChange && onCollectionStackChange([]); } catch {}
     try { setOpen(false); } catch {}
+    try { setCollectionsOpen(false); } catch {}
   };
 
   const goHome = () => {
@@ -136,6 +148,130 @@ export default function Sidebar({
       }
       return next;
     });
+  };
+
+  const currentParentId = (Array.isArray(collectionStack) && collectionStack.length)
+    ? Number(collectionStack[collectionStack.length - 1].id)
+    : null;
+
+  const refreshCollections = React.useCallback(async () => {
+    if (!token) { setCollections([]); return; }
+    if (collapsed) return;
+    if (!collectionsOpen) return;
+    setCollectionsLoading(true);
+    try {
+      const qs = (currentParentId == null) ? '' : `?parentId=${encodeURIComponent(String(currentParentId))}`;
+      const res = await fetch(`/api/collections${qs}`, { headers: { Authorization: `Bearer ${token}` } });
+      const data = await res.json();
+      const list = Array.isArray((data as any)?.collections) ? (data as any).collections : [];
+      setCollections(list.map((c: any) => ({
+        id: Number(c.id),
+        name: String(c.name || ''),
+        parentId: (c.parentId == null ? null : Number(c.parentId)),
+        hasChildren: !!c.hasChildren,
+        noteCount: (typeof c.noteCount === 'number' ? Number(c.noteCount) : undefined),
+      })).filter((c: any) => Number.isFinite(c.id) && c.name.length));
+    } catch {
+      setCollections([]);
+    } finally {
+      setCollectionsLoading(false);
+    }
+  }, [token, collapsed, collectionsOpen, currentParentId]);
+
+  useEffect(() => {
+    refreshCollections();
+  }, [refreshCollections]);
+
+  const toggleCollectionsOpen = () => {
+    setCollectionsOpen((wasOpen) => {
+      const next = !wasOpen;
+      if (!next) {
+        try { setNewCollectionName(''); } catch {}
+      }
+      return next;
+    });
+  };
+
+  const drillInto = (id: number, name: string) => {
+    const next = [...(Array.isArray(collectionStack) ? collectionStack : []), { id: Number(id), name: String(name || '') }];
+    try { onCollectionStackChange && onCollectionStackChange(next); } catch {}
+  };
+
+  const goBackCollection = () => {
+    const stack = Array.isArray(collectionStack) ? collectionStack : [];
+    if (!stack.length) return;
+    try { onCollectionStackChange && onCollectionStackChange(stack.slice(0, -1)); } catch {}
+  };
+
+  const goRootCollections = () => {
+    try { onCollectionStackChange && onCollectionStackChange([]); } catch {}
+  };
+
+  const createCollection = async () => {
+    const name = String(newCollectionName || '').trim();
+    if (!name || !token) return;
+    try {
+      const res = await fetch('/api/collections', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ name, parentId: currentParentId }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      try { setNewCollectionName(''); } catch {}
+      await refreshCollections();
+    } catch (err) {
+      window.alert('Failed to create collection: ' + String(err));
+    }
+  };
+
+  const renameCollection = async (id: number, currentName: string) => {
+    if (!token) return;
+    const name = window.prompt('Rename collection:', currentName);
+    if (name == null) return;
+    const next = String(name).trim();
+    if (!next) return;
+    try {
+      const res = await fetch(`/api/collections/${encodeURIComponent(String(id))}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ name: next }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      // Update stack display names if needed.
+      try {
+        const stack = Array.isArray(collectionStack) ? collectionStack : [];
+        const idx = stack.findIndex((c) => Number(c.id) === Number(id));
+        if (idx >= 0) {
+          const updated = stack.slice();
+          updated[idx] = { ...updated[idx], name: next };
+          onCollectionStackChange && onCollectionStackChange(updated);
+        }
+      } catch {}
+      await refreshCollections();
+    } catch (err) {
+      window.alert('Failed to rename collection: ' + String(err));
+    }
+  };
+
+  const deleteCollection = async (id: number, name: string) => {
+    if (!token) return;
+    const ok = window.confirm(`Delete collection "${name}"? This will delete all nested collections.`);
+    if (!ok) return;
+    try {
+      const res = await fetch(`/api/collections/${encodeURIComponent(String(id))}`, { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } });
+      if (!res.ok) throw new Error(await res.text());
+      // If we deleted the current path (or an ancestor), pop back to root.
+      try {
+        const stack = Array.isArray(collectionStack) ? collectionStack : [];
+        const idx = stack.findIndex((c) => Number(c.id) === Number(id));
+        if (idx >= 0) {
+          onCollectionStackChange && onCollectionStackChange(stack.slice(0, idx));
+        }
+      } catch {}
+      await refreshCollections();
+    } catch (err) {
+      window.alert('Failed to delete collection: ' + String(err));
+    }
   };
 
   return (
@@ -269,8 +405,86 @@ export default function Sidebar({
               <path d="M3 7h6l2 2h10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/>
             </svg>
           </span>
-          {!collapsed && <span className="text">Collections</span>}
+          {!collapsed && (
+            <span className="text" style={{ cursor: 'pointer' }} onClick={toggleCollectionsOpen}>
+              <span className="sidebar-indicator leading"><span className={"chev" + (collectionsOpen ? " open" : "")}>▶</span></span>
+              Collections
+            </span>
+          )}
         </div>
+        {collectionsOpen && !collapsed && (
+          <div style={{ paddingLeft: 8 }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 6 }}>
+              <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                {collectionStack.length > 0 && (
+                  <>
+                    <button className="btn" onClick={goBackCollection} title="Back">Back</button>
+                    <button className="btn" onClick={goRootCollections} title="All notes">All</button>
+                  </>
+                )}
+              </div>
+              {collectionStack.length > 0 && (
+                <button
+                  className="btn"
+                  title="Delete this collection"
+                  onClick={() => {
+                    const cur = collectionStack[collectionStack.length - 1];
+                    deleteCollection(Number(cur.id), String(cur.name || ''));
+                  }}
+                >
+                  Delete
+                </button>
+              )}
+            </div>
+            {collectionStack.length > 0 && (
+              <div className="sidebar-item" style={{ color: 'var(--muted)', fontSize: 12, paddingLeft: 0 }} title="Current path">
+                {collectionStack.map((c) => String(c.name || '')).join(' / ')}
+              </div>
+            )}
+
+            <div className={"sidebar-item" + (!collectionStack.length ? " active" : "")} style={{ cursor: 'pointer' }} onClick={() => { goRootCollections(); }} title="Show all notes">
+              <span className="text">All notes</span>
+            </div>
+
+            {collectionsLoading && <div className="sidebar-item" style={{ color: 'var(--muted)' }}>Loading…</div>}
+            {!collectionsLoading && collections.length === 0 && (
+              <div className="sidebar-item" style={{ color: 'var(--muted)' }}>No collections</div>
+            )}
+            {collections.map((c) => (
+              <div key={c.id} className="sidebar-item" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                <div
+                  style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', flex: 1, minWidth: 0 }}
+                  onClick={() => {
+                    drillInto(c.id, c.name);
+                  }}
+                  title={c.name}
+                >
+                  <span className="text" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.name}</span>
+                  {typeof c.noteCount === 'number' && (
+                    <span style={{ color: 'var(--muted)', fontSize: 12 }}>({c.noteCount})</span>
+                  )}
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <button className="btn" title="Rename" onClick={(e) => { e.stopPropagation(); renameCollection(c.id, c.name); }}>Rename</button>
+                  <button className="btn" title="Delete" onClick={(e) => { e.stopPropagation(); deleteCollection(c.id, c.name); }}>✕</button>
+                </div>
+              </div>
+            ))}
+
+            <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
+              <input
+                value={newCollectionName}
+                onChange={(e) => setNewCollectionName(e.target.value)}
+                placeholder="New collection"
+                style={{ flex: 1, minWidth: 0, padding: '6px 8px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--panel)', color: 'var(--text)' }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') createCollection();
+                }}
+              />
+              <button className="btn" onClick={createCollection} disabled={!newCollectionName.trim()}>Add</button>
+            </div>
+          </div>
+        )}
         <div className="sidebar-item" title="Archive">
           <span className="icon" aria-hidden>
             <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden>

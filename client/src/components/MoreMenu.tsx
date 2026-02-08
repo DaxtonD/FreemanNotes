@@ -7,6 +7,7 @@ export default function MoreMenu({
   itemsCount = 4,
   onClose,
   onDelete,
+  onMoveToCollection,
   onAddLabel,
   onUncheckAll,
   onCheckAll,
@@ -17,6 +18,7 @@ export default function MoreMenu({
   itemsCount?: number;
   onClose: () => void;
   onDelete: () => void;
+  onMoveToCollection?: () => void;
   onAddLabel: () => void;
   onUncheckAll?: () => void;
   onCheckAll?: () => void;
@@ -95,6 +97,9 @@ export default function MoreMenu({
   const node = (
     <div ref={rootRef} className="more-menu" style={style} role="dialog" aria-label="More options">
       <button className="more-item" onClick={() => { onDelete(); onClose(); }}>Delete</button>
+      {onMoveToCollection && (
+        <button className="more-item" onClick={() => { onMoveToCollection(); onClose(); }}>Add to collection…</button>
+      )}
       <button className="more-item" onClick={() => { onAddLabel(); onClose(); }}>Add label</button>
       {onUncheckAll && (
         <button className="more-item" onClick={() => { onUncheckAll(); onClose(); }}>Uncheck all</button>

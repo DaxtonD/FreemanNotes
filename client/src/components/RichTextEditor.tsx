@@ -30,6 +30,7 @@ export default function RichTextEditor({ note, onClose, onSaved, noteBg, onImage
     moreMenu?: {
       onDelete: () => void;
       onAddLabel: () => void;
+      onMoveToCollection?: () => void;
       onSetWidth: (span: 1 | 2 | 3) => void;
     };
   }) {
@@ -38,9 +39,19 @@ export default function RichTextEditor({ note, onClose, onSaved, noteBg, onImage
     try { return `c${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`; } catch { return `c${Math.random()}`; }
   })());
 
+  const backIdRef = React.useRef<string>((() => {
+    try { return `rte-${note?.id || 'x'}-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`; } catch { return `rte-${Math.random()}`; }
+  })());
+
   React.useEffect(() => {
     window.dispatchEvent(new Event('freemannotes:editor-modal-open'));
+    try {
+      const id = backIdRef.current;
+      const onBack = () => { try { onClose(); } catch {} };
+      window.dispatchEvent(new CustomEvent('freemannotes:back/register', { detail: { id, onBack } }));
+    } catch {}
     return () => {
+      try { window.dispatchEvent(new CustomEvent('freemannotes:back/unregister', { detail: { id: backIdRef.current } })); } catch {}
       window.dispatchEvent(new Event('freemannotes:editor-modal-close'));
     };
   }, []);
@@ -58,6 +69,14 @@ export default function RichTextEditor({ note, onClose, onSaved, noteBg, onImage
   const [showMore, setShowMore] = React.useState(false);
   const moreBtnRef = React.useRef<HTMLButtonElement | null>(null);
   const seededOnceRef = React.useRef<boolean>(false);
+  const syncedRef = React.useRef<boolean>(false);
+  const dirtyRef = React.useRef<boolean>(false);
+
+  const markDirty = React.useCallback(() => {
+    if (dirtyRef.current) return;
+    dirtyRef.current = true;
+    try { window.dispatchEvent(new CustomEvent('freemannotes:draft/dirty', { detail: { noteId: Number(note?.id) } })); } catch {}
+  }, [note?.id]);
 
   // Collaborative setup via Yjs + y-websocket (room per note)
   const ydoc = React.useMemo(() => new Y.Doc(), [note.id]);
@@ -68,7 +87,12 @@ export default function RichTextEditor({ note, onClose, onSaved, noteBg, onImage
     const serverUrl = `${proto}://${window.location.host}/collab`;
     const provider = new WebsocketProvider(serverUrl, room, ydoc);
     providerRef.current = provider;
-    return () => { try { provider.destroy(); } catch {} };
+    const onSync = (isSynced: boolean) => { if (isSynced) syncedRef.current = true; };
+    try { provider.on('sync', onSync as any); } catch {}
+    return () => {
+      try { provider.off('sync', onSync as any); } catch {}
+      try { provider.destroy(); } catch {}
+    };
   }, [note.id, ydoc]);
 
   const broadcastImagesChanged = React.useCallback(() => {
@@ -192,6 +216,9 @@ export default function RichTextEditor({ note, onClose, onSaved, noteBg, onImage
   React.useEffect(() => {
     if (!editor) return;
     const onUpdate = () => {
+      // Mark dirty only after initial sync; otherwise initial content hydration
+      // can spuriously count as a user edit.
+      try { if (syncedRef.current) markDirty(); } catch {}
       if (savePreviewTimer.current) window.clearTimeout(savePreviewTimer.current);
       savePreviewTimer.current = window.setTimeout(async () => {
         try {
@@ -206,7 +233,7 @@ export default function RichTextEditor({ note, onClose, onSaved, noteBg, onImage
     };
     editor.on('update', onUpdate);
     return () => { editor.off('update', onUpdate); if (savePreviewTimer.current) window.clearTimeout(savePreviewTimer.current); };
-  }, [editor, note.id, token]);
+  }, [editor, note.id, token, markDirty]);
 
   async function saveTitleOnly() {
     try {
@@ -365,7 +392,7 @@ export default function RichTextEditor({ note, onClose, onSaved, noteBg, onImage
         <div className="dialog-body">
           <div className="rt-sticky-header">
             <div style={{ display: 'flex', gap: 12, marginBottom: 8 }}>
-              <input placeholder="Title" value={title} onChange={(e) => setTitle(e.target.value)} style={{ flex: 1, background: 'transparent', border: 'none', color: 'inherit', fontWeight: 600, fontSize: 18 }} />
+              <input placeholder="Title" value={title} onChange={(e) => { setTitle(e.target.value); try { markDirty(); } catch {} }} style={{ flex: 1, background: 'transparent', border: 'none', color: 'inherit', fontWeight: 600, fontSize: 18 }} />
             </div>
             <div className="rt-toolbar" style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center', marginTop: 0, marginBottom: 0, overflowX: 'auto', color: textColor }}>
               <button className="tiny" onClick={() => toggleMarkAcrossLine('bold')} aria-pressed={editor?.isActive('bold')} aria-label="Bold" title="Bold">B</button>
@@ -389,6 +416,13 @@ export default function RichTextEditor({ note, onClose, onSaved, noteBg, onImage
           </div>
           <div
             onKeyDown={(e) => {
+              try {
+                const ctrl = e.ctrlKey || e.metaKey;
+                if (!ctrl) {
+                  const k = String((e as any).key || '');
+                  if (k.length === 1 || k === 'Backspace' || k === 'Enter' || k === 'Delete') markDirty();
+                }
+              } catch {}
               if (!editor) return;
               const ctrl = e.ctrlKey || e.metaKey;
               if (!ctrl) return;
@@ -530,9 +564,10 @@ export default function RichTextEditor({ note, onClose, onSaved, noteBg, onImage
       {moreMenu && showMore && (
         <MoreMenu
           anchorRef={moreBtnRef as any}
-          itemsCount={4}
+          itemsCount={moreMenu.onMoveToCollection ? 5 : 4}
           onClose={() => setShowMore(false)}
           onDelete={moreMenu.onDelete}
+          onMoveToCollection={moreMenu.onMoveToCollection}
           onAddLabel={moreMenu.onAddLabel}
           onSetWidth={moreMenu.onSetWidth}
         />

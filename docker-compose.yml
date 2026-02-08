@@ -1,5 +1,24 @@
 version: "3.8"
 services:
+  # Optional local MySQL database with persistent storage.
+  # Enable with: `docker compose --profile with-db up --build`
+  # Then set DATABASE_URL to use host `db`, e.g.:
+  # DATABASE_URL="mysql://freeman:freemanpass@db:3306/freemannotes"
+  db:
+    image: mysql:8.4
+    profiles: ["with-db"]
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: freemannotes
+      MYSQL_USER: freeman
+      MYSQL_PASSWORD: freemanpass
+      MYSQL_ROOT_PASSWORD: rootpass
+    command: ["--default-authentication-plugin=mysql_native_password"]
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+
   freemannotes:
     build: .
     ports:
@@ -22,3 +41,6 @@ services:
 #networks:
 #  appnet:
 #    driver: bridge
+
+volumes:
+  mysql_data:

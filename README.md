@@ -101,6 +101,31 @@ Or with Compose:
 docker compose up --build
 ```
 
+## Keeping Test/Prod Data When Updating
+
+Pulling a new app image should **not** reset your database as long as your database storage is persistent.
+
+- If you run MySQL as a container, make sure it uses a **named volume** (do not use an ephemeral container filesystem).
+- Avoid destructive Prisma commands in production like `prisma migrate reset` or `prisma db push --force-reset`.
+- For public/production deployments, prefer **Prisma Migrate** (`prisma migrate deploy`) rather than relying on `prisma db push`.
+  - `migrate deploy` applies versioned SQL migrations in order and is the standard upgrade path.
+  - `db push` is great for prototyping, but it is not a robust “upgrade mechanism” for apps in the wild.
+- This app applies schema changes at startup via `ensureDatabaseReady()` and does **not** intentionally wipe data in production.
+
+### Compose: optional persistent MySQL
+
+The included `docker-compose.yml` has an optional MySQL service behind a profile that uses a named volume.
+
+1) Set `DATABASE_URL` in your `.env` to:
+
+`DATABASE_URL="mysql://freeman:freemanpass@db:3306/freemannotes"`
+
+2) Start compose with the DB profile:
+
+`docker compose --profile with-db up --build`
+
+3) When updating, do **not** run `docker compose down -v` (that deletes volumes).
+
 ## Versioning
 
 - Uses Semantic Versioning (MAJOR.MINOR.PATCH).

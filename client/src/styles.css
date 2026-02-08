@@ -4,6 +4,14 @@
   --card:#1e1e1e;
   --fg:#e6e6e6;
   --muted:#bdbdbd;
+  /* Alias variables used by newer UI surfaces (modals, sidebar inputs). */
+  --text: var(--fg);
+  --panel: var(--card);
+  --panel-2: rgba(255,255,255,0.03);
+  --border: rgba(255,255,255,0.10);
+  --modal-surface: var(--panel);
+  --modal-border: var(--border);
+  --modal-backdrop: rgba(0,0,0,0.66);
   --checklist-gap:8px;
   --checklist-checkbox-size:26px;
   --checklist-drag-handle-width: 32px;
@@ -42,6 +50,14 @@
   --card:#ffffff;
   --fg:#000000;
   --muted:#3a3a3a;
+  --text: var(--fg);
+  --panel: var(--card);
+  --panel-2: rgba(0,0,0,0.03);
+  --border: rgba(0,0,0,0.12);
+  /* Make modals stand out on light theme. */
+  --modal-surface: #ffffff;
+  --modal-border: rgba(0,0,0,0.16);
+  --modal-backdrop: rgba(0,0,0,0.40);
   --checkbox-border-default:#000000;
   --checkbox-border: var(--checkbox-border-default);
   --accent:#0b6cff;
@@ -211,6 +227,122 @@ body{
 /* Notes sections & masonry grid */
 .notes-area{display:block}
 
+/* Universal context header (collections/filters/search) */
+.grid-context{
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 10px;
+  margin: 8px 0 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  box-shadow: none;
+  font-size: 13px;
+}
+.grid-context__text{ min-width: 0; flex: 1 1 auto; }
+.grid-context__title-row{
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.grid-context__title{
+  font-size: inherit;
+  font-weight: 760;
+  letter-spacing: 0.01em;
+  color: var(--fg);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.grid-context__subtitle{
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.25;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.grid-context__chips{
+  margin-top: 6px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.grid-chip{
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 100%;
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(255,255,255,0.14);
+  background: rgba(255,255,255,0.04);
+  color: var(--fg);
+  font-size: 12px;
+  line-height: 1;
+}
+:root[data-theme="light"] .grid-chip{
+  border-color: rgba(0,0,0,0.12);
+  background: rgba(0,0,0,0.04);
+}
+.grid-chip__text{
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.grid-chip__clear{
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-weight: 900;
+  cursor: pointer;
+  line-height: 1;
+}
+.grid-chip__clear:hover{ background: rgba(255,255,255,0.10); }
+:root[data-theme="light"] .grid-chip__clear:hover{ background: rgba(0,0,0,0.06); }
+.grid-chip__clear:focus-visible{
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.grid-context__clear{
+  flex: 0 0 auto;
+  height: 30px;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(255,255,255,0.14);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+:root[data-theme="light"] .grid-context__clear{
+  border-color: rgba(0,0,0,0.12);
+  background: transparent;
+}
+.grid-context__clear:hover{ background: rgba(255,255,255,0.08); }
+:root[data-theme="light"] .grid-context__clear:hover{ background: rgba(0,0,0,0.05); }
+.grid-context__clear:focus-visible{
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+@media (pointer: coarse) {
+  .grid-context{ margin-top: 10px; }
+  .grid-context__clear{ height: 36px; padding: 0 12px; }
+  .grid-chip{ padding: 8px 12px; font-size: 13px; }
+  .grid-chip__clear{ width: 28px; height: 28px; }
+}
+
 /* Keep the quick-create bar visible while scrolling (desktop/tablet). */
 .take-note-sticky{
   position: sticky;
@@ -237,22 +369,41 @@ body{
   font-size: 30px;
   line-height: 1;
   box-shadow: 0 10px 26px rgba(0,0,0,0.55);
+  transition: transform 160ms cubic-bezier(.2,.9,.2,1), box-shadow 160ms cubic-bezier(.2,.9,.2,1), filter 160ms ease;
 }
 :root[data-theme="light"] .mobile-add-fab{ color:#fff; }
+.mobile-add-fab:active{
+  transform: scale(0.96);
+  box-shadow: 0 8px 20px rgba(0,0,0,0.50);
+}
+.mobile-add-backdrop{
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.38);
+  backdrop-filter: blur(8px);
+  z-index: 9990;
+  touch-action: none;
+  overscroll-behavior: contain;
+  pointer-events: auto;
+}
+:root[data-theme="light"] .mobile-add-backdrop{
+  background: rgba(255,255,255,0.42);
+}
 .mobile-add-menu{
   position: absolute;
   right: 0;
   bottom: 66px;
-  background: var(--card);
-  border: 1px solid rgba(255,255,255,0.10);
-  border-radius: 12px;
-  padding: 8px;
-  min-width: 180px;
-  box-shadow: 0 12px 30px rgba(0,0,0,0.6);
-}
-:root[data-theme="light"] .mobile-add-menu{
-  border-color: rgba(0,0,0,0.10);
-  box-shadow: 0 12px 30px rgba(0,0,0,0.18);
+  /* Not a popup panel: just a stack of floating items. */
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 12px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+  transform-origin: 100% 100%;
 }
 .mobile-add-menu-item{
   width: 100%;
@@ -260,44 +411,90 @@ body{
   align-items: center;
   gap: 10px;
   text-align: left;
-  background: transparent;
-  border: none;
+  background: var(--card);
+  border: 1px solid rgba(255,255,255,0.10);
   color: inherit;
   padding: 10px 12px;
   border-radius: 10px;
   cursor: pointer;
   font-weight: 650;
+  box-shadow: 0 12px 30px rgba(0,0,0,0.55);
+  transform-origin: 100% 100%;
+  /* Avoid delay flicker: start from the 0% keyframe state and let the animation fill both ways. */
+  opacity: 0;
+  transform: translateY(12px) scale(0.92);
+  animation: mobile-add-item-pop 220ms cubic-bezier(.2,.9,.2,1);
+  animation-fill-mode: both;
+  will-change: transform, opacity;
+}
+:root[data-theme="light"] .mobile-add-menu-item{
+  border-color: rgba(0,0,0,0.10);
+  box-shadow: 0 12px 30px rgba(0,0,0,0.18);
 }
 .mobile-add-menu-item svg{ width: 18px; height: 18px; flex: 0 0 auto; opacity: 0.95; }
 .mobile-add-menu-item:hover{ background: rgba(255,255,255,0.06); }
 :root[data-theme="light"] .mobile-add-menu-item:hover{ background: rgba(0,0,0,0.06); }
 
-@media (pointer: coarse), (max-width: 720px) {
+@keyframes mobile-add-item-pop{
+  0% { opacity: 0; transform: translateY(12px) scale(0.92); }
+  70% { opacity: 1; transform: translateY(0) scale(1.03); }
+  100% { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+/* Stagger the item entrance a bit. */
+.mobile-add-menu-item:nth-child(1){ animation-delay: 0ms; }
+.mobile-add-menu-item:nth-child(2){ animation-delay: 60ms; }
+
+@media (prefers-reduced-motion: reduce){
+  .mobile-add-fab{ transition: none; }
+  .mobile-add-menu-item{ animation: none; opacity: 1; transform: none; }
+}
+
+@media (max-width: 720px) {
+  /* Narrow desktop windows: reduce padding, but keep desktop behaviors. */
+  body{ --main-pad-x: 8px; --main-pad-y: 14px; }
+}
+
+@media (pointer: coarse), (any-pointer: coarse) {
+  /* Touch-first devices: replace the take-note bar with a fixed FAB. */
   body{ --main-pad-x: 8px; --main-pad-y: 14px; }
 
   /* Keep the take-note editor available for the mobile FAB, but hide the collapsed bar. */
   .take-note-sticky{
     display:block;
-    position: fixed;
-    left: 0;
-    right: 0;
-    top: var(--header-height);
-    z-index: 95;
-    padding: 0 var(--main-pad-x);
-    margin: 0;
-    background: transparent;
-    backdrop-filter: none;
-    pointer-events: none;
+    /* Use sticky (not fixed) so it reserves layout space and never overlaps cards. */
+    position: sticky;
+    top: calc(-1 * var(--main-pad-y));
+    z-index: 45;
+    padding: var(--main-pad-y) 0 8px;
+    margin: 0 0 6px;
+    background: linear-gradient(180deg, var(--bg) 72%, rgba(0,0,0,0));
+    backdrop-filter: blur(6px);
+  }
+  :root[data-theme="light"] .take-note-sticky{
+    background: linear-gradient(180deg, var(--bg) 72%, rgba(255,255,255,0));
   }
   .take-note-sticky .take-note-bar{ display:none; }
-  .take-note-sticky .take-note-expanded{ pointer-events: auto; }
   .mobile-add-note{
     display:block;
     position: fixed;
     right: 18px;
     bottom: calc(18px + env(safe-area-inset-bottom));
-    z-index: 90;
+    z-index: 9991;
   }
+
+  /* Larger touch targets + nicer readability in the add menu. */
+  .mobile-add-menu{ gap: 14px; }
+  /* Roughly 2x larger than desktop: bigger font, padding, icon size, and pill radius. */
+  .mobile-add-menu-item{
+    width: min(92vw, 340px);
+    padding: 20px 18px;
+    gap: 16px;
+    font-size: 22px;
+    border-radius: 18px;
+    font-weight: 750;
+  }
+  .mobile-add-menu-item svg{ width: 34px; height: 34px; }
 }
 
 @media (max-width: 480px) {
@@ -306,7 +503,7 @@ body{
 }
 
 /* Smartphone layout (touch-first, small width): 2 columns with minimal card chrome. */
-@media (pointer: coarse) and (hover: none) and (max-width: 560px) {
+@media (pointer: coarse) and (max-width: 560px), (any-pointer: coarse) and (max-width: 560px) {
   body{ --gap: 10px; }
 
   .note-card{
@@ -476,6 +673,24 @@ html.is-editor-modal-open .mobile-add-note{
   overflow: auto;
 }
 
+/* Phone: fullscreen take-note create editor when maximized. */
+@media (max-width: 720px) and (pointer: coarse), (max-width: 720px) and (any-pointer: coarse) {
+  .take-note-expanded.maximized{
+    position: fixed;
+    left: 0;
+    right: 0;
+    top: var(--header-height);
+    width: 100vw;
+    height: calc(100dvh - var(--header-height));
+    max-height: none;
+    margin: 0;
+    border-radius: 0;
+    z-index: 210;
+    overflow: auto;
+    padding-bottom: calc(12px + env(safe-area-inset-bottom));
+  }
+}
+
 /* Larger checkbox icon in collapsed take-note bar */
 .take-note-bar .checkbox-visual{ --checklist-checkbox-size: 32px; }
 /* Make the checkmark lighter and slightly smaller inside the box */
@@ -569,18 +784,18 @@ html.is-editor-modal-open .mobile-add-note{
   display:flex;
   align-items:center;
   justify-content:center;
-  width: var(--checklist-drag-handle-width);
-  min-width: var(--checklist-drag-handle-width);
+  width: max(var(--checklist-drag-handle-width), var(--checklist-checkbox-size));
+  min-width: max(var(--checklist-drag-handle-width), var(--checklist-checkbox-size));
   /*
     Don't force a fixed row height.
     On mobile we used to set this to 44px for touch targets, but that makes
     it impossible to tighten checklist spacing for unchecked items.
   */
   height: auto;
-  min-height: 0;
+  min-height: max(var(--checklist-drag-handle-height), var(--checklist-checkbox-size));
   padding: clamp(0px, calc(var(--checklist-gap) * 0.55), 10px) 0;
   line-height: 1;
-  font-size: 18px;
+  font-size: max(22px, var(--checklist-checkbox-size));
   margin-right:0;
 }
 .checklist-item .drag-gutter, .checklist-item .drag-handle{ touch-action:none; }
@@ -655,8 +870,8 @@ html.is-editor-modal-open .mobile-add-note{
 }
 
 /* hide original element while dragging so the ghost appears above neighbors */
-/* keep original visible (use ghost for visual hover) */
-.checklist-item.drag-source { visibility: hidden; }
+/* use opacity so embedded editors can't override visibility */
+.checklist-item.drag-source { opacity: 0; pointer-events: none; }
 
 /* up/down controls for mobile-friendly reorder */
 .move-controls{ display:flex; gap:6px; }
@@ -852,21 +1067,178 @@ html.is-editor-modal-open .mobile-add-note{
 }
 
 /* Chips */
-.collab-chips{display:flex;gap:6px;margin-bottom:8px;flex-wrap:wrap;align-items:flex-start;max-width:100%}
-.chip{background: var(--chip-bg, rgba(255,255,255,0.06));padding:4px 8px;border-radius:999px;font-size:12px;color: inherit;}
+.collab-chips{display:flex;gap:6px;flex-wrap:wrap;align-items:flex-start;max-width:100%}
+.collection-chips{display:flex;gap:8px 18px;margin-bottom:8px;flex-wrap:wrap;align-items:baseline;max-width:100%}
+.collection-link{
+  appearance: none;
+  -webkit-appearance: none;
+  display: inline-block;
+  background: transparent;
+  border: none;
+  padding: 0;
+  margin: 0;
+  cursor: pointer;
+  color: currentColor;
+  font-weight: 900;
+  letter-spacing: 0.02em;
+  font-size: 16px;
+  line-height: 1.05;
+  text-shadow: var(--collection-link-shadow, 0 1px 0 rgba(0,0,0,0.85));
+  text-decoration: none;
+  white-space: nowrap;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.collection-link:hover{ text-decoration: underline; text-underline-offset: 3px; }
+.collection-link:focus-visible{ outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 6px; }
+:root:not([data-theme="light"]) {
+  --collection-link-shadow:
+    0 1px 0 rgba(0,0,0,0.9),
+    0 -1px 0 rgba(0,0,0,0.9),
+    1px 0 0 rgba(0,0,0,0.9),
+    -1px 0 0 rgba(0,0,0,0.9),
+    0 2px 10px rgba(0,0,0,0.45);
+}
+:root[data-theme="light"] {
+  --collection-link-shadow:
+    0 1px 0 rgba(255,255,255,0.95),
+    0 -1px 0 rgba(255,255,255,0.95),
+    1px 0 0 rgba(255,255,255,0.95),
+    -1px 0 0 rgba(255,255,255,0.95),
+    0 2px 10px rgba(0,0,0,0.10);
+}
+.chip{background: var(--chip-bg, rgba(255,255,255,0.06));padding:5px 10px;border-radius:999px;font-size:12px;color: inherit;border:0;line-height:1;}
+button.chip{appearance:none;-webkit-appearance:none;cursor:pointer;}
+button.chip:focus{outline:2px solid rgba(255,255,255,0.18);outline-offset:2px;}
+:root[data-theme="light"] button.chip:focus{outline-color: rgba(0,0,0,0.18);}
 :root[data-theme="light"] .chip{ background: rgba(0,0,0,0.06); box-shadow: inset 0 0 0 1px rgba(0,0,0,0.04); }
+
+/* Progressive disclosure metadata (summary chips + single inline panel) */
+.note-meta{
+  margin: 6px 0 10px;
+  font-size: 12px;
+}
+.note-card.has-checklist .note-meta{
+  margin-bottom: 16px;
+}
+.note-meta-bar{
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.chip.chip--meta{
+  padding: 4px 10px;
+  opacity: 0.74;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.chip.chip--meta.is-active{ opacity: 0.90; }
+.meta-icon,
+.meta-fa-icon{
+  width: 14px;
+  height: 14px;
+  display: inline-block;
+  flex: 0 0 auto;
+  opacity: 0.92;
+}
+.chip--meta-collections .meta-collections-label{
+  max-width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.note-meta-panel{
+  overflow: hidden;
+  max-height: 0;
+  opacity: 0;
+  transform: translateY(-3px);
+  pointer-events: none;
+  transition: opacity 140ms ease, transform 140ms ease, max-height 180ms ease;
+}
+.note-meta-panel.is-open{
+  margin-top: 6px;
+  max-height: 320px;
+  opacity: 1;
+  transform: translateY(0);
+  pointer-events: auto;
+}
+@media (prefers-reduced-motion: reduce){
+  .note-meta-panel{ transition: none; }
+}
+
+/* Collection chip look: slightly more "tag"-like */
+.chip.chip--collection{
+  background: var(--chip-bg, rgba(255,255,255,0.06));
+  box-shadow: none;
+}
+:root[data-theme="light"] .chip.chip--collection{
+  background: rgba(0,0,0,0.06);
+  box-shadow: inset 0 0 0 1px rgba(0,0,0,0.04);
+}
+
+@media (pointer: coarse) {
+  .chip{ padding: 8px 12px; font-size: 13px; }
+}
+/* Labels appear in-flow; the card's bottom padding reserves space for the hover footer. */
 .label-chips{
-  position: absolute;
-  left: 12px;
-  right: 12px;
-  bottom: 58px; /* just above footer (height ~52px + small gap) */
   display:flex;
   gap:6px;
   flex-wrap: wrap;
-  z-index: 15; /* above body, below footer */
-  max-height: 56px; /* up to ~2 rows */
-  overflow: hidden; /* clip extra rows when many labels */
-  padding: 4px 0;
+  max-height: none;
+  overflow: visible;
+  padding: 4px 0 0;
+  margin-top: 0;
+}
+
+/* Per-note collections dropdown sits under labels and can expand without moving them. */
+.note-collections{
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 0;
+}
+.note-collections-toggle{
+  appearance: none;
+  -webkit-appearance: none;
+  background: transparent;
+  border: none;
+  padding: 2px 0;
+  color: inherit;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  opacity: 0.92;
+}
+.note-collections-toggle__count{
+  font-size: 11px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: rgba(255,255,255,0.08);
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,0.06);
+}
+:root[data-theme="light"] .note-collections-toggle__count{
+  background: rgba(0,0,0,0.06);
+  box-shadow: inset 0 0 0 1px rgba(0,0,0,0.06);
+}
+.note-collections-list{
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  max-height: 140px;
+  overflow: auto;
+  padding-top: 4px;
+  padding-bottom: 2px;
+}
+.note-collection-chip{
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* Note images */
@@ -881,10 +1253,7 @@ html.is-editor-modal-open .mobile-add-note{
   gap:6px;
   max-width: 100%;
 }
-.note-card.has-labels .note-images{
-  /* Reserve the footer+labels band so thumbnails don't render underneath it. */
-  margin-bottom: 66px;
-}
+.note-card.has-labels .note-images{ margin-bottom: 0; }
 .note-card .note-images .note-image{
   width: min(var(--image-thumb-size), 100%);
   aspect-ratio: 1 / 1;
@@ -993,7 +1362,7 @@ html.is-editor-modal-open .mobile-add-note{
 
 /* Image dialog */
 .image-dialog-backdrop{
-  position:fixed;inset:0;background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;z-index:60;
+  position:fixed;inset:0;background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;z-index:200;
 }
 .image-dialog{
   width: min(420px, calc(var(--note-card-width) + 120px));
@@ -1039,6 +1408,14 @@ html.is-editor-modal-open .mobile-add-note{
   :root[data-theme="light"] .editor-dialog .dialog-header{ border-bottom-color: rgba(0,0,0,0.08); }
   .editor-dialog .dialog-footer{
     padding: 10px 12px calc(10px + env(safe-area-inset-bottom));
+    position: sticky;
+    bottom: 0;
+    z-index: 45;
+    background: var(--editor-surface, var(--card));
+    box-shadow: 0 -10px 24px rgba(0,0,0,0.22);
+  }
+  :root[data-theme="light"] .editor-dialog .dialog-footer{
+    box-shadow: 0 -10px 24px rgba(0,0,0,0.10);
   }
 
   /* Editor footer icons: ~200% larger on mobile (note + checklist editors). */
@@ -1108,6 +1485,38 @@ html.is-editor-modal-open .mobile-add-note{
 .dialog-footer{ padding:12px; border-top:1px solid rgba(255,255,255,0.03); display:flex; gap:8px; align-items:center; }
 :root[data-theme="light"] .dialog-footer{ border-top:1px solid rgba(0,0,0,0.06); }
 .image-dialog .dialog-footer .note-actions{ justify-content: flex-start; }
+
+/* Create dialog: "add to current collection" row */
+.create-collection-toggle{
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid rgba(255,255,255,0.10);
+  background: rgba(255,255,255,0.04);
+  color: inherit;
+  cursor: pointer;
+}
+:root[data-theme="light"] .create-collection-toggle{
+  border-color: rgba(0,0,0,0.10);
+  background: rgba(0,0,0,0.04);
+}
+.create-collection-toggle input{ width: 18px; height: 18px; accent-color: var(--accent); flex: 0 0 auto; }
+.create-collection-toggle__text{ font-weight: 700; opacity: 0.95; flex: 0 0 auto; }
+.create-collection-toggle__path{
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+}
+
+@media (pointer: coarse) {
+  .create-collection-toggle{ padding: 10px 12px; }
+  .create-collection-toggle input{ width: 22px; height: 22px; }
+}
 .delete-item{ background:transparent;border:none;color:var(--muted);cursor:pointer;opacity:0; transition:opacity 140ms; padding:4px 6px;border-radius:6px; align-self:center; pointer-events:none }
 .checklist-item:hover .delete-item{ opacity:1; pointer-events:auto }
 .checklist-item.is-active .delete-item{ opacity:1; pointer-events:auto }
@@ -1266,7 +1675,6 @@ html.is-editor-modal-open .mobile-add-note{
 
 /* Protected footer region for actions (edge-to-edge, solid, and hidden until hover) */
 .note-card { padding-bottom: 62px; }
-.note-card.has-labels { padding-bottom: 126px; }
 .note-footer {
   position: absolute;
   left: 0;
@@ -1374,6 +1782,18 @@ html.is-editor-modal-open .mobile-add-note{
     overflow: visible;
     padding: 4px 0 0;
     margin-top: 10px;
+  }
+  .note-collections{
+    position: static;
+    left: auto;
+    right: auto;
+    bottom: auto;
+    z-index: auto;
+    margin-top: 6px;
+  }
+  .note-collections-list{
+    max-height: none;
+    overflow: visible;
   }
   .note-card.has-labels .note-images{ margin-bottom: 0; }
 }

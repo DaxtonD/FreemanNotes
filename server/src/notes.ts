@@ -46,6 +46,10 @@ router.get('/api/notes', async (req: Request, res: Response) => {
         owner: true,
         items: true,
         images: true,
+          noteCollections: {
+          where: { userId: user.id },
+          include: { collection: { select: { id: true, name: true, parentId: true } } },
+          },
           noteLabels: { where: { label: { ownerId: user.id } }, include: { label: true } },
           notePrefs: { where: { userId: user.id } }
       },
@@ -55,11 +59,18 @@ router.get('/api/notes', async (req: Request, res: Response) => {
         orderBy: [{ ord: 'asc' }, { createdAt: 'desc' }]
     });
     // ensure checklist items are returned in ord order
-      const normalized = (notes as any[]).map((n: any) => ({
-        ...n,
-        items: (n.items || []).slice().sort((a, b) => (a.ord || 0) - (b.ord || 0)),
-        viewerColor: (Array.isArray(n.notePrefs) && n.notePrefs[0]?.color) ? String(n.notePrefs[0].color) : null
-      }));
+      const normalized = (notes as any[]).map((n: any) => {
+      const viewerCollections = (Array.isArray(n.noteCollections) ? n.noteCollections : [])
+        .map((nc: any) => nc && nc.collection)
+        .filter((c: any) => c && typeof c.id === 'number' && typeof c.name === 'string')
+        .map((c: any) => ({ id: Number(c.id), name: String(c.name), parentId: (c.parentId == null ? null : Number(c.parentId)) }));
+        return {
+          ...n,
+          items: (n.items || []).slice().sort((a, b) => (a.ord || 0) - (b.ord || 0)),
+          viewerColor: (Array.isArray(n.notePrefs) && n.notePrefs[0]?.color) ? String(n.notePrefs[0].color) : null,
+        viewerCollections,
+        };
+      });
     res.json({ notes: normalized });
   } catch (err) {
     res.status(500).json({ error: String(err) });

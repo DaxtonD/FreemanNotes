@@ -32,6 +32,8 @@ model User {
   labels         Label[]
   notes          Note[]         @relation("OwnerNotes")
   notePrefs      NotePref[]
+  collections    Collection[]
+  noteCollections NoteCollection[]
   deviceProfiles UserDeviceProfile[]
   deviceClients  UserDeviceClient[]
 }
@@ -124,8 +126,46 @@ model Note {
   items         NoteItem[]
   noteLabels    NoteLabel[]
   notePrefs     NotePref[]
+  noteCollections NoteCollection[]
 
   @@index([ownerId])
+}
+
+model Collection {
+  id        Int          @id @default(autoincrement())
+  name      String
+  ownerId   Int
+  parentId  Int?
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+
+  owner     User         @relation(fields: [ownerId], references: [id])
+  parent    Collection?  @relation("CollectionParent", fields: [parentId], references: [id], onDelete: Cascade)
+  children  Collection[] @relation("CollectionParent")
+  noteCollections NoteCollection[]
+
+  @@unique([ownerId, parentId, name])
+  @@index([ownerId])
+  @@index([parentId])
+}
+
+// Per-user membership of a note in a collection (multi-collection support).
+model NoteCollection {
+  id           Int        @id @default(autoincrement())
+  userId       Int
+  noteId       Int
+  collectionId Int
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  user         User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  note         Note       @relation(fields: [noteId], references: [id], onDelete: Cascade)
+  collection   Collection @relation(fields: [collectionId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, noteId, collectionId])
+  @@index([userId])
+  @@index([noteId])
+  @@index([collectionId])
 }
 
 model NoteItem {

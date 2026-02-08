@@ -10,8 +10,10 @@ else
   echo "set-database-url.js not found, skipping"
 fi
 
-echo "Running setup-db (db push + prisma generate)"
-npm run setup-db
+echo "DB schema is handled by server startup (ensureDatabaseReady): migrate deploy (safe)"
+
+# Avoid running `prisma db push` here so production-like databases aren't modified
+# outside the server's controlled startup path.
 
 echo "Starting application"
 exec node dist/server/src/index.js
