@@ -218,6 +218,10 @@ export default function Sidebar({
       });
       if (!res.ok) throw new Error(await res.text());
       try { setNewCollectionName(''); } catch {}
+      // New collections can affect breadcrumb paths and descendant display.
+      try {
+        window.dispatchEvent(new CustomEvent('collections:changed', { detail: { invalidateAll: true, reason: 'create' } }));
+      } catch {}
       await refreshCollections();
     } catch (err) {
       window.alert('Failed to create collection: ' + String(err));
@@ -237,6 +241,10 @@ export default function Sidebar({
         body: JSON.stringify({ name: next }),
       });
       if (!res.ok) throw new Error(await res.text());
+      // Notify other UI surfaces (e.g., note collection chips) to invalidate any cached paths.
+      try {
+        window.dispatchEvent(new CustomEvent('collections:changed', { detail: { invalidateAll: true, reason: 'rename', id: Number(id) } }));
+      } catch {}
       // Update stack display names if needed.
       try {
         const stack = Array.isArray(collectionStack) ? collectionStack : [];
@@ -260,6 +268,10 @@ export default function Sidebar({
     try {
       const res = await fetch(`/api/collections/${encodeURIComponent(String(id))}`, { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } });
       if (!res.ok) throw new Error(await res.text());
+      // Deleting can invalidate any cached breadcrumb paths for this subtree.
+      try {
+        window.dispatchEvent(new CustomEvent('collections:changed', { detail: { invalidateAll: true, reason: 'delete', id: Number(id) } }));
+      } catch {}
       // If we deleted the current path (or an ancestor), pop back to root.
       try {
         const stack = Array.isArray(collectionStack) ? collectionStack : [];

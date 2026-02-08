@@ -200,6 +200,9 @@ export default function MoveToCollectionModal({
 			const data = await res.json();
 			const createdId = Number((data as any)?.collection?.id);
 			if (Number.isFinite(createdId)) {
+				try {
+					window.dispatchEvent(new CustomEvent('collections:changed', { detail: { invalidateAll: true, reason: 'create', id: createdId } }));
+				} catch {}
 				try { setCreatingName(''); } catch {}
 				setBusy(false);
 				await addTo(createdId);
