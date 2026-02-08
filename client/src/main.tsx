@@ -35,15 +35,24 @@ function applySavedPrefs() {
 
 applySavedPrefs();
 
-// If a legacy service worker is still registered from previous builds, unregister it to prevent
-// intercepting requests and causing network errors on third-party beacons or mixed-content issues.
+// Service worker: unregister legacy SWs but keep/register our minimal /sw.js.
 try {
 	if ('serviceWorker' in navigator) {
-		navigator.serviceWorker.getRegistrations().then(regs => {
-			regs.forEach(reg => {
-				try { reg.unregister(); } catch {}
-			});
-		}).catch(() => {});
+		(async () => {
+			try {
+				const regs = await navigator.serviceWorker.getRegistrations();
+				let hasOur = false;
+				for (const reg of regs) {
+					const scriptUrl = String(reg.active?.scriptURL || reg.waiting?.scriptURL || reg.installing?.scriptURL || '');
+					const isOur = scriptUrl.endsWith('/sw.js') || scriptUrl.includes('/sw.js?');
+					if (isOur) { hasOur = true; continue; }
+					try { await reg.unregister(); } catch {}
+				}
+				if (!hasOur) {
+					try { await navigator.serviceWorker.register('/sw.js', { scope: '/' }); } catch {}
+				}
+			} catch {}
+		})();
 	}
 } catch {}
 

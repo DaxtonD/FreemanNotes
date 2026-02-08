@@ -4,6 +4,7 @@ declare const __APP_VERSION__: string;
 import { useAuth } from '../authContext';
 import SettingsModal from './SettingsModal';
 import { useTheme } from '../themeContext';
+import { usePwaInstall } from '../lib/pwaInstall';
 
 const APP_VERSION = typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : '0.0.0';
 const ABOUT_ICON_DARK = '/icons/darkicon.png';
@@ -15,6 +16,7 @@ const VERSION_ICON_LIGHT = '/icons/version-light.png';
 export default function PreferencesModal({ onClose }: { onClose: () => void }) {
   const auth = (() => { try { return useAuth(); } catch { return null as any; } })();
   const themeCtx = (() => { try { return useTheme(); } catch { return null as any; } })();
+  const { canInstall, isInstalled, promptInstall } = usePwaInstall();
   const effectiveTheme = (themeCtx && (themeCtx as any).effective) || 'dark';
   const themeChoice = (themeCtx && (themeCtx as any).choice) || 'system';
   const setThemeChoice: (t: any) => void = (themeCtx && (themeCtx as any).setChoice) || (() => {});
@@ -258,32 +260,102 @@ export default function PreferencesModal({ onClose }: { onClose: () => void }) {
     };
   }, [photoPreviewUrl]);
   return (
-    <div className="image-dialog-backdrop">
-      <div className="prefs-dialog" role="dialog" aria-modal>
-        <div className="dialog-header">
-          <strong>Preferences</strong>
-          <button className="icon-close" onClick={onClose}>✕</button>
+    <div className={`image-dialog-backdrop prefs-backdrop${isPhone ? ' phone' : ''}`}>
+      <div className={`prefs-dialog${isPhone ? ' phone' : ''}`} role="dialog" aria-modal aria-label="Preferences">
+        <div className="dialog-header prefs-header">
+          {isPhone && activeSection != null ? (
+            <button className="btn prefs-back" type="button" onClick={() => setActiveSection(null)} aria-label="Back">
+              ←
+            </button>
+          ) : (
+            <span />
+          )}
+          <strong className="prefs-title">
+            {activeSection == null ? (isPhone ? 'Settings' : 'Preferences') : (
+              activeSection === 'about' ? 'About' :
+              activeSection === 'appearance' ? 'Appearance' :
+              activeSection === 'colors' ? 'Colors' :
+              activeSection === 'drag' ? 'Drag & Animation' :
+              activeSection === 'collaborators' ? 'Collaborators' :
+              'Preferences'
+            )}
+          </strong>
+          <button className="icon-close" type="button" onClick={onClose} aria-label="Close">✕</button>
         </div>
-        <div style={{ padding: 12 }}>
+
+        <div className="dialog-body prefs-body">
           {activeSection == null ? (
-            <div>
-              <div style={{ display: 'grid', gap: 10 }}>
-                <button className="btn" onClick={() => setActiveSection('about')}>About</button>
-                <button className="btn" onClick={() => setActiveSection('appearance')}>Appearance</button>
-                {false && <button className="btn" onClick={() => setActiveSection('colors')}>Colors</button>}
-                <button className="btn" onClick={() => setActiveSection('drag')}>Drag & Animation</button>
-                <button className="btn" onClick={() => setActiveSection('collaborators')}>Collaborators</button>
+            isPhone ? (
+              <div className="prefs-mobile-root">
+                <div className="prefs-list" role="list">
+                  {!isInstalled && canInstall && (
+                    <button
+                      className="prefs-item"
+                      type="button"
+                      onClick={async () => { try { await promptInstall(); } catch {} }}
+                      role="listitem"
+                      title="Install Freeman Notes"
+                    >
+                      <span className="prefs-item__label">Install app</span>
+                      <span className="prefs-item__chev" aria-hidden>›</span>
+                    </button>
+                  )}
+                  <button className="prefs-item" type="button" onClick={() => setActiveSection('about')} role="listitem">
+                    <span className="prefs-item__label">About</span>
+                    <span className="prefs-item__chev" aria-hidden>›</span>
+                  </button>
+                  <button className="prefs-item" type="button" onClick={() => setActiveSection('appearance')} role="listitem">
+                    <span className="prefs-item__label">Appearance</span>
+                    <span className="prefs-item__chev" aria-hidden>›</span>
+                  </button>
+                  <button className="prefs-item" type="button" onClick={() => setActiveSection('drag')} role="listitem">
+                    <span className="prefs-item__label">Drag & Animation</span>
+                    <span className="prefs-item__chev" aria-hidden>›</span>
+                  </button>
+                  <button className="prefs-item" type="button" onClick={() => setActiveSection('collaborators')} role="listitem">
+                    <span className="prefs-item__label">Collaborators</span>
+                    <span className="prefs-item__chev" aria-hidden>›</span>
+                  </button>
+                </div>
+
+                <div style={{ height: 14 }} />
+
+                <div className="prefs-list" role="list" aria-label="Account">
+                  {(auth?.user as any)?.role === 'admin' && (
+                    <button className="prefs-item" type="button" onClick={() => setShowInvite(true)} role="listitem">
+                      <span className="prefs-item__label">Send invite</span>
+                      <span className="prefs-item__chev" aria-hidden>›</span>
+                    </button>
+                  )}
+                  <button className="prefs-item prefs-item--danger" type="button" onClick={() => { try { onClose(); } catch {} try { auth?.logout?.(); } catch {} }} role="listitem">
+                    <span className="prefs-item__label">Sign out</span>
+                    <span className="prefs-item__chev" aria-hidden>›</span>
+                  </button>
+                </div>
               </div>
-              <div style={{ marginTop: 16, display: 'flex', gap: 8, justifyContent: 'flex-start' }}>
-                <button className="btn" onClick={onCancel}>Close</button>
-                <span style={{ flex: 1 }} />
-                { (auth?.user as any)?.role === 'admin' && <button className="btn" onClick={() => setShowInvite(true)}>Send Invite</button> }
-                <button className="btn" onClick={() => { try { onClose(); } catch {} try { auth?.logout?.(); } catch {} }}>Sign out</button>
+            ) : (
+              <div>
+                <div style={{ display: 'grid', gap: 10 }}>
+                  {!isInstalled && canInstall && (
+                    <button className="btn" type="button" onClick={async () => { try { await promptInstall(); } catch {} }}>Install app</button>
+                  )}
+                  <button className="btn" type="button" onClick={() => setActiveSection('about')}>About</button>
+                  <button className="btn" type="button" onClick={() => setActiveSection('appearance')}>Appearance</button>
+                  {false && <button className="btn" type="button" onClick={() => setActiveSection('colors')}>Colors</button>}
+                  <button className="btn" type="button" onClick={() => setActiveSection('drag')}>Drag & Animation</button>
+                  <button className="btn" type="button" onClick={() => setActiveSection('collaborators')}>Collaborators</button>
+                </div>
+                <div style={{ marginTop: 16, display: 'flex', gap: 8, justifyContent: 'flex-start' }}>
+                  <button className="btn" type="button" onClick={onCancel}>Close</button>
+                  <span style={{ flex: 1 }} />
+                  {(auth?.user as any)?.role === 'admin' && <button className="btn" type="button" onClick={() => setShowInvite(true)}>Send Invite</button>}
+                  <button className="btn" type="button" onClick={() => { try { onClose(); } catch {} try { auth?.logout?.(); } catch {} }}>Sign out</button>
+                </div>
               </div>
-            </div>
+            )
           ) : activeSection === 'about' ? (
             <div>
-              <button className="btn" onClick={() => setActiveSection(null)} aria-label="Back">← Back</button>
+              {!isPhone && <button className="btn" type="button" onClick={() => setActiveSection(null)} aria-label="Back">← Back</button>}
               <div style={{ height: 8 }} />
               <h4>About Freeman Notes</h4>
               <div className="about-hero-group">
@@ -302,16 +374,16 @@ export default function PreferencesModal({ onClose }: { onClose: () => void }) {
                 <p>No manhacks. No surveillance. Just free notes, recorded and remembered on your terms.</p>
               </div>
               <div style={{ marginTop: 16, display: 'flex', gap: 8, justifyContent: 'flex-start' }}>
-                <button className="btn" onClick={() => setActiveSection(null)}>Back</button>
-                <button className="btn" onClick={onCancel}>Close</button>
+                <button className="btn" type="button" onClick={() => setActiveSection(null)}>Back</button>
+                <button className="btn" type="button" onClick={onCancel}>Close</button>
                 <span style={{ flex: 1 }} />
-                { (auth?.user as any)?.role === 'admin' && <button className="btn" onClick={() => setShowInvite(true)}>Send Invite</button> }
-                <button className="btn" onClick={() => { try { onClose(); } catch {} try { auth?.logout?.(); } catch {} }}>Sign out</button>
+                {(auth?.user as any)?.role === 'admin' && <button className="btn" type="button" onClick={() => setShowInvite(true)}>Send Invite</button>}
+                <button className="btn" type="button" onClick={() => { try { onClose(); } catch {} try { auth?.logout?.(); } catch {} }}>Sign out</button>
               </div>
             </div>
           ) : activeSection === 'appearance' ? (
             <div>
-              <button className="btn" onClick={() => setActiveSection(null)} aria-label="Back">← Back</button>
+              {!isPhone && <button className="btn" type="button" onClick={() => setActiveSection(null)} aria-label="Back">← Back</button>}
               <div style={{ height: 8 }} />
               <h4>Appearance</h4>
               <div style={{ marginBottom: 16 }}>
@@ -407,16 +479,16 @@ export default function PreferencesModal({ onClose }: { onClose: () => void }) {
                 </div>
               </div>
               <div style={{ marginTop: 16, display: 'flex', gap: 8, justifyContent: 'flex-start' }}>
-                <button className="btn" onClick={() => setActiveSection(null)}>Back</button>
-                <button className="btn" onClick={onSave}>Save</button>
+                <button className="btn" type="button" onClick={() => setActiveSection(null)}>Back</button>
+                <button className="btn" type="button" onClick={onSave}>Save</button>
                 <span style={{ flex: 1 }} />
-                { (auth?.user as any)?.role === 'admin' && <button className="btn" onClick={() => setShowInvite(true)}>Send Invite</button> }
-                <button className="btn" onClick={() => { try { onClose(); } catch {} try { auth?.logout?.(); } catch {} }}>Sign out</button>
+                {(auth?.user as any)?.role === 'admin' && <button className="btn" type="button" onClick={() => setShowInvite(true)}>Send Invite</button>}
+                <button className="btn" type="button" onClick={() => { try { onClose(); } catch {} try { auth?.logout?.(); } catch {} }}>Sign out</button>
               </div>
             </div>
           ) : activeSection === 'colors' ? (
             <div>
-              <button className="btn" onClick={() => setActiveSection(null)} aria-label="Back">← Back</button>
+              {!isPhone && <button className="btn" type="button" onClick={() => setActiveSection(null)} aria-label="Back">← Back</button>}
               <div style={{ height: 8 }} />
               <h4>Colors</h4>
               <div style={{ display: 'flex', gap: 12, alignItems: 'center', justifyContent: 'flex-start' }}>
@@ -429,17 +501,17 @@ export default function PreferencesModal({ onClose }: { onClose: () => void }) {
                 <input aria-label="checkbox border" type="color" value={pendingCheckboxBorder} onChange={(e) => setPendingCheckboxBorder(e.target.value)} style={{ width: 44, height: 28, padding: 0 }} />
               </div>
               <div style={{ marginTop: 16, display: 'flex', gap: 8, justifyContent: 'flex-start' }}>
-                <button className="btn" onClick={() => setActiveSection(null)}>Back</button>
-                <button className="btn" onClick={onResetColors} title="Reset colors to defaults">Reset colors</button>
-                <button className="btn" onClick={onSave}>Save</button>
+                <button className="btn" type="button" onClick={() => setActiveSection(null)}>Back</button>
+                <button className="btn" type="button" onClick={onResetColors} title="Reset colors to defaults">Reset colors</button>
+                <button className="btn" type="button" onClick={onSave}>Save</button>
                 <span style={{ flex: 1 }} />
-                { (auth?.user as any)?.role === 'admin' && <button className="btn" onClick={() => setShowInvite(true)}>Send Invite</button> }
-                <button className="btn" onClick={() => { try { onClose(); } catch {} try { auth?.logout?.(); } catch {} }}>Sign out</button>
+                {(auth?.user as any)?.role === 'admin' && <button className="btn" type="button" onClick={() => setShowInvite(true)}>Send Invite</button>}
+                <button className="btn" type="button" onClick={() => { try { onClose(); } catch {} try { auth?.logout?.(); } catch {} }}>Sign out</button>
               </div>
             </div>
           ) : activeSection === 'drag' ? (
             <div>
-              <button className="btn" onClick={() => setActiveSection(null)} aria-label="Back">← Back</button>
+              {!isPhone && <button className="btn" type="button" onClick={() => setActiveSection(null)} aria-label="Back">← Back</button>}
               <div style={{ height: 8 }} />
               <h4>Drag & Animation</h4>
               <div style={{ display: 'flex', gap: 12, alignItems: 'center', justifyContent: 'flex-start' }}>
@@ -459,16 +531,16 @@ export default function PreferencesModal({ onClose }: { onClose: () => void }) {
                 </select>
               </div>
               <div style={{ marginTop: 16, display: 'flex', gap: 8, justifyContent: 'flex-start' }}>
-                <button className="btn" onClick={() => setActiveSection(null)}>Back</button>
-                <button className="btn" onClick={onSave}>Save</button>
+                <button className="btn" type="button" onClick={() => setActiveSection(null)}>Back</button>
+                <button className="btn" type="button" onClick={onSave}>Save</button>
                 <span style={{ flex: 1 }} />
-                { (auth?.user as any)?.role === 'admin' && <button className="btn" onClick={() => setShowInvite(true)}>Send Invite</button> }
-                <button className="btn" onClick={() => { try { onClose(); } catch {} try { auth?.logout?.(); } catch {} }}>Sign out</button>
+                {(auth?.user as any)?.role === 'admin' && <button className="btn" type="button" onClick={() => setShowInvite(true)}>Send Invite</button>}
+                <button className="btn" type="button" onClick={() => { try { onClose(); } catch {} try { auth?.logout?.(); } catch {} }}>Sign out</button>
               </div>
             </div>
           ) : (
             <div>
-              <button className="btn" onClick={() => setActiveSection(null)} aria-label="Back">← Back</button>
+              {!isPhone && <button className="btn" type="button" onClick={() => setActiveSection(null)} aria-label="Back">← Back</button>}
               <div style={{ height: 8 }} />
               <h4>Collaborators</h4>
               <div style={{ display: 'flex', gap: 12, alignItems: 'center', justifyContent: 'flex-start' }}>
@@ -480,11 +552,11 @@ export default function PreferencesModal({ onClose }: { onClose: () => void }) {
                 </select>
               </div>
               <div style={{ marginTop: 16, display: 'flex', gap: 8, justifyContent: 'flex-start' }}>
-                <button className="btn" onClick={() => setActiveSection(null)}>Back</button>
-                <button className="btn" onClick={onSave}>Save</button>
+                <button className="btn" type="button" onClick={() => setActiveSection(null)}>Back</button>
+                <button className="btn" type="button" onClick={onSave}>Save</button>
                 <span style={{ flex: 1 }} />
-                { (auth?.user as any)?.role === 'admin' && <button className="btn" onClick={() => setShowInvite(true)}>Send Invite</button> }
-                <button className="btn" onClick={() => { try { onClose(); } catch {} try { auth?.logout?.(); } catch {} }}>Sign out</button>
+                {(auth?.user as any)?.role === 'admin' && <button className="btn" type="button" onClick={() => setShowInvite(true)}>Send Invite</button>}
+                <button className="btn" type="button" onClick={() => { try { onClose(); } catch {} try { auth?.logout?.(); } catch {} }}>Sign out</button>
               </div>
             </div>
           )}
