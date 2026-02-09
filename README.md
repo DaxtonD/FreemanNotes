@@ -1,5 +1,3 @@
-<!-- OCR feature removed -->
-
 ## Image Upload Limits
 
 - **MAX_IMAGE_UPLOAD_MB**: Controls Express JSON body limit for image data URLs. Increase if you see `PayloadTooLargeError`.
@@ -47,6 +45,12 @@ DATABASE_URL="mysql://user:pass@host:3306/freeman"
 # JWT secret
 JWT_SECRET=generate_a_long_random_string
 
+# Web Push (PWA notifications)
+# Generate with: npm run push:gen-vapid
+VAPID_PUBLIC_KEY=...
+VAPID_PRIVATE_KEY=...
+VAPID_SUBJECT=mailto:admin@example.com
+
 # Registration mode
 USER_REGISTRATION_ENABLED=true
 
@@ -84,6 +88,23 @@ npm run build
 npm start
 # Open http://localhost:4000
 ```
+
+## PWA Push Notifications (Android)
+
+This app supports **real background notifications** via Web Push (service worker `push` events). Install-time permission prompts are not allowed by browsers; users must enable notifications via an in-app click.
+
+Setup:
+
+- Ensure your database is up to date after pulling changes: `npm run setup-db`.
+- Generate VAPID keys: `npm run push:gen-vapid`.
+- Set `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT` in `.env`.
+- Push requires HTTPS on real devices (localhost is the usual exception).
+
+Testing (in the app):
+
+- Preferences → Notifications → **Enable notifications**
+- **Local test** (verifies service-worker `showNotification`)
+- **Push test** (verifies subscription + server send)
 
 ## Docker
 
@@ -133,7 +154,7 @@ The included `docker-compose.yml` has an optional MySQL service behind a profile
   - Patch: `npm run release:patch`
   - Minor: `npm run release:minor`
   - Major: `npm run release:major`
-- Each release updates `package.json` version, creates a Git tag `vX.Y.Z`, and pushes to GitHub.
+- Each release updates `package.json` version, creates a Git tag (e.g. `0.5.0`), and pushes to GitHub.
 - Maintain notes in [CHANGELOG.md](CHANGELOG.md).
 
 ## Release Notes
@@ -141,11 +162,6 @@ The included `docker-compose.yml` has an optional MySQL service behind a profile
 ### v0.3.1
 
 - **Fix: Grid packing after filters** — Recalculates masonry row spans when label filters or search change, ensuring notes snap back to the correct layout after clearing filters. Implemented by dispatching `notes-grid:recalc` in `client/src/components/NotesGrid.tsx` whenever `selectedLabelIds`, `searchQuery`, or `notes` change.
-
-### v0.3.2
-
-- **OCR: PaddleOCR integration** — Added a swappable OCR module with PaddleOCR (`lang="en"`, `use_angle_cls=True`), deterministic preprocessing (RGB, remove alpha, resize max dimension ≈ 1800px), single-pass OCR, and structured JSON output `{ text, lines: [{ text, confidence }], avgConfidence }`. Returns `{ status: "low_confidence" }` if the average confidence is below threshold; no retries or tuning.
-- **Docker support for OCR** — Runtime image installs Python 3 and PaddleOCR dependencies, making OCR work out-of-the-box in Docker.
 
 ## API Summary
 
@@ -164,20 +180,6 @@ The included `docker-compose.yml` has an optional MySQL service behind a profile
 - `PATCH /api/notes/:noteId/items/:itemId` — Update checklist item.
 - `PUT /api/notes/:id/items` — Replace/sync checklist items.
 - `POST /api/notes/:id/labels` — Add/create label and link to note.
-
-## OCR (PaddleOCR)
-
-- Engine: PaddleOCR with `lang="en"` and `use_angle_cls=True`.
-- Deterministic preprocessing only: convert to RGB, remove alpha, resize so max dimension ≈ 1800px; no thresholding or tuning.
-- Output: `{ text, lines: [{ text, confidence }], avgConfidence }`; returns `{ status: "low_confidence" }` if average confidence falls below the threshold.
-- One pass per image — no retries.
-
-Setup:
-- Requires Python 3 and pip.
-- Install Python deps:
-  - `pip install -r scripts/requirements.txt`
-- Optional: set `PYTHON_BIN` env var to the Python executable if not `python` on your system.
-- Swappable design: `server/src/ocr.ts` exposes a factory `createOcrEngine()`; currently uses PaddleOCR.
 
 ## Troubleshooting
 

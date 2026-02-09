@@ -30,7 +30,7 @@ function generateClientWithRetries(attempts = 3, delayMs = 1000) {
   for (let i = 1; i <= attempts; i++) {
     try {
       console.log(`Running 'prisma generate' (attempt ${i}/${attempts})`);
-      runCommand('npx prisma generate');
+      runCommand('npx prisma generate --schema=prisma/schema.prisma');
       return;
     } catch (err: any) {
       console.warn(`prisma generate failed on attempt ${i}:`, err?.message || err);
@@ -45,22 +45,24 @@ export async function ensureDatabaseReady() {
   // ensure DATABASE_URL is present if set in .env
   if (!process.env.DATABASE_URL) buildDatabaseUrlFromEnvFile();
 
-  // Ensure Prisma client is generated before importing/using it to avoid Windows file locks
-  if (!hasGeneratedClient()) {
+  // Ensure Prisma client is generated before importing/using it to avoid Windows file locks.
+  // We run this on every startup so schema changes don't leave a stale client in node_modules.
+  try {
+    // Make sure DATABASE_URL is set via helper script if DB_* env vars are provided
     try {
-      // Make sure DATABASE_URL is set via helper script if DB_* env vars are provided
-      try {
-        runCommand('node ./server/scripts/set-database-url.js');
-      } catch (e) {
-        // ignore - script exits 0 when DATABASE_URL present
-      }
-
-      generateClientWithRetries();
-    } catch (genErr) {
-      console.error('Failed to generate Prisma client:', genErr);
-      // If generation fails, we can't safely continue using Prisma
-      throw genErr;
+      runCommand('node ./server/scripts/set-database-url.js');
+    } catch (e) {
+      // ignore - script exits 0 when DATABASE_URL present
     }
+
+    if (hasGeneratedClient()) {
+      console.log('Prisma client exists; regenerating to ensure it matches schema...');
+    }
+    generateClientWithRetries();
+  } catch (genErr) {
+    console.error('Failed to generate Prisma client:', genErr);
+    // If generation fails, we can't safely continue using Prisma
+    throw genErr;
   }
 
   // Now attempt to apply migrations or push schema and fallback if needed

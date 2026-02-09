@@ -265,13 +265,18 @@ router.patch('/api/auth/me', async (req: Request, res: Response) => {
   const user = await getUserFromToken(req);
   if (!user) return res.status(401).json({ error: 'unauthenticated' });
   const body = req.body || {};
-  const { name, fontFamily, noteWidth, dragBehavior, animationSpeed, checklistSpacing, checkboxSize, checklistTextSize, chipDisplayMode, noteLineSpacing, themeChoice, animationBehavior, animationsEnabled, imageThumbSize, trashAutoEmptyDays } = body as any;
+  const { name, fontFamily, noteWidth, dragBehavior, animationSpeed, checklistSpacing, checkboxSize, checklistTextSize, chipDisplayMode, noteLineSpacing, themeChoice, animationBehavior, animationsEnabled, imageThumbSize, trashAutoEmptyDays, linkColorDark, linkColorLight } = body as any;
   const data: any = {};
   if (typeof name === 'string') data.name = name;
+  // Store fontFamily on the user as a durable fallback (covers clients that don't send device headers)
+  if (typeof fontFamily === 'string') data.fontFamily = fontFamily;
   if (typeof trashAutoEmptyDays === 'number') {
     const d = Math.max(0, Math.min(3650, Math.trunc(trashAutoEmptyDays)));
     data.trashAutoEmptyDays = d;
   }
+  // User-scoped hyperlink colors (persist across devices)
+  if ('linkColorDark' in body) data.linkColorDark = (body as any).linkColorDark;
+  if ('linkColorLight' in body) data.linkColorLight = (body as any).linkColorLight;
   // Preference fields are stored per-device profile when a device key is present.
   const prefData: any = {};
   if (typeof fontFamily === 'string') prefData.fontFamily = fontFamily;
@@ -314,14 +319,24 @@ router.patch('/api/auth/me', async (req: Request, res: Response) => {
       }
     } catch {}
 
-    // Push updated preferences to this user's other connected clients (device-scoped)
+    // Push updated preferences to this user's other connected clients
     try {
-      const payload: any = {};
-      for (const k of Object.keys(prefData || {})) payload[k] = (effective as any)[k];
-      // If checkbox colors were changed, those are still user-scoped.
-      for (const k of Object.keys(data || {})) payload[k] = (effective as any)[k];
-      if (deviceCtx) payload.deviceKey = deviceCtx.deviceKey;
-      notifyUser((user as any).id, 'user-prefs-updated', payload);
+      // Device-scoped prefs: only apply to sessions on the same deviceKey.
+      const devicePayload: any = {};
+      for (const k of Object.keys(prefData || {})) devicePayload[k] = (effective as any)[k];
+      if (deviceCtx && Object.keys(devicePayload).length > 0) {
+        devicePayload.deviceKey = deviceCtx.deviceKey;
+        notifyUser((user as any).id, 'user-prefs-updated', devicePayload);
+      }
+
+      // User-scoped prefs: broadcast with no deviceKey so all devices accept.
+      const userPayload: any = {};
+      for (const k of ['trashAutoEmptyDays', 'checkboxBg', 'checkboxBorder', 'linkColorDark', 'linkColorLight']) {
+        if (k in (data || {})) userPayload[k] = (effective as any)[k];
+      }
+      if (Object.keys(userPayload).length > 0) {
+        notifyUser((user as any).id, 'user-prefs-updated', userPayload);
+      }
     } catch {}
     // @ts-ignore
     delete effective.passwordHash;

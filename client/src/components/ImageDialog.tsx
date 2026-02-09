@@ -35,14 +35,14 @@ export default function ImageDialog({ onClose, onAdd }: { onClose: () => void; o
 
   const content = (
     <div className="image-dialog-backdrop" onClick={onClose}>
-      <div className="image-dialog" onClick={(e) => e.stopPropagation()}>
+      <div className="image-dialog image-dialog--picker" onClick={(e) => e.stopPropagation()}>
         <div className="dialog-header">
           <strong>Add image</strong>
           <button className="icon-close" onClick={onClose}>✕</button>
         </div>
         <form onSubmit={onSubmitUrl} className="image-form">
           <input placeholder="Image URL" value={url} onChange={e => setUrl(e.target.value)} className="image-url-input" />
-          <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+          <div className="image-form-actions">
             <button type="submit" className="btn">Add URL</button>
             <button type="button" className="btn" onClick={onChooseFile}>Choose file</button>
           </div>

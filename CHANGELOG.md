@@ -4,6 +4,21 @@ All notable changes to this project will be documented in this file.
 
 Adheres to Semantic Versioning (MAJOR.MINOR.PATCH).
 
+## [0.5.0] - 2026-02-08
+
+### Added
+- Web Push notifications for reminders (Android-friendly background delivery).
+- Service worker `push` + `notificationclick` handling.
+- Notifications settings UI: enable permission/subscription, local test, server push test.
+- Link previews stored per-note (multiple previews per note) with realtime updates.
+
+### Changed
+- In-app reminder notifications prefer service-worker `showNotification()` with a fallback to `new Notification()`.
+
+### Fixed
+- Mobile image and menu UX (bottom-sheet picker, long-press actions, in-app confirm dialog).
+- Collapsed desktop sidebar icons now expand and perform their actions.
+
 ## [0.4.6] - 2026-02-08
 
 ### Added

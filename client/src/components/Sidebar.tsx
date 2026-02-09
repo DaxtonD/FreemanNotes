@@ -8,6 +8,7 @@ export default function Sidebar({
   onClearLabels,
   collapsed = false,
   onRequestClose,
+  onRequestExpand,
   collectionStack = [],
   onCollectionStackChange,
   sortConfig = DEFAULT_SORT_CONFIG,
@@ -18,6 +19,7 @@ export default function Sidebar({
   onClearLabels?: () => void;
   collapsed?: boolean;
   onRequestClose?: () => void;
+  onRequestExpand?: () => void;
   collectionStack?: Array<{ id: number; name: string }>;
   onCollectionStackChange?: (next: Array<{ id: number; name: string }>) => void;
   sortConfig?: SortConfig;
@@ -105,6 +107,11 @@ export default function Sidebar({
   const goHome = () => {
     resetToDefault();
     try { onRequestClose && onRequestClose(); } catch {}
+  };
+
+  const requestExpandIfCollapsed = () => {
+    if (!collapsed) return;
+    try { onRequestExpand && onRequestExpand(); } catch {}
   };
 
   const toggleLabelsOpen = () => {
@@ -289,7 +296,27 @@ export default function Sidebar({
           </span>
           {!collapsed && <span className="text">Notes</span>}
         </div>
-        <div className="sidebar-item" title="Reminders">
+        <div
+          className="sidebar-item"
+          title="Reminders"
+          style={{ cursor: 'pointer' }}
+          onClick={() => {
+            if (collapsed) {
+              requestExpandIfCollapsed();
+              try { onClearLabels && onClearLabels(); } catch {}
+              try { onCollectionStackChange && onCollectionStackChange([]); } catch {}
+              try { setOpen(false); } catch {}
+              try { setSortingOpen(false); } catch {}
+              try { setFiltersListOpen(false); } catch {}
+              try { setGroupingListOpen(false); } catch {}
+              try { setCollectionsOpen(false); } catch {}
+              try { setRemindersOpen(true); } catch {}
+              try { setReminderFilter('remindersAll'); } catch {}
+              return;
+            }
+            toggleRemindersOpen();
+          }}
+        >
           <span className="icon" aria-hidden>
             <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden>
               <path d="M12 22c1.1 0 2-.9 2-2h-4a2 2 0 0 0 2 2z"/>
@@ -297,7 +324,7 @@ export default function Sidebar({
             </svg>
           </span>
           {!collapsed && (
-            <span className="text" style={{ cursor: 'pointer' }} onClick={toggleRemindersOpen}>
+            <span className="text">
               <span className="sidebar-indicator leading"><span className={"chev" + (remindersOpen ? " open" : "")}>▶</span></span>
               Reminders
             </span>
@@ -348,7 +375,24 @@ export default function Sidebar({
             <button className="btn" style={{ marginTop: 6, width: '100%' }} onClick={() => { try { setSmartFilter('none'); } catch {}; try { setRemindersOpen(false); } catch {} }}>Clear</button>
           </div>
         )}
-        <div className="sidebar-item" onClick={toggleLabelsOpen} style={{ cursor: 'pointer' }} title="Labels">
+        <div
+          className="sidebar-item"
+          onClick={() => {
+            if (collapsed) {
+              requestExpandIfCollapsed();
+              try { setOpen(true); } catch {}
+              try { setRemindersOpen(false); } catch {}
+              try { setSortingOpen(false); } catch {}
+              try { setFiltersListOpen(false); } catch {}
+              try { setGroupingListOpen(false); } catch {}
+              try { setCollectionsOpen(false); } catch {}
+              return;
+            }
+            toggleLabelsOpen();
+          }}
+          style={{ cursor: 'pointer' }}
+          title="Labels"
+        >
           <span className="icon" aria-hidden>
             <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden>
               <path d="M6 3h12v18l-6-4-6 4V3z"/>
@@ -376,7 +420,24 @@ export default function Sidebar({
           </div>
         )}
 
-        <div className="sidebar-item" onClick={toggleSortingOpen} style={{ cursor: 'pointer' }} title="Sorting">
+        <div
+          className="sidebar-item"
+          onClick={() => {
+            if (collapsed) {
+              requestExpandIfCollapsed();
+              try { setSortingOpen(true); } catch {}
+              try { setRemindersOpen(false); } catch {}
+              try { setOpen(false); } catch {}
+              try { setFiltersListOpen(false); } catch {}
+              try { setGroupingListOpen(false); } catch {}
+              try { setCollectionsOpen(false); } catch {}
+              return;
+            }
+            toggleSortingOpen();
+          }}
+          style={{ cursor: 'pointer' }}
+          title="Sorting"
+        >
           <span className="icon" aria-hidden>
             <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden>
               <path d="M3 18h6v-2H3v2zm0-5h12v-2H3v2zm0-7v2h18V6H3z"/>
@@ -544,6 +605,15 @@ export default function Sidebar({
           title="Archive"
           style={{ cursor: 'pointer', fontWeight: sortConfig.smartFilter === 'archive' ? 700 : undefined }}
           onClick={() => {
+            if (collapsed) {
+              requestExpandIfCollapsed();
+              try { setRemindersOpen(false); } catch {}
+              try { setOpen(false); } catch {}
+              try { setSortingOpen(false); } catch {}
+              try { setFiltersListOpen(false); } catch {}
+              try { setGroupingListOpen(false); } catch {}
+              try { setCollectionsOpen(false); } catch {}
+            }
             try { onClearLabels && onClearLabels(); } catch {}
             try { onCollectionStackChange && onCollectionStackChange([]); } catch {}
             try {
@@ -572,6 +642,15 @@ export default function Sidebar({
           title="Trash"
           style={{ cursor: 'pointer', fontWeight: sortConfig.smartFilter === 'trash' ? 700 : undefined }}
           onClick={() => {
+            if (collapsed) {
+              requestExpandIfCollapsed();
+              try { setRemindersOpen(false); } catch {}
+              try { setOpen(false); } catch {}
+              try { setSortingOpen(false); } catch {}
+              try { setFiltersListOpen(false); } catch {}
+              try { setGroupingListOpen(false); } catch {}
+              try { setCollectionsOpen(false); } catch {}
+            }
             try { onClearLabels && onClearLabels(); } catch {}
             try { onCollectionStackChange && onCollectionStackChange([]); } catch {}
             try {

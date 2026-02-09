@@ -3,6 +3,8 @@ import prisma from "./prismaClient";
 import jwt from "jsonwebtoken";
 import * as Y from "yjs";
 import { notifyUser } from "./events";
+import { scrapeLinkPreview } from "./linkPreview";
+import { createHash } from "crypto";
 
 const router = Router();
 
@@ -57,6 +59,10 @@ function computeReminderAt(dueAt: Date, offsetMinutes: number): Date {
   return new Date(ms);
 }
 
+function hashUrl(url: string): string {
+  return createHash('sha256').update(String(url || '').trim()).digest('hex');
+}
+
 function getJwtSecret() {
   const s = process.env.JWT_SECRET;
   if (!s) throw new Error("JWT_SECRET not set in environment");
@@ -97,6 +103,7 @@ router.get('/api/notes', async (req: Request, res: Response) => {
         owner: true,
         items: true,
         images: true,
+        linkPreviews: { orderBy: { createdAt: 'asc' } },
           noteCollections: {
           where: { userId: user.id },
           include: { collection: { select: { id: true, name: true, parentId: true } } },
@@ -268,6 +275,234 @@ router.get('/api/notes/:id/images', async (req: Request, res: Response) => {
   }
 });
 
+// Generate and persist a URL preview (unfurl) for a note.
+router.post('/api/notes/:id/link-preview', async (req: Request, res: Response) => {
+  const user = await getUserFromToken(req);
+  if (!user) return res.status(401).json({ error: 'unauthenticated' });
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) return res.status(400).json({ error: 'invalid id' });
+  const urlRaw = (req.body || {}).url;
+  const url = (typeof urlRaw === 'string') ? urlRaw : String(urlRaw || '');
+  if (!url.trim()) return res.status(400).json({ error: 'url required' });
+
+  try {
+    const note = await prisma.note.findUnique({ where: { id } });
+    if (!note) return res.status(404).json({ error: 'not found' });
+    if (note.ownerId !== user.id) {
+      const collab = await prisma.collaborator.findFirst({ where: { noteId: id, userId: user.id } });
+      if (!collab) return res.status(403).json({ error: 'forbidden' });
+    }
+
+    // Cheap caching: if this URL was fetched recently for this note, return current list.
+    try {
+      const inputHash = hashUrl(String(url).trim());
+      const existing = await (prisma as any).noteLinkPreview.findFirst({
+        where: { noteId: id, urlHash: inputHash },
+        select: { id: true, fetchedAt: true },
+      });
+      const recent = existing?.fetchedAt && (new Date(existing.fetchedAt).getTime() > (Date.now() - 6 * 60 * 60 * 1000));
+      if (existing && recent) {
+        const previews = await (prisma as any).noteLinkPreview.findMany({ where: { noteId: id }, orderBy: { createdAt: 'asc' } });
+        return res.json({ previews, cached: true });
+      }
+    } catch {}
+
+    const preview = await scrapeLinkPreview(url);
+    const urlHash = hashUrl(preview.url);
+    // Upsert by (noteId, url) to avoid duplicates.
+    try {
+      await (prisma as any).noteLinkPreview.upsert({
+        where: { noteId_urlHash: { noteId: id, urlHash } },
+        create: {
+          noteId: id,
+          urlHash,
+          url: preview.url,
+          title: preview.title,
+          description: preview.description,
+          imageUrl: preview.imageUrl,
+          domain: preview.domain,
+          fetchedAt: new Date(),
+        },
+        update: {
+          urlHash,
+          title: preview.title,
+          description: preview.description,
+          imageUrl: preview.imageUrl,
+          domain: preview.domain,
+          fetchedAt: new Date(),
+        },
+      });
+    } catch (e: any) {
+      // If a race causes uniqueness issues, fall back to best-effort create/update.
+      try {
+        const existing = await (prisma as any).noteLinkPreview.findFirst({ where: { noteId: id, urlHash } });
+        if (existing?.id) {
+          await (prisma as any).noteLinkPreview.update({ where: { id: existing.id }, data: {
+            urlHash,
+            title: preview.title,
+            description: preview.description,
+            imageUrl: preview.imageUrl,
+            domain: preview.domain,
+            fetchedAt: new Date(),
+          } });
+        } else {
+          await (prisma as any).noteLinkPreview.create({ data: {
+            noteId: id,
+            urlHash,
+            url: preview.url,
+            title: preview.title,
+            description: preview.description,
+            imageUrl: preview.imageUrl,
+            domain: preview.domain,
+            fetchedAt: new Date(),
+          } });
+        }
+      } catch {}
+    }
+
+    const previews = await (prisma as any).noteLinkPreview.findMany({ where: { noteId: id }, orderBy: { createdAt: 'asc' } });
+
+    // Broadcast to all participants (owner + collaborators).
+    try {
+      const participantIds = await getParticipantIdsForNote(id, { ownerId: note.ownerId });
+      for (const uid of participantIds) {
+        notifyUser(uid, 'note-link-previews-changed', { noteId: id, previews });
+      }
+    } catch {}
+
+    res.json({ previews });
+  } catch (err) {
+    res.status(400).json({ error: String(err) });
+  }
+});
+
+// List URL previews for a note.
+router.get('/api/notes/:id/link-previews', async (req: Request, res: Response) => {
+  const user = await getUserFromToken(req);
+  if (!user) return res.status(401).json({ error: 'unauthenticated' });
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) return res.status(400).json({ error: 'invalid id' });
+  try {
+    const note = await prisma.note.findUnique({ where: { id } });
+    if (!note) return res.status(404).json({ error: 'not found' });
+    if (note.ownerId !== user.id) {
+      const collab = await prisma.collaborator.findFirst({ where: { noteId: id, userId: user.id } });
+      if (!collab) return res.status(403).json({ error: 'forbidden' });
+    }
+    const previews = await (prisma as any).noteLinkPreview.findMany({ where: { noteId: id }, orderBy: { createdAt: 'asc' } });
+    res.json({ previews });
+  } catch (err) {
+    res.status(500).json({ error: String(err) });
+  }
+});
+
+// Edit a URL preview (updates URL and re-scrapes metadata).
+router.patch('/api/notes/:id/link-previews/:previewId', async (req: Request, res: Response) => {
+  const user = await getUserFromToken(req);
+  if (!user) return res.status(401).json({ error: 'unauthenticated' });
+  const id = Number(req.params.id);
+  const previewId = Number(req.params.previewId);
+  if (!Number.isInteger(id) || !Number.isInteger(previewId)) return res.status(400).json({ error: 'invalid ids' });
+  const urlRaw = (req.body || {}).url;
+  const url = (typeof urlRaw === 'string') ? urlRaw : String(urlRaw || '');
+  if (!url.trim()) return res.status(400).json({ error: 'url required' });
+  try {
+    const note = await prisma.note.findUnique({ where: { id } });
+    if (!note) return res.status(404).json({ error: 'not found' });
+    if (note.ownerId !== user.id) {
+      const collab = await prisma.collaborator.findFirst({ where: { noteId: id, userId: user.id } });
+      if (!collab) return res.status(403).json({ error: 'forbidden' });
+    }
+    const pv = await (prisma as any).noteLinkPreview.findUnique({ where: { id: previewId } });
+    if (!pv || Number(pv.noteId) !== id) return res.status(404).json({ error: 'not found' });
+    const preview = await scrapeLinkPreview(url);
+    const urlHash = hashUrl(preview.url);
+    // If URL already exists on this note, delete this row and update the existing one.
+    const existing = await (prisma as any).noteLinkPreview.findFirst({ where: { noteId: id, urlHash } });
+    if (existing?.id && Number(existing.id) !== previewId) {
+      await (prisma as any).noteLinkPreview.update({ where: { id: existing.id }, data: {
+        urlHash,
+        title: preview.title,
+        description: preview.description,
+        imageUrl: preview.imageUrl,
+        domain: preview.domain,
+        fetchedAt: new Date(),
+      } });
+      await (prisma as any).noteLinkPreview.delete({ where: { id: previewId } });
+    } else {
+      await (prisma as any).noteLinkPreview.update({ where: { id: previewId }, data: {
+        urlHash,
+        url: preview.url,
+        title: preview.title,
+        description: preview.description,
+        imageUrl: preview.imageUrl,
+        domain: preview.domain,
+        fetchedAt: new Date(),
+      } });
+    }
+    const previews = await (prisma as any).noteLinkPreview.findMany({ where: { noteId: id }, orderBy: { createdAt: 'asc' } });
+    try {
+      const participantIds = await getParticipantIdsForNote(id, { ownerId: note.ownerId });
+      for (const uid of participantIds) notifyUser(uid, 'note-link-previews-changed', { noteId: id, previews });
+    } catch {}
+    res.json({ previews });
+  } catch (err) {
+    res.status(400).json({ error: String(err) });
+  }
+});
+
+// Delete a single URL preview.
+router.delete('/api/notes/:id/link-previews/:previewId', async (req: Request, res: Response) => {
+  const user = await getUserFromToken(req);
+  if (!user) return res.status(401).json({ error: 'unauthenticated' });
+  const id = Number(req.params.id);
+  const previewId = Number(req.params.previewId);
+  if (!Number.isInteger(id) || !Number.isInteger(previewId)) return res.status(400).json({ error: 'invalid ids' });
+  try {
+    const note = await prisma.note.findUnique({ where: { id } });
+    if (!note) return res.status(404).json({ error: 'not found' });
+    if (note.ownerId !== user.id) {
+      const collab = await prisma.collaborator.findFirst({ where: { noteId: id, userId: user.id } });
+      if (!collab) return res.status(403).json({ error: 'forbidden' });
+    }
+    const pv = await (prisma as any).noteLinkPreview.findUnique({ where: { id: previewId } });
+    if (!pv || Number(pv.noteId) !== id) return res.status(404).json({ error: 'not found' });
+    await (prisma as any).noteLinkPreview.delete({ where: { id: previewId } });
+    const previews = await (prisma as any).noteLinkPreview.findMany({ where: { noteId: id }, orderBy: { createdAt: 'asc' } });
+    try {
+      const participantIds = await getParticipantIdsForNote(id, { ownerId: note.ownerId });
+      for (const uid of participantIds) notifyUser(uid, 'note-link-previews-changed', { noteId: id, previews });
+    } catch {}
+    res.json({ previews });
+  } catch (err) {
+    res.status(500).json({ error: String(err) });
+  }
+});
+
+// Back-compat: clear ALL URL previews for a note.
+router.delete('/api/notes/:id/link-preview', async (req: Request, res: Response) => {
+  const user = await getUserFromToken(req);
+  if (!user) return res.status(401).json({ error: 'unauthenticated' });
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) return res.status(400).json({ error: 'invalid id' });
+  try {
+    const note = await prisma.note.findUnique({ where: { id } });
+    if (!note) return res.status(404).json({ error: 'not found' });
+    if (note.ownerId !== user.id) {
+      const collab = await prisma.collaborator.findFirst({ where: { noteId: id, userId: user.id } });
+      if (!collab) return res.status(403).json({ error: 'forbidden' });
+    }
+    await (prisma as any).noteLinkPreview.deleteMany({ where: { noteId: id } });
+    try {
+      const participantIds = await getParticipantIdsForNote(id, { ownerId: note.ownerId });
+      for (const uid of participantIds) notifyUser(uid, 'note-link-previews-changed', { noteId: id, previews: [] });
+    } catch {}
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: String(err) });
+  }
+});
+
 // delete image from a note (owner only)
 router.delete('/api/notes/:id/images/:imageId', async (req: Request, res: Response) => {
   const user = await getUserFromToken(req);
@@ -361,11 +596,33 @@ router.patch('/api/notes/:id', async (req: Request, res: Response) => {
       const collab = await prisma.collaborator.findFirst({ where: { noteId: id, userId: user.id } });
       if (!collab) return res.status(403).json({ error: 'forbidden' });
       if ('archived' in req.body) return res.status(403).json({ error: 'forbidden' });
+      if ('pinned' in req.body) return res.status(403).json({ error: 'forbidden' });
+    }
+
+    // If pinning, bump this note to the top of the pinned group by setting ord to (minPinnedOrd - 1).
+    // This keeps the newly pinned note reliably at the top across devices on the default sort.
+    if ('pinned' in req.body) {
+      const nextPinned = !!(req.body as any).pinned;
+      if (nextPinned && !(note as any).pinned) {
+        try {
+          const minPinned = await prisma.note.findFirst({
+            where: { ownerId: user.id, pinned: true },
+            orderBy: { ord: 'asc' },
+            select: { ord: true },
+          });
+          const base = (typeof minPinned?.ord === 'number') ? Number(minPinned.ord) : Number((note as any).ord || 0);
+          data.ord = Math.trunc(base) - 1;
+        } catch {
+          // ignore ord adjustment failures
+        }
+      }
     }
     // Reminders: compute reminderAt and normalize nulls.
     const wantsReminderDueAt = ('reminderDueAt' in req.body);
     const wantsOffset = ('reminderOffsetMinutes' in req.body);
     if (wantsReminderDueAt || wantsOffset) {
+      // Any reminder change should allow a new notification.
+      data.reminderNotifiedAt = null;
       const nextDueAt = wantsReminderDueAt
         ? parseDateTimeMaybe((req.body || {}).reminderDueAt)
         : ((note as any).reminderDueAt ? new Date((note as any).reminderDueAt as any) : null);
@@ -407,6 +664,17 @@ router.patch('/api/notes/:id', async (req: Request, res: Response) => {
         const participantIds = await getParticipantIdsForNote(id, note as any);
         for (const uid of participantIds) {
           notifyUser(uid, 'note-archive-changed', { noteId: id, archived: !!(updated as any).archived });
+        }
+      } catch {}
+    }
+
+    // Realtime: pin/unpin so all sessions move note between pinned/unpinned sections.
+    if ('pinned' in req.body) {
+      try {
+        const participantIds = await getParticipantIdsForNote(id, note as any);
+        const payload = { noteId: id, pinned: !!(updated as any).pinned };
+        for (const uid of participantIds) {
+          notifyUser(uid, 'note-pin-changed', payload);
         }
       } catch {}
     }
@@ -591,6 +859,7 @@ router.delete('/api/notes/:id', async (req: Request, res: Response) => {
         reminderDueAt: null,
         reminderAt: null,
         reminderOffsetMinutes: 0,
+        reminderNotifiedAt: null,
       } as any,
     });
 

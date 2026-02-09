@@ -16,6 +16,9 @@ model User {
   // Trash retention (0 = never auto-empty)
   trashAutoEmptyDays Int         @default(0)
   fontFamily     String?        @default("Calibri, system-ui, Arial, sans-serif")
+  // Hyperlink colors (user-scoped across devices)
+  linkColorDark  String?        @default("#8ab4f8")
+  linkColorLight String?        @default("#0b57d0")
   checkboxBg     String?
   checkboxBorder String?
   noteWidth      Int?           @default(288)
@@ -38,6 +41,7 @@ model User {
   noteCollections NoteCollection[]
   deviceProfiles UserDeviceProfile[]
   deviceClients  UserDeviceClient[]
+  pushSubscriptions PushSubscription[]
 }
 
 // A per-user named device profile (e.g. "Pixel 8", "Work Laptop").
@@ -125,6 +129,15 @@ model Note {
   reminderDueAt DateTime?
   reminderOffsetMinutes Int    @default(0)
   reminderAt    DateTime?
+  // When a reminder notification was last fired (prevents duplicate pushes).
+  reminderNotifiedAt DateTime?
+  // URL preview (unfurl) footer
+  linkPreviewUrl String?       @db.Text
+  linkPreviewTitle String?     @db.Text
+  linkPreviewDescription String? @db.Text
+  linkPreviewImageUrl String?  @db.Text
+  linkPreviewDomain String?
+  linkPreviewFetchedAt DateTime?
   ownerId       Int
   createdAt     DateTime       @default(now())
   updatedAt     DateTime       @updatedAt
@@ -132,6 +145,7 @@ model Note {
   owner         User           @relation("OwnerNotes", fields: [ownerId], references: [id])
   images        NoteImage[]
   items         NoteItem[]
+  linkPreviews  NoteLinkPreview[]
   noteLabels    NoteLabel[]
   notePrefs     NotePref[]
   noteCollections NoteCollection[]
@@ -140,6 +154,46 @@ model Note {
   @@index([ownerId, trashedAt])
   @@index([ownerId, reminderAt])
   @@index([ownerId, reminderDueAt])
+}
+
+model PushSubscription {
+  id           Int      @id @default(autoincrement())
+  userId       Int
+  // Optional device key (from x-device-key) to help manage per-device subscriptions.
+  deviceKey    String?  @db.VarChar(128)
+  // Hash of endpoint for indexing/uniqueness (endpoints can be long TEXT).
+  endpointHash String   @db.Char(64)
+  endpoint     String   @db.Text
+  p256dh       String   @db.Text
+  auth         String   @db.Text
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, endpointHash])
+  @@index([userId])
+  @@index([deviceKey])
+}
+
+model NoteLinkPreview {
+  id          Int      @id @default(autoincrement())
+  noteId      Int
+  urlHash     String   @db.Char(64)
+  url         String   @db.Text
+  title       String?  @db.Text
+  description String?  @db.Text
+  imageUrl    String?  @db.Text
+  domain      String?
+  fetchedAt   DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  note        Note     @relation(fields: [noteId], references: [id], onDelete: Cascade)
+
+  @@unique([noteId, urlHash])
+  @@index([noteId])
+  @@index([urlHash])
 }
 
 model Collection {

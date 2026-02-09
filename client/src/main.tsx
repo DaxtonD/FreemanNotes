@@ -14,6 +14,8 @@ function applySavedPrefs() {
 				'prefs.imageThumbSize': '--image-thumb-size',
 				'prefs.fontFamily': '--app-font-family',
 				'prefs.noteLineSpacing': '--note-line-height',
+				'prefs.linkColorDark': '--link-color-dark',
+				'prefs.linkColorLight': '--link-color-light',
 			};
 			const pxKeys = new Set(['prefs.checklistSpacing', 'prefs.checkboxSize', 'prefs.checklistTextSize', 'prefs.noteWidth', 'prefs.imageThumbSize']);
 			Object.entries(map).forEach(([key, cssVar]) => {

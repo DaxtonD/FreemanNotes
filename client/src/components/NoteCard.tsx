@@ -1,4 +1,5 @@
 import React, { useRef, useState } from "react";
+import { createPortal } from 'react-dom';
 import { useTheme } from '../themeContext';
 import DOMPurify from 'dompurify';
 import { useAuth } from '../authContext';
@@ -92,6 +93,7 @@ export default function NoteCard({
   // default text color for "Default" palette will use CSS var --muted so it matches original layout
   const [textColor, setTextColor] = useState<string | undefined>(((note as any).viewerColor || note.color) ? contrastColorForBackground(((note as any).viewerColor || note.color) as string) : undefined);
   const [archived, setArchived] = useState(false);
+  const [pinned, setPinned] = useState(false);
   const [images, setImages] = useState<Array<{ id:number; url:string }>>((note.images as any) || []);
   const [thumbsPerRow, setThumbsPerRow] = useState<number>(3);
   const [noteItems, setNoteItems] = useState<any[]>(note.items || []);
@@ -107,6 +109,10 @@ export default function NoteCard({
   React.useEffect(() => {
     try { setArchived(!!(note as any).archived); } catch {}
   }, [note.id, (note as any).archived]);
+
+  React.useEffect(() => {
+    try { setPinned(!!(note as any).pinned); } catch {}
+  }, [note.id, (note as any).pinned]);
 
   function notifyImages(next: Array<{ id: number; url: string }>) {
     try { (onChange as any)?.({ type: 'images', noteId: note.id, images: next }); } catch {}
@@ -349,6 +355,77 @@ export default function NoteCard({
 
   const fileRef = useRef<HTMLInputElement | null>(null);
   const { token, user } = useAuth();
+
+  const [previewMenu, setPreviewMenu] = useState<{ x: number; y: number; previewId: number } | null>(null);
+  const longPressTimerRef = useRef<number | null>(null);
+  const [previewMenuIsSheet, setPreviewMenuIsSheet] = useState(false);
+  function clearLongPress() {
+    if (longPressTimerRef.current) window.clearTimeout(longPressTimerRef.current);
+    longPressTimerRef.current = null;
+  }
+
+  React.useEffect(() => {
+    const decide = () => {
+      try {
+        const coarse = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
+        const narrow = window.innerWidth <= 760;
+        setPreviewMenuIsSheet(!!(coarse || narrow));
+      } catch {
+        setPreviewMenuIsSheet(window.innerWidth <= 760);
+      }
+    };
+    decide();
+    window.addEventListener('resize', decide);
+    return () => window.removeEventListener('resize', decide);
+  }, []);
+
+  React.useEffect(() => {
+    if (!previewMenu) return;
+    const onDoc = (e: any) => {
+      try { setPreviewMenu(null); } catch {}
+    };
+    document.addEventListener('pointerdown', onDoc);
+    document.addEventListener('mousedown', onDoc);
+    return () => {
+      document.removeEventListener('pointerdown', onDoc);
+      document.removeEventListener('mousedown', onDoc);
+    };
+  }, [previewMenu]);
+
+  async function deletePreview(previewId: number) {
+    try {
+      const res = await fetch(`/api/notes/${note.id}/link-previews/${previewId}`, {
+        method: 'DELETE',
+        headers: { Authorization: token ? `Bearer ${token}` : '' },
+      });
+      if (!res.ok) throw new Error(await res.text());
+      const data = await res.json();
+      const previews = Array.isArray(data?.previews) ? data.previews : [];
+      try { onChange?.({ type: 'linkPreviews', noteId: note.id, linkPreviews: previews }); } catch {}
+    } catch (e) {
+      console.error(e);
+      window.alert('Failed to delete URL');
+    }
+  }
+
+  async function editPreview(previewId: number) {
+    const nextUrl = window.prompt('Edit URL:');
+    if (!nextUrl) return;
+    try {
+      const res = await fetch(`/api/notes/${note.id}/link-previews/${previewId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', Authorization: token ? `Bearer ${token}` : '' },
+        body: JSON.stringify({ url: nextUrl }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      const data = await res.json();
+      const previews = Array.isArray(data?.previews) ? data.previews : [];
+      try { onChange?.({ type: 'linkPreviews', noteId: note.id, linkPreviews: previews }); } catch {}
+    } catch (e) {
+      console.error(e);
+      window.alert('Failed to edit URL');
+    }
+  }
 
   React.useEffect(() => {
     const onCollectionsChanged = (ev: Event) => {
@@ -745,6 +822,30 @@ export default function NoteCard({
   const currentUserId = (user && (user as any).id) ? Number((user as any).id) : undefined;
   const isOwner = !!(ownerId && currentUserId && ownerId === currentUserId);
 
+  async function togglePinned() {
+    if (isTrashed) return;
+    if (!isOwner) {
+      window.alert('Only the note owner can pin this note.');
+      return;
+    }
+    const next = !pinned;
+    const prev = pinned;
+    setPinned(next);
+    try {
+      const res = await fetch(`/api/notes/${note.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', Authorization: token ? `Bearer ${token}` : '' },
+        body: JSON.stringify({ pinned: next }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      try { (onChange as any)?.({ type: 'pin', noteId: Number(note.id), pinned: next }); } catch { onChange && onChange(); }
+    } catch (e) {
+      console.error(e);
+      setPinned(prev);
+      window.alert('Failed to update pinned state');
+    }
+  }
+
   async function onRestoreNote() {
     if (!isOwner) {
       window.alert('Only the note owner can restore this note.');
@@ -997,16 +1098,34 @@ export default function NoteCard({
 
       {(() => {
         const due = (note as any)?.reminderDueAt;
-        if (!due) return null;
-        const ms = Date.parse(String(due));
-        const d = Number.isFinite(ms) ? new Date(ms) : null;
-        const title = d ? `Reminder: ${d.toLocaleString()}` : 'Reminder set';
+        const showBell = !!due;
+        const showPin = !!pinned;
+        if (!showBell && !showPin) return null;
+
+        const bellTitle = (() => {
+          if (!showBell) return '';
+          const ms = Date.parse(String(due));
+          const d = Number.isFinite(ms) ? new Date(ms) : null;
+          return d ? `Reminder: ${d.toLocaleString()}` : 'Reminder set';
+        })();
+
         return (
-          <div className="note-reminder-bell" aria-hidden title={title}>
-            <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden>
-              <path d="M12 22c1.1 0 2-.9 2-2h-4a2 2 0 0 0 2 2z"/>
-              <path d="M18 8V7a6 6 0 1 0-12 0v1c0 3.5-2 5-2 5h16s-2-1.5-2-5z"/>
-            </svg>
+          <div className="note-corner-icons" aria-hidden>
+            {showPin && (
+              <div className="note-pin-icon" title="Pinned">
+                <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+                  <path d="M14 2H10v2H8v2h.17l1.12 9.05L7 17.4V20h10v-2.6l-2.29-2.35L15.83 6H16V4h-2V2Zm-1.95 4 1.15 9.3L15 17.1V18H9v-.9l1.8-1.8L11.05 6h1Z" />
+                </svg>
+              </div>
+            )}
+            {showBell && (
+              <div className="note-reminder-bell" title={bellTitle}>
+                <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+                  <path d="M12 22c1.1 0 2-.9 2-2h-4a2 2 0 0 0 2 2z"/>
+                  <path d="M18 8V7a6 6 0 1 0-12 0v1c0 3.5-2 5-2 5h16s-2-1.5-2-5z"/>
+                </svg>
+              </div>
+            )}
           </div>
         );
       })()}
@@ -1321,6 +1440,125 @@ export default function NoteCard({
         </div>
       )}
 
+      {(() => {
+        try {
+          const listRaw = Array.isArray((note as any).linkPreviews) ? (note as any).linkPreviews : [];
+          const list = listRaw
+            .map((p: any) => ({
+              id: Number(p?.id),
+              url: String(p?.url || ''),
+              title: (p?.title == null ? null : String(p.title)),
+              imageUrl: (p?.imageUrl == null ? null : String(p.imageUrl)),
+              domain: (p?.domain == null ? null : String(p.domain)),
+            }))
+            .filter((p: any) => Number.isFinite(p.id) && p.url);
+          if (!list.length) return null;
+          const max = 3;
+          const visible = list.slice(0, max);
+          const hiddenCount = Math.max(0, list.length - max);
+          return (
+            <div className="note-link-previews" onClick={(e) => { try { e.stopPropagation(); } catch {} }}>
+              {visible.map((p: any) => {
+                const domain = (p.domain || (() => { try { return new URL(p.url).hostname.replace(/^www\./i, ''); } catch { return ''; } })());
+                return (
+                  <div
+                    key={p.id}
+                    className="link-preview-row note-link-preview"
+                    onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); setPreviewMenu({ x: e.clientX, y: e.clientY, previewId: p.id }); }}
+                    onPointerDown={(e) => {
+                      clearLongPress();
+                      const x = (e as any).clientX ?? 0;
+                      const y = (e as any).clientY ?? 0;
+                      longPressTimerRef.current = window.setTimeout(() => {
+                        try { setPreviewMenu({ x, y, previewId: p.id }); } catch {}
+                      }, 520);
+                    }}
+                    onPointerUp={clearLongPress}
+                    onPointerCancel={clearLongPress}
+                    onPointerMove={clearLongPress}
+                  >
+                    <a className="link-preview" href={p.url} target="_blank" rel="noopener noreferrer" title={p.title || domain || p.url}>
+                      <div className="link-preview-image" aria-hidden>
+                        {p.imageUrl ? (
+                          <img src={p.imageUrl} alt="" loading="lazy" />
+                        ) : (
+                          <svg viewBox="0 0 24 24" aria-hidden focusable="false"><path d="M9.17 14.83a3 3 0 0 1 0-4.24l2.83-2.83a3 3 0 1 1 4.24 4.24l-.88.88" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/><path d="M14.83 9.17a3 3 0 0 1 0 4.24l-2.83 2.83a3 3 0 1 1-4.24-4.24l.88-.88" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>
+                        )}
+                      </div>
+                      <div className="link-preview-meta">
+                        <div className="link-preview-title">{p.title || domain || p.url}</div>
+                        <div className="link-preview-domain">{domain || p.url}</div>
+                      </div>
+                    </a>
+                    <button
+                      className="link-preview-menu"
+                      type="button"
+                      aria-label="URL actions"
+                      title="URL actions"
+                      onClick={(e) => { e.preventDefault(); e.stopPropagation(); setPreviewMenu({ x: e.clientX, y: e.clientY, previewId: p.id }); }}
+                    >
+                      ⋯
+                    </button>
+                  </div>
+                );
+              })}
+              {hiddenCount > 0 && (
+                <div className="link-preview-more">+{hiddenCount} more</div>
+              )}
+            </div>
+          );
+        } catch { return null; }
+      })()}
+
+      {previewMenu && createPortal(
+        <>
+          {previewMenuIsSheet && (
+            <div
+              className="more-menu-backdrop"
+              role="presentation"
+              onPointerDown={() => setPreviewMenu(null)}
+              onMouseDown={() => setPreviewMenu(null)}
+            />
+          )}
+          <div
+            className={`more-menu${previewMenuIsSheet ? ' more-menu--sheet' : ''}`}
+            style={(() => {
+              if (previewMenuIsSheet) {
+                return { position: 'fixed', left: 8, right: 8, bottom: 8, top: 'auto', visibility: 'visible', zIndex: 10000 } as any;
+              }
+              const APPROX_W = 280;
+              const APPROX_H = 210;
+              const pad = 8;
+              let left = Number(previewMenu.x) || 0;
+              let top = Number(previewMenu.y) || 0;
+              if (left + APPROX_W > window.innerWidth - pad) left = window.innerWidth - pad - APPROX_W;
+              if (top + APPROX_H > window.innerHeight - pad) top = window.innerHeight - pad - APPROX_H;
+              left = Math.max(pad, left);
+              top = Math.max(pad, top);
+              return { position: 'fixed', left, top, visibility: 'visible', zIndex: 10000 } as any;
+            })()}
+            onPointerDown={(e) => { e.preventDefault(); e.stopPropagation(); }}
+            onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); }}
+          >
+            <div className="more-group">
+              <button type="button" className="more-item" onClick={() => { const id = previewMenu.previewId; setPreviewMenu(null); editPreview(id); }}>
+                <span className="more-item__icon" aria-hidden="true" />
+                <span className="more-item__label">Edit URL</span>
+              </button>
+              <button type="button" className="more-item more-item--danger" onClick={() => { const id = previewMenu.previewId; setPreviewMenu(null); if (window.confirm('Delete this URL preview?')) deletePreview(id); }}>
+                <span className="more-item__icon" aria-hidden="true" />
+                <span className="more-item__label">Delete URL</span>
+              </button>
+              <button type="button" className="more-item" onClick={() => setPreviewMenu(null)}>
+                <span className="more-item__icon" aria-hidden="true" />
+                <span className="more-item__label">Cancel</span>
+              </button>
+            </div>
+          </div>
+        </>,
+        document.body
+      )}
+
 
 
       {/* Hover zone to reveal footer only near the bottom */}
@@ -1387,8 +1625,10 @@ export default function NoteCard({
         <MoreMenu
           anchorRef={noteRef}
           anchorPoint={moreAnchorPoint}
-          itemsCount={isTrashed && isOwner ? 6 : 5}
+          itemsCount={isTrashed && isOwner ? 7 : 6}
           onClose={() => setShowMore(false)}
+          pinned={pinned}
+          onTogglePin={(!isTrashed && isOwner) ? togglePinned : undefined}
           onDelete={onDeleteNote}
           deleteLabel={isTrashed ? 'Delete permanently' : (isOwner ? 'Move to trash' : 'Leave note')}
           onRestore={isTrashed && isOwner ? onRestoreNote : undefined}

@@ -184,21 +184,6 @@ export default function NotesGrid({
     setMobileCreateMode(mode);
   }, []);
 
-  useEffect(() => {
-    if (!mobileAddOpen) return;
-    const onDown = (e: any) => {
-      try {
-        const target = e?.target as HTMLElement | null;
-        if (target && (target as any).closest && (target as any).closest('.mobile-add-note')) return;
-      } catch {}
-      setMobileAddOpen(false);
-    };
-    window.addEventListener('pointerdown', onDown, { capture: true } as any);
-    return () => {
-      try { window.removeEventListener('pointerdown', onDown, { capture: true } as any); } catch {}
-    };
-  }, [mobileAddOpen]);
-
   // Keep-style rearrange drag (floating card + spacer)
   const rearrangeDraggingRef = useRef(false);
   const rearrangePendingRef = useRef<null | {
@@ -515,6 +500,31 @@ export default function NotesGrid({
       if (Number(n.id) !== Number(noteId)) return n;
       return { ...n, viewerCollections: nextCollections };
     }));
+  }
+
+  function applyPinnedToNote(noteId: number, pinned: boolean) {
+    setNotes((prev) => {
+      const idx = prev.findIndex((n: any) => Number(n?.id) === Number(noteId));
+      if (idx < 0) return prev;
+      const existing = prev[idx];
+      const nextNote = { ...existing, pinned: !!pinned };
+      const copy = [...prev];
+      copy.splice(idx, 1);
+
+      if (pinned) {
+        const firstPinned = copy.findIndex((n: any) => !!(n as any)?.pinned);
+        const insertAt = firstPinned >= 0 ? firstPinned : 0;
+        copy.splice(insertAt, 0, nextNote);
+      } else {
+        let lastPinned = -1;
+        for (let i = 0; i < copy.length; i++) {
+          if (!!(copy[i] as any)?.pinned) lastPinned = i;
+          else break;
+        }
+        copy.splice(lastPinned + 1, 0, nextNote);
+      }
+      return copy;
+    });
   }
 
   useEffect(() => { if (token) load(); else setNotes([]); }, [token]);
@@ -1424,6 +1434,36 @@ export default function NotesGrid({
               }));
               break;
             }
+            case 'note-pin-changed': {
+              const payload = msg.payload || {};
+              const noteId = Number(payload.noteId);
+              if (!Number.isFinite(noteId)) break;
+              const pinned = !!payload.pinned;
+              applyPinnedToNote(noteId, pinned);
+              break;
+            }
+            case 'note-link-previews-changed': {
+              const payload = msg.payload || {};
+              const noteId = Number(payload.noteId);
+              if (!Number.isFinite(noteId)) break;
+              const raw = Array.isArray(payload.previews) ? payload.previews : [];
+              const previews = raw
+                .map((p: any) => ({
+                  id: Number(p?.id),
+                  url: String(p?.url || ''),
+                  title: (p?.title == null ? null : String(p.title)),
+                  description: (p?.description == null ? null : String(p.description)),
+                  imageUrl: (p?.imageUrl == null ? null : String(p.imageUrl)),
+                  domain: (p?.domain == null ? null : String(p.domain)),
+                  createdAt: (p?.createdAt == null ? null : String(p.createdAt)),
+                }))
+                .filter((p: any) => Number.isFinite(p.id) && p.url);
+              setNotes((s) => s.map((n: any) => {
+                if (Number(n.id) !== noteId) return n;
+                return { ...n, linkPreviews: previews };
+              }));
+              break;
+            }
             case 'note-labels-changed': {
               const payload = msg.payload || {};
               const noteId = Number(payload.noteId);
@@ -1586,6 +1626,28 @@ export default function NotesGrid({
                 if (typeof payload.fontFamily === 'string' && payload.fontFamily) {
                   document.documentElement.style.setProperty('--app-font-family', String(payload.fontFamily));
                   try { localStorage.setItem('prefs.fontFamily', String(payload.fontFamily)); } catch {}
+                }
+
+                // User-scoped hyperlink colors (broadcast without deviceKey)
+                if ('linkColorDark' in payload) {
+                  const v = (payload as any).linkColorDark;
+                  if (typeof v === 'string' && v) {
+                    document.documentElement.style.setProperty('--link-color-dark', v);
+                    try { localStorage.setItem('prefs.linkColorDark', v); } catch {}
+                  } else {
+                    document.documentElement.style.removeProperty('--link-color-dark');
+                    try { localStorage.removeItem('prefs.linkColorDark'); } catch {}
+                  }
+                }
+                if ('linkColorLight' in payload) {
+                  const v = (payload as any).linkColorLight;
+                  if (typeof v === 'string' && v) {
+                    document.documentElement.style.setProperty('--link-color-light', v);
+                    try { localStorage.setItem('prefs.linkColorLight', v); } catch {}
+                  } else {
+                    document.documentElement.style.removeProperty('--link-color-light');
+                    try { localStorage.removeItem('prefs.linkColorLight'); } catch {}
+                  }
                 }
               } catch {}
               // Ensure masonry/grid column counts refresh immediately.
@@ -2199,12 +2261,31 @@ export default function NotesGrid({
       const delay = Math.max(0, Math.min(reminderAtMs - now, 0x7fffffff));
       const id = window.setTimeout(() => {
         try { localStorage.setItem('reminder.fired.' + key, String(Date.now())); } catch {}
+        const title = String((n as any)?.title || 'Reminder');
+        const dueMs = parseDateMaybe((n as any)?.reminderDueAt);
+        const body = dueMs ? `Due: ${new Date(dueMs).toLocaleString()}` : 'Reminder';
+
+        // Prefer SW notifications (works better on Android PWAs).
         try {
-          const title = String((n as any)?.title || 'Reminder');
-          const dueMs = parseDateMaybe((n as any)?.reminderDueAt);
-          const body = dueMs ? `Due: ${new Date(dueMs).toLocaleString()}` : 'Reminder';
-          new Notification(title, { body });
+          if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator) {
+            (async () => {
+              try {
+                const reg = await navigator.serviceWorker.ready;
+                await reg.showNotification(title, {
+                  body,
+                  icon: '/icons/icon-192.png',
+                  badge: '/icons/icon-192.png',
+                  tag: `reminder-${noteId}`,
+                  data: { url: '/', noteId },
+                });
+                return;
+              } catch {}
+              try { new Notification(title, { body }); } catch {}
+            })();
+            return;
+          }
         } catch {}
+        try { new Notification(title, { body }); } catch {}
       }, delay) as any;
       timers.set(key, id as any);
     }
@@ -2266,6 +2347,7 @@ export default function NotesGrid({
       const a = copy[from];
       const b = copy[to];
       if (!a || !b) return s;
+      if (!!(a as any).pinned !== !!(b as any).pinned) return s;
       copy[from] = b;
       copy[to] = a;
       return copy;
@@ -2301,6 +2383,10 @@ export default function NotesGrid({
     setNotes(s => {
       const copy = [...s];
       if (from < 0 || to < 0 || from >= copy.length || to >= copy.length) return s;
+      const moving = copy[from];
+      const target = copy[to];
+      if (!moving || !target) return s;
+      if (!!(moving as any).pinned !== !!(target as any).pinned) return s;
       const [m] = copy.splice(from, 1);
       copy.splice(to, 0, m);
       return copy;
@@ -2398,11 +2484,13 @@ export default function NotesGrid({
 
   async function persistOrder(currentNotes: any[]) {
     // always save locally
-    try { localStorage.setItem('notesOrder', JSON.stringify(currentNotes.map(n => n.id))); } catch (e) {}
+    const pinnedIds = currentNotes.filter((n: any) => !!(n as any)?.pinned).map((n: any) => n.id);
+    const otherIds = currentNotes.filter((n: any) => !(n as any)?.pinned).map((n: any) => n.id);
+    const ids = [...pinnedIds, ...otherIds];
+    try { localStorage.setItem('notesOrder', JSON.stringify(ids)); } catch (e) {}
     // attempt server persistence if authenticated
     if (!token) return;
     try {
-      const ids = currentNotes.map(n => n.id);
       const res = await fetch('/api/notes/order', { method: 'PATCH', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ ids }) });
       if (!res.ok) throw new Error(await res.text());
     } catch (err) {
@@ -2440,6 +2528,14 @@ export default function NotesGrid({
       applyImagesToNote(evt.noteId, evt.images);
       return;
     }
+    if (evt && evt.type === 'linkPreviews' && typeof evt.noteId === 'number' && Array.isArray((evt as any).linkPreviews)) {
+      const previews = (evt as any).linkPreviews;
+      setNotes((s) => s.map((n: any) => {
+        if (Number(n?.id) !== Number(evt.noteId)) return n;
+        return { ...n, linkPreviews: previews };
+      }));
+      return;
+    }
     if (evt && evt.type === 'color' && typeof evt.noteId === 'number') {
       applyColorToNote(evt.noteId, (typeof evt.color === 'string') ? String(evt.color) : '');
       return;
@@ -2458,6 +2554,11 @@ export default function NotesGrid({
         if (Number(n?.id) !== Number(evt.noteId)) return n;
         return { ...n, archived };
       }));
+      return;
+    }
+    if (evt && evt.type === 'pin' && typeof evt.noteId === 'number') {
+      const pinned = !!(evt as any).pinned;
+      applyPinnedToNote(Number(evt.noteId), pinned);
       return;
     }
     if (evt && evt.type === 'collection' && typeof evt.noteId === 'number') {
@@ -2850,7 +2951,7 @@ export default function NotesGrid({
   }
 
   return (
-    <section className="notes-area">
+    <section className={`notes-area${mobileAddOpen ? ' notes-area--mobile-add-open' : ''}`}>
       <div className="take-note-sticky">
         <TakeNoteBar onCreated={load} openRequest={{ nonce: takeNoteOpenNonce, mode: takeNoteOpenMode }} activeCollection={activeCollection} />
 
@@ -2914,7 +3015,15 @@ export default function NotesGrid({
         <div
           className="mobile-add-backdrop"
           aria-hidden="true"
-          onPointerDown={() => setMobileAddOpen(false)}
+          onPointerDown={(e) => {
+            // Swallow events so taps don't interact with notes behind the blur.
+            try { e.preventDefault(); } catch {}
+            try { e.stopPropagation(); } catch {}
+          }}
+          onClick={(e) => {
+            try { e.preventDefault(); } catch {}
+            try { e.stopPropagation(); } catch {}
+          }}
         />
       )}
 

@@ -78,6 +78,26 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         document.documentElement.style.setProperty('--checkbox-border', (user as any).checkboxBorder);
         localStorage.setItem('prefs.checkboxBorder', (user as any).checkboxBorder);
       }
+
+      // Hyperlink colors (user-scoped)
+      try {
+        const dark = (user as any).linkColorDark;
+        if (typeof dark === 'string' && dark) {
+          document.documentElement.style.setProperty('--link-color-dark', dark);
+          localStorage.setItem('prefs.linkColorDark', dark);
+        } else if (dark === null) {
+          document.documentElement.style.removeProperty('--link-color-dark');
+          localStorage.removeItem('prefs.linkColorDark');
+        }
+        const light = (user as any).linkColorLight;
+        if (typeof light === 'string' && light) {
+          document.documentElement.style.setProperty('--link-color-light', light);
+          localStorage.setItem('prefs.linkColorLight', light);
+        } else if (light === null) {
+          document.documentElement.style.removeProperty('--link-color-light');
+          localStorage.removeItem('prefs.linkColorLight');
+        }
+      } catch {}
     } catch {}
   }, [user]);
 

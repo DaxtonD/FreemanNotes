@@ -2,6 +2,7 @@ import React from 'react';
 import { EditorContent, useEditor } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import Underline from '@tiptap/extension-underline';
+import Link from '@tiptap/extension-link';
 
 export type ChecklistItemRTProps = {
   value: string;
@@ -28,6 +29,7 @@ export default function ChecklistItemRT({ value, onChange, onEnter, onArrowUp, o
         blockquote: false,
         horizontalRule: false,
       }),
+      Link.configure({ openOnClick: true, autolink: true }),
       Underline,
     ],
     content: value || '',
@@ -71,6 +73,13 @@ export default function ChecklistItemRT({ value, onChange, onEnter, onArrowUp, o
                 editor.chain().focus().setTextSelection({ from, to }).toggleUnderline().run();
                 try { editor.chain().setTextSelection(sel.from).run(); } catch {}
               } else { editor.chain().focus().toggleUnderline().run(); }
+              return true;
+            }
+            case 'k': {
+              event.preventDefault();
+              if (!editor) return true;
+              const url = window.prompt('Enter URL:');
+              if (url) editor.chain().focus().extendMarkRange('link').setLink({ href: url }).run();
               return true;
             }
           }

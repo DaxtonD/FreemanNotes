@@ -7,8 +7,9 @@ import ReminderPicker, { type ReminderDraft } from './ReminderPicker';
 import CollaboratorModal from './CollaboratorModal';
 import ImageDialog from './ImageDialog';
 import ImageLightbox from './ImageLightbox';
+import ConfirmDialog from './ConfirmDialog';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faPalette } from '@fortawesome/free-solid-svg-icons';
+import { faLink, faPalette } from '@fortawesome/free-solid-svg-icons';
 import DOMPurify from 'dompurify';
 import MoreMenu from './MoreMenu';
 import * as Y from 'yjs';
@@ -32,6 +33,22 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
     };
   }) {
   const { token, user } = useAuth();
+  const imageLongPressTimerRef = React.useRef<number | null>(null);
+  const imageLongPressStartRef = React.useRef<{ x: number; y: number } | null>(null);
+  const suppressNextImageClickRef = React.useRef(false);
+  const [confirmImageDeleteId, setConfirmImageDeleteId] = React.useState<number | null>(null);
+
+  function clearImageLongPress() {
+    if (imageLongPressTimerRef.current != null) {
+      window.clearTimeout(imageLongPressTimerRef.current);
+      imageLongPressTimerRef.current = null;
+    }
+    imageLongPressStartRef.current = null;
+  }
+
+  function requestDeleteImage(imageId: number) {
+    setConfirmImageDeleteId(Number(imageId));
+  }
 
   async function onConfirmReminder(draft: ReminderDraft) {
     setShowReminderPicker(false);
@@ -140,6 +157,21 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
     } catch {}
   }, [ (note as any).images ]);
   const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
+  const [linkPreviews, setLinkPreviews] = useState<any[]>(() => {
+    try {
+      const raw = Array.isArray((note as any).linkPreviews) ? (note as any).linkPreviews : [];
+      return raw
+        .map((p: any) => ({
+          id: Number(p?.id),
+          url: String(p?.url || ''),
+          title: (p?.title == null ? null : String(p.title)),
+          description: (p?.description == null ? null : String(p.description)),
+          imageUrl: (p?.imageUrl == null ? null : String(p.imageUrl)),
+          domain: (p?.domain == null ? null : String(p.domain)),
+        }))
+        .filter((p: any) => Number.isFinite(p.id) && p.url);
+    } catch { return []; }
+  });
   const [collaborators, setCollaborators] = useState<{ id:number; email:string }[]>([]);
   const itemEditorRefs = useRef<Array<any | null>>([]);
   const [showMore, setShowMore] = useState(false);
@@ -148,6 +180,20 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
   React.useEffect(() => {
     lastSavedTitleRef.current = note.title || '';
     setTitle(note.title || '');
+    try {
+      const raw = Array.isArray((note as any).linkPreviews) ? (note as any).linkPreviews : [];
+      const next = raw
+        .map((p: any) => ({
+          id: Number(p?.id),
+          url: String(p?.url || ''),
+          title: (p?.title == null ? null : String(p.title)),
+          description: (p?.description == null ? null : String(p.description)),
+          imageUrl: (p?.imageUrl == null ? null : String(p.imageUrl)),
+          domain: (p?.domain == null ? null : String(p.domain)),
+        }))
+        .filter((p: any) => Number.isFinite(p.id) && p.url);
+      setLinkPreviews(next);
+    } catch {}
   }, [note.id]);
 
   const saveTitleNow = React.useCallback(async (nextTitle?: string) => {
@@ -199,6 +245,122 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
       if (focused) ed = focused;
     }
     return ed || null;
+  }
+
+  const linkPreviewTimerRef = React.useRef<number | null>(null);
+  const lastPreviewUrlRef = React.useRef<string | null>(null);
+  function extractFirstUrl(text: string): string | null {
+    const t = String(text || '');
+    const m = t.match(/\bhttps?:\/\/[\w\-._~:/?#[\]@!$&'()*+,;=%]+/i);
+    if (m && m[0]) return String(m[0]);
+    const m2 = t.match(/\bwww\.[\w\-._~:/?#[\]@!$&'()*+,;=%]+/i);
+    if (m2 && m2[0]) return `https://${String(m2[0])}`;
+    return null;
+  }
+  function stripHtmlToText(html: string): string {
+    return String(html || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+  }
+  async function requestLinkPreview(url: string) {
+    try {
+      const res = await fetch(`/api/notes/${note.id}/link-preview`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: token ? `Bearer ${token}` : '' },
+        body: JSON.stringify({ url }),
+      });
+      if (!res.ok) return;
+      const data = await res.json();
+      const raw = Array.isArray(data?.previews) ? data.previews : [];
+      const next = raw
+        .map((p: any) => ({
+          id: Number(p?.id),
+          url: String(p?.url || ''),
+          title: (p?.title == null ? null : String(p.title)),
+          description: (p?.description == null ? null : String(p.description)),
+          imageUrl: (p?.imageUrl == null ? null : String(p.imageUrl)),
+          domain: (p?.domain == null ? null : String(p.domain)),
+        }))
+        .filter((p: any) => Number.isFinite(p.id) && p.url);
+      setLinkPreviews(next);
+    } catch {}
+  }
+
+  const [previewMenu, setPreviewMenu] = React.useState<{ x: number; y: number; previewId: number } | null>(null);
+  const longPressTimerRef = React.useRef<number | null>(null);
+  const [previewMenuIsSheet, setPreviewMenuIsSheet] = React.useState(false);
+  function clearLongPress() {
+    if (longPressTimerRef.current) window.clearTimeout(longPressTimerRef.current);
+    longPressTimerRef.current = null;
+  }
+
+  React.useEffect(() => {
+    const decide = () => {
+      try {
+        const coarse = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
+        const narrow = window.innerWidth <= 760;
+        setPreviewMenuIsSheet(!!(coarse || narrow));
+      } catch {
+        setPreviewMenuIsSheet(window.innerWidth <= 760);
+      }
+    };
+    decide();
+    window.addEventListener('resize', decide);
+    return () => window.removeEventListener('resize', decide);
+  }, []);
+
+  React.useEffect(() => {
+    if (!previewMenu) return;
+    const onDoc = (e: any) => {
+      try { setPreviewMenu(null); } catch {}
+    };
+    document.addEventListener('pointerdown', onDoc);
+    document.addEventListener('mousedown', onDoc);
+    return () => {
+      document.removeEventListener('pointerdown', onDoc);
+      document.removeEventListener('mousedown', onDoc);
+    };
+  }, [previewMenu]);
+  async function deletePreview(previewId: number) {
+    try {
+      const res = await fetch(`/api/notes/${note.id}/link-previews/${previewId}`, {
+        method: 'DELETE',
+        headers: { Authorization: token ? `Bearer ${token}` : '' },
+      });
+      if (!res.ok) throw new Error(await res.text());
+      const data = await res.json();
+      const raw = Array.isArray(data?.previews) ? data.previews : [];
+      setLinkPreviews(raw);
+    } catch (e) {
+      console.error(e);
+      window.alert('Failed to delete URL');
+    }
+  }
+  async function editPreview(previewId: number) {
+    const nextUrl = window.prompt('Edit URL:');
+    if (!nextUrl) return;
+    try {
+      const res = await fetch(`/api/notes/${note.id}/link-previews/${previewId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', Authorization: token ? `Bearer ${token}` : '' },
+        body: JSON.stringify({ url: nextUrl }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      const data = await res.json();
+      const raw = Array.isArray(data?.previews) ? data.previews : [];
+      setLinkPreviews(raw);
+    } catch (e) {
+      console.error(e);
+      window.alert('Failed to edit URL');
+    }
+  }
+
+  function applyChecklistLink() {
+    const ed = getCurrentChecklistEditor() as any;
+    if (!ed) return;
+    const url = window.prompt('Enter URL:');
+    if (url) {
+      ed.chain().focus().extendMarkRange('link').setLink({ href: url }).run();
+      try { requestLinkPreview(String(url)); } catch {}
+    }
   }
 
   function applyChecklistMarkAcrossLine(mark: 'bold' | 'italic' | 'underline') {
@@ -477,6 +639,23 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
         })();
         // Always apply structural changes (insert/delete) even if focused; defer content-only updates while editing
         if (structuralChanged || !isFocused) setItems(arr);
+
+        // Debounced URL detection (local edits only) to populate link preview.
+        try {
+          if (transaction && transaction.local) {
+            if (linkPreviewTimerRef.current) window.clearTimeout(linkPreviewTimerRef.current);
+            linkPreviewTimerRef.current = window.setTimeout(() => {
+              try {
+                const combined = arr.map((it: any) => stripHtmlToText(String(it.content || ''))).join(' ');
+                const found = extractFirstUrl(combined);
+                if (!found) return;
+                if (lastPreviewUrlRef.current && String(lastPreviewUrlRef.current) === String(found)) return;
+                lastPreviewUrlRef.current = String(found);
+                requestLinkPreview(found);
+              } catch {}
+            }, 1200);
+          }
+        } catch {}
         if (syncedRef.current) {
           if (debouncedSyncTimer.current) window.clearTimeout(debouncedSyncTimer.current);
           debouncedSyncTimer.current = window.setTimeout(async () => {
@@ -516,6 +695,7 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
       try { yarr.unobserveDeep(updateFromY as any); } catch {}
       try { provider.off('sync', onSync as any); } catch {}
       try { ymeta.unobserve(onMeta as any); } catch {}
+      try { if (linkPreviewTimerRef.current) window.clearTimeout(linkPreviewTimerRef.current); } catch {}
       try { provider.destroy(); } catch {}
     };
   }, [note.id, token, ydoc]);
@@ -979,7 +1159,7 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
       window.alert('Failed to remove collaborator');
     }
   }
-  async function deleteImage(imageId: number) {
+  async function performDeleteImage(imageId: number) {
     const prev = images;
     const next = prev.filter(i => Number(i.id) !== Number(imageId));
     setImages(next);
@@ -1081,6 +1261,21 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
                 onClick={() => { if (skipNextToolbarClickRef.current) { skipNextToolbarClickRef.current = false; return; } applyChecklistMarkAcrossLine('underline'); }}
                 aria-pressed={isCurrentLineMarked('underline')}
               >U</button>
+
+              <button
+                className="tiny"
+                type="button"
+                tabIndex={-1}
+                onPointerDownCapture={(e) => { e.preventDefault(); e.stopPropagation(); skipNextToolbarClickRef.current = true; applyChecklistLink(); }}
+                onPointerUp={(e) => { e.preventDefault(); e.stopPropagation(); }}
+                onMouseDownCapture={(e) => { e.preventDefault(); e.stopPropagation(); }}
+                onMouseUp={(e) => e.preventDefault()}
+                onClick={() => { if (skipNextToolbarClickRef.current) { skipNextToolbarClickRef.current = false; return; } applyChecklistLink(); }}
+                aria-label="Insert link"
+                title="Insert link"
+              >
+                <FontAwesomeIcon icon={faLink} />
+              </button>
             </div>
           </div>
 
@@ -1506,6 +1701,110 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
                   </div>
                 </div>
 
+                {linkPreviews.length > 0 && (
+                  <div className="note-link-previews" style={{ marginTop: 10, marginBottom: 8 }}>
+                    {linkPreviews.map((p: any) => {
+                      const domain = (p.domain || (() => { try { return new URL(p.url).hostname.replace(/^www\./i, ''); } catch { return ''; } })());
+                      return (
+                        <div
+                          key={p.id}
+                          className="link-preview-row editor-link-preview"
+                          onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); setPreviewMenu({ x: e.clientX, y: e.clientY, previewId: p.id }); }}
+                          onPointerDown={(e) => {
+                            clearLongPress();
+                            const x = (e as any).clientX ?? 0;
+                            const y = (e as any).clientY ?? 0;
+                            longPressTimerRef.current = window.setTimeout(() => {
+                              try { setPreviewMenu({ x, y, previewId: p.id }); } catch {}
+                            }, 520);
+                          }}
+                          onPointerUp={clearLongPress}
+                          onPointerCancel={clearLongPress}
+                          onPointerMove={clearLongPress}
+                        >
+                          <a
+                            className="link-preview"
+                            href={p.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            onClick={(e) => { try { e.stopPropagation(); } catch {} }}
+                          >
+                            <div className="link-preview-image" aria-hidden>
+                              {p.imageUrl ? (
+                                <img src={String(p.imageUrl)} alt="" loading="lazy" />
+                              ) : (
+                                <svg viewBox="0 0 24 24" aria-hidden focusable="false"><path d="M9.17 14.83a3 3 0 0 1 0-4.24l2.83-2.83a3 3 0 1 1 4.24 4.24l-.88.88" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/><path d="M14.83 9.17a3 3 0 0 1 0 4.24l-2.83 2.83a3 3 0 1 1-4.24-4.24l.88-.88" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>
+                              )}
+                            </div>
+                            <div className="link-preview-meta">
+                              <div className="link-preview-title">{String(p.title || domain || p.url)}</div>
+                              <div className="link-preview-domain">{String(domain || p.url)}</div>
+                            </div>
+                          </a>
+                          <button
+                            className="link-preview-menu"
+                            type="button"
+                            aria-label="URL actions"
+                            title="URL actions"
+                            onClick={(e) => { e.preventDefault(); e.stopPropagation(); setPreviewMenu({ x: e.clientX, y: e.clientY, previewId: p.id }); }}
+                          >
+                            ⋯
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {previewMenu && createPortal(
+                  <>
+                    {previewMenuIsSheet && (
+                      <div
+                        className="more-menu-backdrop"
+                        role="presentation"
+                        onPointerDown={() => setPreviewMenu(null)}
+                        onMouseDown={() => setPreviewMenu(null)}
+                      />
+                    )}
+                    <div
+                      className={`more-menu${previewMenuIsSheet ? ' more-menu--sheet' : ''}`}
+                      style={(() => {
+                        if (previewMenuIsSheet) {
+                          return { position: 'fixed', left: 8, right: 8, bottom: 8, top: 'auto', visibility: 'visible', zIndex: 10000 } as any;
+                        }
+                        const APPROX_W = 280;
+                        const APPROX_H = 210;
+                        const pad = 8;
+                        let left = Number(previewMenu.x) || 0;
+                        let top = Number(previewMenu.y) || 0;
+                        if (left + APPROX_W > window.innerWidth - pad) left = window.innerWidth - pad - APPROX_W;
+                        if (top + APPROX_H > window.innerHeight - pad) top = window.innerHeight - pad - APPROX_H;
+                        left = Math.max(pad, left);
+                        top = Math.max(pad, top);
+                        return { position: 'fixed', left, top, visibility: 'visible', zIndex: 10000 } as any;
+                      })()}
+                      onPointerDown={(e) => { e.preventDefault(); e.stopPropagation(); }}
+                      onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); }}
+                    >
+                      <div className="more-group">
+                        <button type="button" className="more-item" onClick={() => { const id = previewMenu.previewId; setPreviewMenu(null); editPreview(id); }}>
+                          <span className="more-item__icon" aria-hidden="true" />
+                          <span className="more-item__label">Edit URL</span>
+                        </button>
+                        <button type="button" className="more-item more-item--danger" onClick={() => { const id = previewMenu.previewId; setPreviewMenu(null); if (window.confirm('Delete this URL preview?')) deletePreview(id); }}>
+                          <span className="more-item__icon" aria-hidden="true" />
+                          <span className="more-item__label">Delete URL</span>
+                        </button>
+                        <button type="button" className="more-item" onClick={() => setPreviewMenu(null)}>
+                          <span className="more-item__icon" aria-hidden="true" />
+                          <span className="more-item__label">Cancel</span>
+                        </button>
+                      </div>
+                    </div>
+                  </>,
+                  document.body
+                )}
+
                 {images && images.length > 0 && (
                   <div className="editor-images" style={{ marginTop: 10, marginBottom: 8 }}>
                     <button
@@ -1527,16 +1826,58 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
                             className="note-image"
                             role="button"
                             tabIndex={0}
-                            onClick={() => setLightboxUrl(img.url)}
+                            onContextMenu={(e) => {
+                              if (!isCoarsePointer) return;
+                              e.preventDefault();
+                              e.stopPropagation();
+                            }}
+                            onClick={() => {
+                              if (suppressNextImageClickRef.current) {
+                                suppressNextImageClickRef.current = false;
+                                return;
+                              }
+                              setLightboxUrl(img.url);
+                            }}
+                            onPointerDown={(e) => {
+                              if (!isCoarsePointer) return;
+                              if (e.pointerType && e.pointerType !== 'touch' && e.pointerType !== 'pen') return;
+                              e.preventDefault();
+                              clearImageLongPress();
+                              imageLongPressStartRef.current = { x: e.clientX, y: e.clientY };
+                              imageLongPressTimerRef.current = window.setTimeout(() => {
+                                suppressNextImageClickRef.current = true;
+                                clearImageLongPress();
+                                requestDeleteImage(img.id);
+                              }, 520);
+                            }}
+                            onPointerMove={(e) => {
+                              if (!isCoarsePointer) return;
+                              const start = imageLongPressStartRef.current;
+                              if (!start) return;
+                              if (Math.abs(e.clientX - start.x) > 10 || Math.abs(e.clientY - start.y) > 10) {
+                                clearImageLongPress();
+                              }
+                            }}
+                            onPointerUp={() => clearImageLongPress()}
+                            onPointerCancel={() => clearImageLongPress()}
                             onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setLightboxUrl(img.url); } }}
                             style={{ cursor: 'zoom-in', position: 'relative' }}
                           >
-                            <img src={img.url} alt="note image" />
+                            <img
+                              src={img.url}
+                              alt="note image"
+                              draggable={false}
+                              onContextMenu={(e) => {
+                                if (!isCoarsePointer) return;
+                                e.preventDefault();
+                                e.stopPropagation();
+                              }}
+                            />
                             <button
                               className="image-delete"
                               aria-label="Delete image"
                               title="Delete image"
-                              onClick={(e) => { e.stopPropagation(); deleteImage(img.id); }}
+                              onClick={(e) => { e.stopPropagation(); requestDeleteImage(img.id); }}
                               style={{ position: 'absolute', right: 6, bottom: 6 }}
                             >
                               🗑️
@@ -1547,6 +1888,21 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
                     )}
                   </div>
                 )}
+
+                <ConfirmDialog
+                  open={confirmImageDeleteId != null}
+                  title={'Delete image'}
+                  message={'Are you sure you want to delete this image?'}
+                  confirmLabel={'Delete'}
+                  cancelLabel={'Cancel'}
+                  danger
+                  onCancel={() => setConfirmImageDeleteId(null)}
+                  onConfirm={() => {
+                    const id = confirmImageDeleteId;
+                    setConfirmImageDeleteId(null);
+                    if (typeof id === 'number') performDeleteImage(id);
+                  }}
+                />
 
 
               <div className="dialog-footer" style={{ borderTop: text ? `1px solid ${text}` : undefined }}>

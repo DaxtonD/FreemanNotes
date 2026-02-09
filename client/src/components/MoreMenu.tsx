@@ -39,6 +39,8 @@ export default function MoreMenu({
   anchorRef,
   anchorPoint, // optional click coordinate { x, y }
   itemsCount = 4,
+  pinned,
+  onTogglePin,
   onClose,
   onDelete,
   deleteLabel,
@@ -53,6 +55,8 @@ export default function MoreMenu({
   anchorRef?: React.RefObject<HTMLElement | null>;
   anchorPoint?: { x: number; y: number } | null;
   itemsCount?: number;
+  pinned?: boolean;
+  onTogglePin?: () => void;
   onClose: () => void;
   onDelete: () => void;
   deleteLabel?: string;
@@ -196,6 +200,22 @@ export default function MoreMenu({
             }}
           />
         )}
+
+        {onTogglePin && (
+          <MenuItem
+            label={pinned ? 'Unpin note' : 'Pin note'}
+            icon={
+              <MenuIcon>
+                <path d="M14 2H10v2H8v2h.17l1.12 9.05L7 17.4V20h10v-2.6l-2.29-2.35L15.83 6H16V4h-2V2Zm-1.95 4 1.15 9.3L15 17.1V18H9v-.9l1.8-1.8L11.05 6h1Z" />
+              </MenuIcon>
+            }
+            onClick={() => {
+              onTogglePin();
+              onClose();
+            }}
+          />
+        )}
+
         <MenuItem
           label={deleteLabel || 'Delete'}
           danger

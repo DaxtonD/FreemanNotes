@@ -7,6 +7,7 @@ import { WebSocketServer } from "ws";
 import jwt from "jsonwebtoken";
 import { registerConnection, removeConnection } from "./events";
 import { startTrashCleanupJob } from './trashCleanup';
+import { startReminderPushJob } from './reminderPushJob';
 // y-websocket util sets up Yjs collaboration rooms over WebSocket
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore
@@ -64,6 +65,14 @@ async function start() {
       console.log('Trash cleanup job started');
     } catch (err) {
       console.warn('Trash cleanup job failed to start:', err);
+    }
+
+    // Background reminders: send Web Push notifications when reminders are due.
+    try {
+      startReminderPushJob(prisma as any);
+      console.log('Reminder push job started');
+    } catch (err) {
+      console.warn('Reminder push job failed to start:', err);
     }
 
     // Wire Yjs persistence to Prisma so rooms load from/stay in sync with DB
@@ -212,6 +221,15 @@ async function start() {
       console.log("Admin users routes registered");
     } catch (err) {
       console.warn("Admin users routes not available:", err);
+    }
+
+    // Push notification routes (Web Push subscriptions + test)
+    try {
+      const pushRouter = (await import('./push')).default;
+      app.use(pushRouter);
+      console.log('Push routes registered');
+    } catch (err) {
+      console.warn('Push routes not available:', err);
     }
   } catch (err) {
     console.warn("Startup DB initialization warning:", err);

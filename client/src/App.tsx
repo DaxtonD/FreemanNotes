@@ -444,6 +444,7 @@ function AppShell(): JSX.Element {
 						onToggleLabel={toggleLabel}
 						onClearLabels={clearLabels}
 						collapsed={sidebarCollapsed}
+						onRequestExpand={() => setSidebarCollapsed(false)}
 						collectionStack={collectionStack}
 						onCollectionStackChange={setCollectionStack}
 						sortConfig={sortConfig}

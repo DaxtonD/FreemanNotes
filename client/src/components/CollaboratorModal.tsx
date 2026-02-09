@@ -26,6 +26,11 @@ export default function CollaboratorModal({ onClose, onSelect, current, onRemove
     })();
   }, [token]);
   const currentIds = useMemo(() => new Set(current.map(c => c.userId)), [current]);
+  const userById = useMemo(() => {
+    const m = new Map<number, { id: number; email: string; name?: string; userImageUrl?: string }>();
+    for (const u of users) m.set(Number(u.id), u);
+    return m;
+  }, [users]);
   const list = useMemo(() => users.filter(u => {
     const match = (u.email.includes(q) || (u.name || u.email.split("@")[0]).toLowerCase().includes(q.toLowerCase()));
     const notSelf = (user ? u.id !== (user as any).id : true);
@@ -54,13 +59,19 @@ export default function CollaboratorModal({ onClose, onSelect, current, onRemove
           {current.length === 0 && <div className="collab-empty">None</div>}
           {current.map(c => (
             <div key={c.userId} className="collab-item" style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 0' }}>
-              { (c as any).userImageUrl ? (
-                <img src={(c as any).userImageUrl} alt="" style={{ width: 28, height: 28, borderRadius: '50%', objectFit: 'cover' }} />
-              ) : (
-                <div className="collab-avatar" style={{ width: 28, height: 28, borderRadius: '50%', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
-                  {(c.name || c.email.split('@')[0])[0].toUpperCase()}
-                </div>
-              ) }
+              {(() => {
+                const u = userById.get(Number(c.userId));
+                const img = (c as any).userImageUrl || (u as any)?.userImageUrl;
+                const displayName = (c.name || (u as any)?.name || c.email?.split('@')?.[0] || u?.email?.split('@')?.[0] || '').trim();
+                if (img) {
+                  return <img src={img} alt="" style={{ width: 28, height: 28, borderRadius: '50%', objectFit: 'cover' }} />;
+                }
+                return (
+                  <div className="collab-avatar" style={{ width: 28, height: 28, borderRadius: '50%', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
+                    {(displayName || 'U')[0].toUpperCase()}
+                  </div>
+                );
+              })()}
               <div className="collab-info" style={{ flex: 1 }}>
                 <div className="collab-name" title={c.email}>{c.name || c.email.split("@")[0]}</div>
               </div>

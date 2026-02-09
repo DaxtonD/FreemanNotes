@@ -6,6 +6,7 @@ import SettingsModal from './SettingsModal';
 import UserManagementModal from './UserManagementModal';
 import { useTheme } from '../themeContext';
 import { usePwaInstall } from '../lib/pwaInstall';
+import { ensurePushSubscribed, getPushClientStatus, sendTestPush, showLocalTestNotification, type PushClientStatus } from '../lib/pushNotifications';
 
 const APP_VERSION = typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : '0.0.0';
 const ABOUT_ICON_DARK = '/icons/darkicon.png';
@@ -13,6 +14,14 @@ const ABOUT_ICON_LIGHT = '/icons/lighticon.png';
 const ABOUT_WORDMARK = '/icons/freemannotes.png';
 const VERSION_ICON_DARK = '/icons/version.png';
 const VERSION_ICON_LIGHT = '/icons/version-light.png';
+
+const DEFAULT_LINK_COLOR_DARK = '#8ab4f8';
+const DEFAULT_LINK_COLOR_LIGHT = '#0b57d0';
+
+const SYSTEM_FONT_STACK = 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif';
+const SANS_FONT_STACK = 'ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif';
+const SERIF_FONT_STACK = 'ui-serif, Georgia, "Times New Roman", Times, serif';
+const MONO_FONT_STACK = 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace';
 
 export default function PreferencesModal({ onClose }: { onClose: () => void }) {
   const auth = (() => { try { return useAuth(); } catch { return null as any; } })();
@@ -83,6 +92,26 @@ export default function PreferencesModal({ onClose }: { onClose: () => void }) {
       const def = css.getPropertyValue('--checkbox-border-default').trim() || '#ffffff';
       return def;
     } catch { return '#ffffff'; }
+  });
+
+  const [pendingLinkColorDark, setPendingLinkColorDark] = useState<string>(() => {
+    try {
+      const userVal = auth && (auth.user as any)?.linkColorDark;
+      const localVal = localStorage.getItem('prefs.linkColorDark');
+      if (typeof userVal === 'string' && userVal) return userVal;
+      if (localVal) return localVal;
+    } catch {}
+    return DEFAULT_LINK_COLOR_DARK;
+  });
+
+  const [pendingLinkColorLight, setPendingLinkColorLight] = useState<string>(() => {
+    try {
+      const userVal = auth && (auth.user as any)?.linkColorLight;
+      const localVal = localStorage.getItem('prefs.linkColorLight');
+      if (typeof userVal === 'string' && userVal) return userVal;
+      if (localVal) return localVal;
+    } catch {}
+    return DEFAULT_LINK_COLOR_LIGHT;
   });
   const [resetColors, setResetColors] = useState(false);
   const [pendingFont, setPendingFont] = useState<string>(() => {
@@ -178,6 +207,15 @@ export default function PreferencesModal({ onClose }: { onClose: () => void }) {
       const td = (auth && (auth.user as any)?.trashAutoEmptyDays);
       if (typeof td === 'number' && Number.isFinite(td)) setPendingTrashAutoEmptyDays(Math.max(0, Math.trunc(td)));
     } catch {}
+
+    try {
+      const d = localStorage.getItem('prefs.linkColorDark') ?? ((auth && (auth.user as any)?.linkColorDark) != null ? String((auth as any).user.linkColorDark) : null);
+      if (d) setPendingLinkColorDark(d);
+    } catch {}
+    try {
+      const l = localStorage.getItem('prefs.linkColorLight') ?? ((auth && (auth.user as any)?.linkColorLight) != null ? String((auth as any).user.linkColorLight) : null);
+      if (l) setPendingLinkColorLight(l);
+    } catch {}
   }, []);
 
   async function onSave() {
@@ -190,6 +228,8 @@ export default function PreferencesModal({ onClose }: { onClose: () => void }) {
       document.documentElement.style.setProperty('--note-card-width', `${pendingNoteWidth}px`);
     }
     document.documentElement.style.setProperty('--image-thumb-size', `${pendingImageThumbSize}px`);
+    document.documentElement.style.setProperty('--link-color-dark', pendingLinkColorDark);
+    document.documentElement.style.setProperty('--link-color-light', pendingLinkColorLight);
     // checkbox color customization removed — theme controls visuals
     try { localStorage.setItem('prefs.checklistSpacing', String(pending)); } catch {}
     try { localStorage.setItem('prefs.checkboxSize', String(pendingCheckboxSize)); } catch {}
@@ -200,6 +240,8 @@ export default function PreferencesModal({ onClose }: { onClose: () => void }) {
     }
     try { localStorage.setItem('prefs.imageThumbSize', String(pendingImageThumbSize)); } catch {}
     try { localStorage.setItem('prefs.fontFamily', pendingFont); } catch {}
+    try { localStorage.setItem('prefs.linkColorDark', pendingLinkColorDark); } catch {}
+    try { localStorage.setItem('prefs.linkColorLight', pendingLinkColorLight); } catch {}
     // auto-fit removed
     try { localStorage.setItem('prefs.dragBehavior', pendingDragBehavior); } catch {}
     try { localStorage.setItem('prefs.animationSpeed', pendingAnimSpeed); } catch {}
@@ -224,6 +266,8 @@ export default function PreferencesModal({ onClose }: { onClose: () => void }) {
         chipDisplayMode: pendingChipDisplayMode,
         imageThumbSize: pendingImageThumbSize,
         trashAutoEmptyDays: pendingTrashAutoEmptyDays,
+        linkColorDark: pendingLinkColorDark,
+        linkColorLight: pendingLinkColorLight,
       };
       // remove checkbox color fields from payload
       await (auth?.updateMe?.(payload));
@@ -252,6 +296,25 @@ export default function PreferencesModal({ onClose }: { onClose: () => void }) {
   const [photoPreviewUrl, setPhotoPreviewUrl] = useState<string | null>(null);
   const [photoUploading, setPhotoUploading] = useState(false);
   const [activeSection, setActiveSection] = useState<string | null>(null);
+  const [pushStatus, setPushStatus] = useState<PushClientStatus | null>(null);
+  const [pushBusy, setPushBusy] = useState(false);
+  const [pushMsg, setPushMsg] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (activeSection !== 'notifications') return;
+    let alive = true;
+    (async () => {
+      try {
+        const st = await getPushClientStatus();
+        if (!alive) return;
+        setPushStatus(st);
+      } catch {
+        if (!alive) return;
+        setPushStatus(null);
+      }
+    })();
+    return () => { alive = false; };
+  }, [activeSection]);
   async function onPhotoSelected(file: File | null) {
     try {
       // Local preview immediately
@@ -314,6 +377,7 @@ export default function PreferencesModal({ onClose }: { onClose: () => void }) {
               activeSection === 'noteMgmt' ? 'Note Management' :
               activeSection === 'drag' ? 'Drag & Animation' :
               activeSection === 'collaborators' ? 'Collaborators' :
+              activeSection === 'notifications' ? 'Notifications' :
               'Preferences'
             )}
           </strong>
@@ -343,6 +407,10 @@ export default function PreferencesModal({ onClose }: { onClose: () => void }) {
                   </button>
                   <button className="prefs-item" type="button" onClick={() => setActiveSection('appearance')} role="listitem">
                     <span className="prefs-item__label">Appearance</span>
+                    <span className="prefs-item__chev" aria-hidden>›</span>
+                  </button>
+                  <button className="prefs-item" type="button" onClick={() => setActiveSection('notifications')} role="listitem">
+                    <span className="prefs-item__label">Notifications</span>
                     <span className="prefs-item__chev" aria-hidden>›</span>
                   </button>
                   <button className="prefs-item" type="button" onClick={() => setActiveSection('noteMgmt')} role="listitem">
@@ -388,6 +456,7 @@ export default function PreferencesModal({ onClose }: { onClose: () => void }) {
                   )}
                   <button className="btn" type="button" onClick={() => setActiveSection('about')}>About</button>
                   <button className="btn" type="button" onClick={() => setActiveSection('appearance')}>Appearance</button>
+                  <button className="btn" type="button" onClick={() => setActiveSection('notifications')}>Notifications</button>
                   <button className="btn" type="button" onClick={() => setActiveSection('noteMgmt')}>Note management</button>
                   {false && <button className="btn" type="button" onClick={() => setActiveSection('colors')}>Colors</button>}
                   <button className="btn" type="button" onClick={() => setActiveSection('drag')}>Drag & Animation</button>
@@ -402,6 +471,113 @@ export default function PreferencesModal({ onClose }: { onClose: () => void }) {
                 </div>
               </div>
             )
+          ) : activeSection === 'notifications' ? (
+            <div>
+              {!isPhone && <button className="btn" type="button" onClick={() => setActiveSection(null)} aria-label="Back">← Back</button>}
+              <div style={{ height: 8 }} />
+              <h4>Notifications</h4>
+              <div className="muted" style={{ fontSize: 13, lineHeight: 1.4 }}>
+                Android/Chrome won’t prompt for notification permission during install. Use “Enable notifications” below (it counts as a user gesture).
+              </div>
+
+              <div style={{ height: 10 }} />
+              <div style={{ display: 'grid', gap: 6 }}>
+                <div><strong>Permission:</strong> {pushStatus ? String(pushStatus.permission) : '…'}</div>
+                <div><strong>Push supported:</strong> {pushStatus ? (pushStatus.pushManager ? 'yes' : 'no') : '…'}</div>
+                <div><strong>Service worker:</strong> {pushStatus ? (pushStatus.serviceWorker ? 'yes' : 'no') : '…'}</div>
+                <div><strong>Subscribed:</strong> {pushStatus ? (pushStatus.subscribed ? 'yes' : 'no') : '…'}</div>
+                <div><strong>Server push:</strong> {pushStatus ? (pushStatus.serverEnabled ? 'enabled' : `disabled${pushStatus.serverReason ? ` (${pushStatus.serverReason})` : ''}`) : '…'}</div>
+              </div>
+
+              {pushMsg && (
+                <div style={{ marginTop: 10, padding: '8px 10px', borderRadius: 10, background: 'var(--card)', border: '1px solid var(--border)' }}>
+                  {pushMsg}
+                </div>
+              )}
+
+              <div style={{ marginTop: 12, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                <button
+                  className="btn"
+                  type="button"
+                  disabled={pushBusy}
+                  onClick={async () => {
+                    const token = auth?.token || '';
+                    if (!token) {
+                      setPushMsg('You must be signed in to enable push notifications.');
+                      return;
+                    }
+                    setPushBusy(true);
+                    setPushMsg(null);
+                    try {
+                      await ensurePushSubscribed(token);
+                      setPushMsg('Notifications enabled.');
+                    } catch (err: any) {
+                      setPushMsg('Error enabling notifications: ' + String(err?.message || err));
+                    } finally {
+                      try { setPushStatus(await getPushClientStatus()); } catch {}
+                      setPushBusy(false);
+                    }
+                  }}
+                  title="Request permission and subscribe this device"
+                >
+                  Enable notifications
+                </button>
+
+                <button
+                  className="btn"
+                  type="button"
+                  disabled={pushBusy}
+                  onClick={async () => {
+                    setPushBusy(true);
+                    setPushMsg(null);
+                    try {
+                      await showLocalTestNotification();
+                      setPushMsg('Sent a local test notification.');
+                    } catch (err: any) {
+                      setPushMsg('Local test failed: ' + String(err?.message || err));
+                    } finally {
+                      try { setPushStatus(await getPushClientStatus()); } catch {}
+                      setPushBusy(false);
+                    }
+                  }}
+                  title="Shows a notification using your browser/service worker"
+                >
+                  Local test
+                </button>
+
+                <button
+                  className="btn"
+                  type="button"
+                  disabled={pushBusy || !pushStatus?.serverEnabled || !pushStatus?.subscribed}
+                  onClick={async () => {
+                    const token = auth?.token || '';
+                    if (!token) {
+                      setPushMsg('You must be signed in to send a push test.');
+                      return;
+                    }
+                    setPushBusy(true);
+                    setPushMsg(null);
+                    try {
+                      await sendTestPush(token, 'Push test from FreemanNotes');
+                      setPushMsg('Sent a push test. (If you don’t see it, check Android notification settings for the app.)');
+                    } catch (err: any) {
+                      setPushMsg('Push test failed: ' + String(err?.message || err));
+                    } finally {
+                      try { setPushStatus(await getPushClientStatus()); } catch {}
+                      setPushBusy(false);
+                    }
+                  }}
+                  title="Sends a real Web Push from the server"
+                >
+                  Push test
+                </button>
+              </div>
+
+              <div style={{ marginTop: 16, display: 'flex', gap: 8, justifyContent: 'flex-start' }}>
+                <button className="btn" type="button" onClick={() => setActiveSection(null)}>Back</button>
+                <button className="btn" type="button" onClick={onCancel}>Close</button>
+              </div>
+            </div>
           ) : activeSection === 'about' ? (
             <div>
               {!isPhone && <button className="btn" type="button" onClick={() => setActiveSection(null)} aria-label="Back">← Back</button>}
@@ -444,6 +620,40 @@ export default function PreferencesModal({ onClose }: { onClose: () => void }) {
                     <option value="light">Light</option>
                     <option value="system">System</option>
                   </select>
+                </div>
+              </div>
+
+              <div style={{ marginBottom: 16 }}>
+                <h5 style={{ margin: 0, color: 'var(--muted)' }}>Links</h5>
+                <div style={{ display: 'flex', gap: 12, alignItems: 'center', justifyContent: 'flex-start', flexWrap: 'wrap' }}>
+                  <label style={{ color: 'var(--muted)', minWidth: 120 }}>Link color (dark)</label>
+                  <input aria-label="link color dark" type="color" value={pendingLinkColorDark} onChange={(e) => setPendingLinkColorDark(e.target.value)} />
+                  <div style={{ color: 'var(--muted)', fontSize: 13 }}>{pendingLinkColorDark}</div>
+                </div>
+                <div style={{ height: 10 }} />
+                <div style={{ display: 'flex', gap: 12, alignItems: 'center', justifyContent: 'flex-start', flexWrap: 'wrap' }}>
+                  <label style={{ color: 'var(--muted)', minWidth: 120 }}>Link color (light)</label>
+                  <input aria-label="link color light" type="color" value={pendingLinkColorLight} onChange={(e) => setPendingLinkColorLight(e.target.value)} />
+                  <div style={{ color: 'var(--muted)', fontSize: 13 }}>{pendingLinkColorLight}</div>
+                </div>
+                <div style={{ height: 10 }} />
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center', justifyContent: 'flex-start', flexWrap: 'wrap' }}>
+                  <label style={{ color: 'var(--muted)', minWidth: 120 }}>Preview</label>
+                  <a
+                    href="#"
+                    onClick={(e) => e.preventDefault()}
+                    style={{ color: 'var(--link-color)', textDecoration: 'underline', textUnderlineOffset: 2 }}
+                  >
+                    Example link
+                  </a>
+                  <span style={{ color: 'var(--muted)', fontSize: 13 }}>(Overrides pasted link colors)</span>
+                </div>
+                <div style={{ height: 10 }} />
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center', justifyContent: 'flex-start' }}>
+                  <label style={{ color: 'var(--muted)', minWidth: 120 }}>Actions</label>
+                  <button className="btn" type="button" onClick={() => { setPendingLinkColorDark(DEFAULT_LINK_COLOR_DARK); setPendingLinkColorLight(DEFAULT_LINK_COLOR_LIGHT); }}>
+                    Reset link colors
+                  </button>
                 </div>
               </div>
               <div style={{ marginBottom: 16 }}>
@@ -514,16 +724,25 @@ export default function PreferencesModal({ onClose }: { onClose: () => void }) {
                 <div style={{ display: 'flex', gap: 12, alignItems: 'center', justifyContent: 'flex-start' }}>
                   <label style={{ color: 'var(--muted)', minWidth: 120 }}>App font</label>
                   <select value={pendingFont} onChange={(e) => setPendingFont(e.target.value)}>
-                    <option value={'Inter, system-ui, "Segoe UI", Roboto, "Helvetica Neue", Arial'}>Inter</option>
-                    <option value={'Calibri, system-ui, Arial, sans-serif'}>Calibri</option>
-                    <option value={'Segoe UI, system-ui, Arial, sans-serif'}>Segoe UI</option>
-                    <option value={'Roboto, system-ui, Arial, sans-serif'}>Roboto</option>
-                    <option value={'Helvetica Neue, Helvetica, Arial, sans-serif'}>Helvetica Neue</option>
-                    <option value={'Arial, Helvetica, sans-serif'}>Arial</option>
-                    <option value={'Verdana, Geneva, sans-serif'}>Verdana</option>
-                    <option value={'Tahoma, Geneva, sans-serif'}>Tahoma</option>
-                    <option value={'Trebuchet MS, Helvetica, sans-serif'}>Trebuchet MS</option>
-                    <option value={'Gill Sans, Calibri, sans-serif'}>Gill Sans</option>
+                    <optgroup label="Recommended">
+                      <option value={SYSTEM_FONT_STACK}>System (recommended)</option>
+                      <option value={SANS_FONT_STACK}>Sans</option>
+                      <option value={SERIF_FONT_STACK}>Serif</option>
+                      <option value={MONO_FONT_STACK}>Monospace</option>
+                    </optgroup>
+                    <optgroup label={isPhone ? 'Other (may fall back on mobile)' : 'Other'}>
+                      {/* Keep existing values for compatibility with already-saved prefs */}
+                      <option value={'Inter, system-ui, "Segoe UI", Roboto, "Helvetica Neue", Arial'}>Inter</option>
+                      <option value={'Calibri, system-ui, Arial, sans-serif'}>Calibri</option>
+                      <option value={'Segoe UI, system-ui, Arial, sans-serif'}>Segoe UI</option>
+                      <option value={'Roboto, system-ui, Arial, sans-serif'}>Roboto</option>
+                      <option value={'Helvetica Neue, Helvetica, Arial, sans-serif'}>Helvetica Neue</option>
+                      <option value={'Arial, Helvetica, sans-serif'}>Arial</option>
+                      <option value={'Verdana, Geneva, sans-serif'}>Verdana</option>
+                      <option value={'Tahoma, Geneva, sans-serif'}>Tahoma</option>
+                      <option value={'Trebuchet MS, Helvetica, sans-serif'}>Trebuchet MS</option>
+                      <option value={'Gill Sans, Calibri, sans-serif'}>Gill Sans</option>
+                    </optgroup>
                   </select>
                 </div>
               </div>

@@ -21,6 +21,10 @@
   --checkbox-border-default: #ffffff;
   --checkbox-border: var(--checkbox-border-default);
   --accent:#ffcc00;
+  /* Hyperlinks (user preference can override via CSS vars) */
+  --link-color-dark: #8ab4f8;
+  --link-color-light: #0b57d0;
+  --link-color: var(--link-color-dark);
   --gap:16px;
   --row:2px; /* fine masonry row unit for precise vertical spacing */
   --sidebar-width:220px;
@@ -61,6 +65,7 @@
   --checkbox-border-default:#000000;
   --checkbox-border: var(--checkbox-border-default);
   --accent:#0b6cff;
+  --link-color: var(--link-color-light);
 }
 *{box-sizing:border-box}
 html,body,#root{height:100%;margin:0;font-family:var(--app-font-family)}
@@ -80,18 +85,12 @@ body{
   padding:0 16px;
   /* Slide up into the top edge as we scroll, then freeze there. */
   top: calc(-1 * var(--main-pad-y));
-  background:linear-gradient(180deg, rgba(255,255,255,0.02), transparent);
   position:sticky;
   top:0;
   z-index:50;
 }
-:root[data-theme="light"] .app-header{
-  border-bottom:1px solid rgba(0,0,0,0.06);
-  background:linear-gradient(180deg, rgba(0,0,0,0.02), transparent);
-}
 .header-left{display:flex;align-items:center;gap:12px}
 .brand-stack{ display:none; }
-.brand-inline{ display:flex; align-items:center; gap:4px; }
 .brand-inline .brand{ margin:0; line-height:1; }
 .app-icon{ width:48px; height:48px; display:block; object-fit:contain; filter: drop-shadow(0 2px 10px rgba(0,0,0,0.35)); border-radius:12px; }
 .app-icon:hover{ filter: drop-shadow(0 4px 14px rgba(0,0,0,0.75)) saturate(122%) contrast(112%) brightness(102%); }
@@ -603,6 +602,11 @@ html.is-editor-modal-open .mobile-add-note{
   display: none !important;
 }
 
+/* While the mobile add (+) menu is open, block interactions with notes behind the blur */
+.notes-area.notes-area--mobile-add-open > :not(.mobile-add-backdrop):not(.mobile-add-note){
+  pointer-events: none;
+}
+
 /* Drag swap visuals */
 .note-drag-source{
   visibility: hidden;
@@ -858,6 +862,20 @@ html.is-editor-modal-open .mobile-add-note{
 .note-item p { margin: 0; }
 /* Reset margins inside rendered rich-text fragments so alignment is centered */
 .rt-html p { margin: 0; }
+
+/* Force note/editor hyperlink colors (overrides pasted inline styles) */
+.note-body a,
+.note-item-text .rt-html a,
+.rt-html a,
+.ProseMirror a {
+  color: var(--link-color) !important;
+}
+.note-body a:visited,
+.note-item-text .rt-html a:visited,
+.rt-html a:visited,
+.ProseMirror a:visited {
+  color: var(--link-color) !important;
+}
 
 /* drag animation */
 .checklist-item{
@@ -1295,6 +1313,9 @@ button.chip:focus{outline:2px solid rgba(255,255,255,0.18);outline-offset:2px;}
 }
 
 /* Editor (modal) image group */
+.image-dialog{
+  --editor-image-thumb-size: calc(var(--image-thumb-size) * 1.2);
+}
 .image-dialog .editor-images-toggle{
   padding: 6px 10px;
 }
@@ -1304,13 +1325,13 @@ button.chip:focus{outline:2px solid rgba(255,255,255,0.18);outline-offset:2px;}
   gap:8px;
   max-width: 100%;
   /* 2 rows max before scroll */
-  max-height: calc((var(--image-thumb-size) * 2) + 16px);
+  max-height: calc((var(--editor-image-thumb-size) * 2) + 16px);
   overflow-y: auto;
   overflow-x: hidden;
   padding-right: 4px;
 }
 .image-dialog .editor-images-grid .note-image{
-  width: min(var(--image-thumb-size), 100%);
+  width: min(var(--editor-image-thumb-size), 100%);
   aspect-ratio: 1 / 1;
   height: auto;
   flex: 0 0 auto;
@@ -1327,6 +1348,14 @@ button.chip:focus{outline:2px solid rgba(255,255,255,0.18);outline-offset:2px;}
   width: 100%;
   height: 100%;
   object-fit: contain;
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+.image-dialog .editor-images-grid .note-image{
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
 }
 .image-delete{
   background: rgba(0,0,0,0.55);
@@ -1345,6 +1374,12 @@ button.chip:focus{outline:2px solid rgba(255,255,255,0.18);outline-offset:2px;}
 .note-image:hover .image-delete,
 .note-image:focus-within .image-delete {
   opacity: 1;
+}
+
+@media (pointer: coarse) {
+  .image-dialog .editor-images-grid .image-delete{
+    display: none;
+  }
 }
 
 /* Palette popover (positioned via inline fixed coordinates) */
@@ -1400,6 +1435,13 @@ button.chip:focus{outline:2px solid rgba(255,255,255,0.18);outline-offset:2px;}
 }
 .image-dialog.maximized .rt-editor{
   min-height: 60vh;
+}
+
+/* Add-image picker dialog tweaks */
+.image-dialog--picker .image-form-actions{
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
 }
 
 /* Phone: fullscreen note/checklist editors (touch-friendly). */
@@ -1466,6 +1508,29 @@ button.chip:focus{outline:2px solid rgba(255,255,255,0.18);outline-offset:2px;}
   .image-dialog.editor-dialog .dialog-footer .note-actions .tiny.editor-more{
     font-size: 26px;
     line-height: 1;
+  }
+
+  /* Phone: keep the add-image picker as a compact bottom sheet (not fullscreen). */
+  .image-dialog-backdrop{
+    padding: 10px;
+  }
+  .image-dialog.image-dialog--picker{
+    align-self: flex-end;
+    width: min(94vw, 520px);
+    max-height: min(72dvh, 520px);
+    margin: 0 auto calc(10px + env(safe-area-inset-bottom));
+    border-radius: 16px;
+    padding: 14px;
+  }
+  .image-dialog.image-dialog--picker .dialog-header{
+    padding: 0;
+    border-bottom: none;
+  }
+  .image-dialog--picker .image-form-actions{
+    flex-direction: column;
+  }
+  .image-dialog--picker .image-form-actions .btn{
+    width: 100%;
   }
 }
 /* Preferences dialog: fixed width independent of note width */
@@ -1690,18 +1755,25 @@ button.chip:focus{outline:2px solid rgba(255,255,255,0.18);outline-offset:2px;}
   color: inherit;
 }
 
-/* Note reminder bell indicator */
-.note-reminder-bell{
+/* Note corner indicators (pin + reminder bell) */
+.note-corner-icons{
   position:absolute;
   top:10px;
   right:10px;
-  width:18px;
-  height:18px;
+  display:flex;
+  gap:6px;
+  align-items:center;
   color: var(--muted);
   opacity: 0.85;
   pointer-events: none;
 }
-.note-reminder-bell svg{ width:100%; height:100%; display:block; }
+.note-reminder-bell,
+.note-pin-icon{
+  width:18px;
+  height:18px;
+}
+.note-reminder-bell svg,
+.note-pin-icon svg{ width:100%; height:100%; display:block; }
 
 /* compact completed-toggle inside notes/editors */
 .completed-toggle { display:inline-flex; align-items:center; gap:8px; background:transparent; border:none; padding:6px; color:inherit; cursor:pointer; margin-bottom: var(--checklist-gap); }
@@ -1979,6 +2051,52 @@ button.chip:focus{outline:2px solid rgba(255,255,255,0.18);outline-offset:2px;}
 .collab-email{font-size:13px;color:inherit}
 .collab-empty{padding:12px;color:var(--muted);text-align:center;font-size:13px}
 
+/* Confirm dialog */
+.confirm-modal-backdrop{
+  position: fixed;
+  inset: 0;
+  background: var(--modal-backdrop);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10050;
+}
+.confirm-modal{
+  width: min(420px, 92vw);
+  background: #181818;
+  color: #ffffff;
+  border-radius: 12px;
+  padding: 14px;
+  border: 1px solid rgba(255,255,255,0.06);
+  box-shadow: 0 16px 44px rgba(0,0,0,0.65);
+}
+:root[data-theme="light"] .confirm-modal{
+  background: #ffffff;
+  color: #000000;
+  border: 1px solid rgba(0,0,0,0.08);
+  box-shadow: 0 16px 44px rgba(0,0,0,0.20);
+}
+.confirm-modal__title{ margin-bottom: 8px; }
+.confirm-modal__message{ color: inherit; opacity: 0.92; line-height: 1.35; }
+.confirm-modal__actions{
+  margin-top: 14px;
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+}
+.btn--danger{
+  color: #ff7676;
+  border-color: rgba(255,118,118,0.25);
+  background: rgba(255,118,118,0.08);
+}
+.btn--danger:hover{ background: rgba(255,118,118,0.12); }
+:root[data-theme="light"] .btn--danger{
+  color: #b30000;
+  border-color: rgba(179,0,0,0.18);
+  background: rgba(179,0,0,0.08);
+}
+:root[data-theme="light"] .btn--danger:hover{ background: rgba(179,0,0,0.12); }
+
 /* dialog header and close button should inherit the dialog's text color (set inline) */
 .image-dialog .icon-close,
 .image-dialog .icon-close:hover,
@@ -2073,6 +2191,129 @@ button.chip:focus{outline:2px solid rgba(255,255,255,0.18);outline-offset:2px;}
   justify-content: space-between;
   gap: 0;
 }
+
+/* URL preview (unfurl) */
+.note-link-previews{ margin-top: 10px; display:flex; flex-direction:column; gap:0px; }
+.link-preview-row{ display:flex; align-items:stretch; gap:0px; position: relative; }
+.link-preview{
+  display:flex;
+  align-items:center;
+  gap:10px;
+  padding:8px 10px;
+  border-radius:12px;
+  text-decoration:none;
+  color:inherit;
+  border:1px solid rgba(255,255,255,0.08);
+  background: rgba(0,0,0,0.18);
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.link-preview-row .link-preview{ width:100%; padding-right: 44px; }
+
+/* Note cards have 12px padding; make previews stretch full card width */
+.note-card .note-link-previews{
+  margin-left: -12px;
+  margin-right: -12px;
+}
+.note-card .link-preview-row{
+  padding-left: 12px;
+  padding-right: 12px;
+}
+:root[data-theme="light"] .link-preview{
+  border:1px solid rgba(0,0,0,0.10);
+  background: rgba(0,0,0,0.04);
+}
+.link-preview:hover{ filter: brightness(1.06); }
+.link-preview-image{
+  width:48px;
+  height:48px;
+  border-radius:12px;
+  overflow:hidden;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  flex: 0 0 auto;
+  background: rgba(255,255,255,0.06);
+}
+:root[data-theme="light"] .link-preview-image{ background: rgba(0,0,0,0.06); }
+.link-preview-image img{ width:100%; height:100%; object-fit:cover; display:block; }
+.link-preview-image svg{ width:22px; height:22px; opacity:0.9; }
+.link-preview-meta{ min-width:0; display:flex; flex-direction:column; gap:2px; }
+
+/* Mobile ergonomics: larger formatting icons on coarse pointers */
+@media (pointer: coarse) {
+  .editor-toolbar button.tiny,
+  .checklist-toolbar button.tiny,
+  .rt-toolbar button.tiny {
+    min-height: 40px;
+    min-width: 40px;
+    padding: 8px;
+    font-size: 18px;
+  }
+
+  .editor-toolbar button.tiny svg,
+  .checklist-toolbar button.tiny svg,
+  .rt-toolbar button.tiny svg {
+    width: 22px;
+    height: 22px;
+  }
+
+  .editor-toolbar button.tiny .svg-inline--fa,
+  .checklist-toolbar button.tiny .svg-inline--fa,
+  .rt-toolbar button.tiny .svg-inline--fa {
+    width: 22px;
+    height: 22px;
+  }
+}
+.link-preview-title{
+  font-weight:600;
+  font-size:13.5px;
+  line-height:1.2;
+  display:-webkit-box;
+  line-clamp:2;
+  -webkit-line-clamp:2;
+  -webkit-box-orient: vertical;
+  overflow:hidden;
+}
+.link-preview-domain{
+  font-size:12px;
+  opacity:0.78;
+  white-space:nowrap;
+  overflow:hidden;
+  text-overflow:ellipsis;
+}
+/* Legacy class used on preview rows in cards; spacing is controlled by the stack gap */
+.note-link-preview{ margin-top: 0; }
+.link-preview-menu{
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  border: 1px solid rgba(255,255,255,0.10);
+  background: rgba(0,0,0,0.16);
+  color: inherit;
+  cursor: pointer;
+  position: absolute;
+  right: 10px;
+  top: 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 20px;
+  line-height: 1;
+  z-index: 2;
+}
+
+/* Mobile: rely on long-press/context menu instead of the 3-dot button */
+@media (pointer: coarse) {
+  .link-preview-row .link-preview{ padding-right: 10px; }
+  .link-preview-menu{ display: none; }
+}
+:root[data-theme="light"] .link-preview-menu{
+  border: 1px solid rgba(0,0,0,0.12);
+  background: rgba(0,0,0,0.04);
+}
+.link-preview-menu:hover{ filter: brightness(1.08); }
+.link-preview-more{ font-size: 12px; opacity: 0.75; padding-left: 6px; }
 
 /* Icons: fixed square, centered content so emoji and SVG align */
 .note-footer .tiny {
