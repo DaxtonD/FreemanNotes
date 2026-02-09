@@ -265,9 +265,13 @@ router.patch('/api/auth/me', async (req: Request, res: Response) => {
   const user = await getUserFromToken(req);
   if (!user) return res.status(401).json({ error: 'unauthenticated' });
   const body = req.body || {};
-  const { name, fontFamily, noteWidth, dragBehavior, animationSpeed, checklistSpacing, checkboxSize, checklistTextSize, chipDisplayMode, noteLineSpacing, themeChoice, animationBehavior, animationsEnabled, imageThumbSize } = body as any;
+  const { name, fontFamily, noteWidth, dragBehavior, animationSpeed, checklistSpacing, checkboxSize, checklistTextSize, chipDisplayMode, noteLineSpacing, themeChoice, animationBehavior, animationsEnabled, imageThumbSize, trashAutoEmptyDays } = body as any;
   const data: any = {};
   if (typeof name === 'string') data.name = name;
+  if (typeof trashAutoEmptyDays === 'number') {
+    const d = Math.max(0, Math.min(3650, Math.trunc(trashAutoEmptyDays)));
+    data.trashAutoEmptyDays = d;
+  }
   // Preference fields are stored per-device profile when a device key is present.
   const prefData: any = {};
   if (typeof fontFamily === 'string') prefData.fontFamily = fontFamily;

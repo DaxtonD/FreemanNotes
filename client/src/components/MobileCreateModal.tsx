@@ -12,7 +12,7 @@ import { makeWebSocketUrl } from '../lib/ws';
 import { useAuth } from '../authContext';
 import ChecklistItemRT from './ChecklistItemRT';
 import ColorPalette from './ColorPalette';
-import ReminderPicker from './ReminderPicker';
+import ReminderPicker, { type ReminderDraft } from './ReminderPicker';
 import CollaboratorModal from './CollaboratorModal';
 import ImageDialog from './ImageDialog';
 import CreateMoreMenu from './CreateMoreMenu';
@@ -44,6 +44,7 @@ export default function MobileCreateModal({
   const [textColor, setTextColor] = React.useState<string | undefined>(undefined);
   const [showPalette, setShowPalette] = React.useState(false);
   const [showReminderPicker, setShowReminderPicker] = React.useState(false);
+  const [pendingReminder, setPendingReminder] = React.useState<ReminderDraft | null>(null);
   const [showCollaborator, setShowCollaborator] = React.useState(false);
   const [showImageDialog, setShowImageDialog] = React.useState(false);
   const [imageUrl, setImageUrl] = React.useState<string | null>(null);
@@ -143,6 +144,7 @@ export default function MobileCreateModal({
     setBg('');
     setImageUrl(null);
     setSelectedCollaborators([]);
+    setPendingReminder(null);
     setShowPalette(false);
     setShowReminderPicker(false);
     setShowCollaborator(false);
@@ -178,7 +180,7 @@ export default function MobileCreateModal({
     try { setShowCollaborator(false); } catch {}
     try { setShowImageDialog(false); } catch {}
     try { editor?.commands.clearContent(); } catch {}
-    try { setTitle(''); setItems([]); setBg(''); setImageUrl(null); setSelectedCollaborators([]); } catch {}
+    try { setTitle(''); setItems([]); setBg(''); setImageUrl(null); setSelectedCollaborators([]); setPendingReminder(null); } catch {}
     onClose();
   }
 
@@ -207,6 +209,10 @@ export default function MobileCreateModal({
       const bodyJson = mode === 'text' ? (editor?.getJSON() || {}) : {};
       const payload: any = { title, body: null, type: mode === 'checklist' ? 'CHECKLIST' : 'TEXT', color: bg || null };
       if (mode === 'checklist') payload.items = items.map((it, i) => ({ content: it.content, checked: !!it.checked, indent: typeof it.indent === 'number' ? it.indent : 0, ord: i }));
+      if (pendingReminder && pendingReminder.dueAtIso) {
+        payload.reminderDueAt = pendingReminder.dueAtIso;
+        payload.reminderOffsetMinutes = pendingReminder.offsetMinutes;
+      }
 
       const res = await fetch('/api/notes', {
         method: 'POST',
@@ -918,7 +924,23 @@ export default function MobileCreateModal({
       </div>
 
       {showPalette && <ColorPalette anchorRef={rootRef as any} onPick={(c) => { setBg(c); }} onClose={() => setShowPalette(false)} />}
-      {showReminderPicker && <ReminderPicker onClose={() => setShowReminderPicker(false)} onSet={(iso) => { setShowReminderPicker(false); if (iso) window.alert(`Reminder set (UI-only): ${iso}`); }} />}
+      {showReminderPicker && (
+        <ReminderPicker
+          onClose={() => setShowReminderPicker(false)}
+          onConfirm={(draft) => {
+            setShowReminderPicker(false);
+            try {
+              if (typeof Notification !== 'undefined' && Notification.permission === 'default') {
+                Notification.requestPermission();
+              }
+            } catch {}
+            setPendingReminder(draft);
+          }}
+          onClear={pendingReminder ? (() => setPendingReminder(null)) : undefined}
+          initialDueAtIso={pendingReminder?.dueAtIso || null}
+          initialOffsetMinutes={typeof pendingReminder?.offsetMinutes === 'number' ? pendingReminder.offsetMinutes : null}
+        />
+      )}
       {showCollaborator && (
         <CollaboratorModal
           onClose={() => setShowCollaborator(false)}

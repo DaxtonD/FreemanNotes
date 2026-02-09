@@ -6,6 +6,7 @@ import http from "http";
 import { WebSocketServer } from "ws";
 import jwt from "jsonwebtoken";
 import { registerConnection, removeConnection } from "./events";
+import { startTrashCleanupJob } from './trashCleanup';
 // y-websocket util sets up Yjs collaboration rooms over WebSocket
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore
@@ -55,6 +56,14 @@ async function start() {
       console.log("Prisma connected.");
     } catch (err) {
       console.warn("Prisma connection warning:", err);
+    }
+
+    // Background cleanup: auto-empty trash based on user preference.
+    try {
+      startTrashCleanupJob(prisma as any);
+      console.log('Trash cleanup job started');
+    } catch (err) {
+      console.warn('Trash cleanup job failed to start:', err);
     }
 
     // Wire Yjs persistence to Prisma so rooms load from/stay in sync with DB
@@ -194,6 +203,15 @@ async function start() {
       console.log("Collections routes registered");
     } catch (err) {
       console.warn("Collections routes not available:", err);
+    }
+
+    // Admin user management routes
+    try {
+      const adminUsersRouter = (await import("./adminUsers")).default;
+      app.use(adminUsersRouter);
+      console.log("Admin users routes registered");
+    } catch (err) {
+      console.warn("Admin users routes not available:", err);
     }
   } catch (err) {
     console.warn("Startup DB initialization warning:", err);

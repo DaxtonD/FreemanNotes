@@ -3,6 +3,7 @@ import React, { useEffect, useState } from 'react';
 declare const __APP_VERSION__: string;
 import { useAuth } from '../authContext';
 import SettingsModal from './SettingsModal';
+import UserManagementModal from './UserManagementModal';
 import { useTheme } from '../themeContext';
 import { usePwaInstall } from '../lib/pwaInstall';
 
@@ -100,6 +101,35 @@ export default function PreferencesModal({ onClose }: { onClose: () => void }) {
     try { return (auth && (auth.user as any)?.chipDisplayMode) || 'image+text'; } catch { return 'image+text'; }
   });
 
+  const [pendingTrashAutoEmptyDays, setPendingTrashAutoEmptyDays] = useState<number>(() => {
+    try {
+      const v = (auth && (auth.user as any)?.trashAutoEmptyDays);
+      return (typeof v === 'number' && Number.isFinite(v)) ? Math.max(0, Math.trunc(v)) : 0;
+    } catch {
+      return 0;
+    }
+  });
+
+  const [emptyingTrashNow, setEmptyingTrashNow] = useState(false);
+
+  async function emptyTrashNow() {
+    const token = (auth as any)?.token;
+    if (!token) return;
+    if (emptyingTrashNow) return;
+    const ok = window.confirm('Permanently delete all notes in Trash? This cannot be undone.');
+    if (!ok) return;
+    setEmptyingTrashNow(true);
+    try {
+      const res = await fetch('/api/trash/empty', { method: 'DELETE', headers: { Authorization: token ? `Bearer ${token}` : '' } });
+      if (!res.ok) throw new Error(await res.text());
+    } catch (err) {
+      console.error('Failed to empty trash', err);
+      alert('Failed to empty trash');
+    } finally {
+      setEmptyingTrashNow(false);
+    }
+  }
+
   const isPhone = (() => {
     try {
       const mq = window.matchMedia;
@@ -143,6 +173,10 @@ export default function PreferencesModal({ onClose }: { onClose: () => void }) {
     try {
       const cdm = (auth && (auth.user as any)?.chipDisplayMode) || 'image+text';
       if (cdm) setPendingChipDisplayMode(cdm);
+    } catch {}
+    try {
+      const td = (auth && (auth.user as any)?.trashAutoEmptyDays);
+      if (typeof td === 'number' && Number.isFinite(td)) setPendingTrashAutoEmptyDays(Math.max(0, Math.trunc(td)));
     } catch {}
   }, []);
 
@@ -188,7 +222,8 @@ export default function PreferencesModal({ onClose }: { onClose: () => void }) {
         checklistTextSize: pendingTextSize,
         noteLineSpacing: pendingNoteLineSpacing,
         chipDisplayMode: pendingChipDisplayMode,
-        imageThumbSize: pendingImageThumbSize
+        imageThumbSize: pendingImageThumbSize,
+        trashAutoEmptyDays: pendingTrashAutoEmptyDays,
       };
       // remove checkbox color fields from payload
       await (auth?.updateMe?.(payload));
@@ -213,6 +248,7 @@ export default function PreferencesModal({ onClose }: { onClose: () => void }) {
   }
   function onCancel() { onClose(); }
   const [showInvite, setShowInvite] = useState(false);
+  const [showUserMgmt, setShowUserMgmt] = useState(false);
   const [photoPreviewUrl, setPhotoPreviewUrl] = useState<string | null>(null);
   const [photoUploading, setPhotoUploading] = useState(false);
   const [activeSection, setActiveSection] = useState<string | null>(null);
@@ -275,6 +311,7 @@ export default function PreferencesModal({ onClose }: { onClose: () => void }) {
               activeSection === 'about' ? 'About' :
               activeSection === 'appearance' ? 'Appearance' :
               activeSection === 'colors' ? 'Colors' :
+              activeSection === 'noteMgmt' ? 'Note Management' :
               activeSection === 'drag' ? 'Drag & Animation' :
               activeSection === 'collaborators' ? 'Collaborators' :
               'Preferences'
@@ -308,6 +345,10 @@ export default function PreferencesModal({ onClose }: { onClose: () => void }) {
                     <span className="prefs-item__label">Appearance</span>
                     <span className="prefs-item__chev" aria-hidden>›</span>
                   </button>
+                  <button className="prefs-item" type="button" onClick={() => setActiveSection('noteMgmt')} role="listitem">
+                    <span className="prefs-item__label">Note management</span>
+                    <span className="prefs-item__chev" aria-hidden>›</span>
+                  </button>
                   <button className="prefs-item" type="button" onClick={() => setActiveSection('drag')} role="listitem">
                     <span className="prefs-item__label">Drag & Animation</span>
                     <span className="prefs-item__chev" aria-hidden>›</span>
@@ -321,6 +362,12 @@ export default function PreferencesModal({ onClose }: { onClose: () => void }) {
                 <div style={{ height: 14 }} />
 
                 <div className="prefs-list" role="list" aria-label="Account">
+                  {(auth?.user as any)?.role === 'admin' && (
+                    <button className="prefs-item" type="button" onClick={() => setShowUserMgmt(true)} role="listitem">
+                      <span className="prefs-item__label">User management</span>
+                      <span className="prefs-item__chev" aria-hidden>›</span>
+                    </button>
+                  )}
                   {(auth?.user as any)?.role === 'admin' && (
                     <button className="prefs-item" type="button" onClick={() => setShowInvite(true)} role="listitem">
                       <span className="prefs-item__label">Send invite</span>
@@ -341,6 +388,7 @@ export default function PreferencesModal({ onClose }: { onClose: () => void }) {
                   )}
                   <button className="btn" type="button" onClick={() => setActiveSection('about')}>About</button>
                   <button className="btn" type="button" onClick={() => setActiveSection('appearance')}>Appearance</button>
+                  <button className="btn" type="button" onClick={() => setActiveSection('noteMgmt')}>Note management</button>
                   {false && <button className="btn" type="button" onClick={() => setActiveSection('colors')}>Colors</button>}
                   <button className="btn" type="button" onClick={() => setActiveSection('drag')}>Drag & Animation</button>
                   <button className="btn" type="button" onClick={() => setActiveSection('collaborators')}>Collaborators</button>
@@ -348,6 +396,7 @@ export default function PreferencesModal({ onClose }: { onClose: () => void }) {
                 <div style={{ marginTop: 16, display: 'flex', gap: 8, justifyContent: 'flex-start' }}>
                   <button className="btn" type="button" onClick={onCancel}>Close</button>
                   <span style={{ flex: 1 }} />
+                  {(auth?.user as any)?.role === 'admin' && <button className="btn" type="button" onClick={() => setShowUserMgmt(true)}>User management</button>}
                   {(auth?.user as any)?.role === 'admin' && <button className="btn" type="button" onClick={() => setShowInvite(true)}>Send Invite</button>}
                   <button className="btn" type="button" onClick={() => { try { onClose(); } catch {} try { auth?.logout?.(); } catch {} }}>Sign out</button>
                 </div>
@@ -486,6 +535,57 @@ export default function PreferencesModal({ onClose }: { onClose: () => void }) {
                 <button className="btn" type="button" onClick={() => { try { onClose(); } catch {} try { auth?.logout?.(); } catch {} }}>Sign out</button>
               </div>
             </div>
+          ) : activeSection === 'noteMgmt' ? (
+            <div>
+              {!isPhone && <button className="btn" type="button" onClick={() => setActiveSection(null)} aria-label="Back">← Back</button>}
+              <div style={{ height: 8 }} />
+              <h4>Note management</h4>
+              <div style={{ marginBottom: 16 }}>
+                <h5 style={{ margin: 0, color: 'var(--muted)' }}>Trash</h5>
+                <div style={{ display: 'flex', gap: 12, alignItems: 'center', justifyContent: 'flex-start', flexWrap: 'wrap' }}>
+                  <label style={{ color: 'var(--muted)', minWidth: 160 }}>Auto-empty after</label>
+                  <select
+                    aria-label="auto empty trash after"
+                    value={String(pendingTrashAutoEmptyDays)}
+                    onChange={(e) => {
+                      const v = Number(e.target.value);
+                      setPendingTrashAutoEmptyDays(Number.isFinite(v) ? Math.max(0, Math.trunc(v)) : 0);
+                    }}
+                  >
+                    <option value="0">Never</option>
+                    <option value="7">7 days</option>
+                    <option value="14">14 days</option>
+                    <option value="30">30 days</option>
+                    <option value="60">60 days</option>
+                    <option value="90">90 days</option>
+                    <option value="180">180 days</option>
+                  </select>
+                  <span style={{ color: 'var(--muted)', fontSize: 13 }}>Trashed notes will be permanently deleted after this period.</span>
+                </div>
+                <div style={{ height: 10 }} />
+                <div style={{ display: 'flex', gap: 12, alignItems: 'center', justifyContent: 'flex-start', flexWrap: 'wrap' }}>
+                  <label style={{ color: 'var(--muted)', minWidth: 160 }}>Actions</label>
+                  <button
+                    className="btn"
+                    type="button"
+                    onClick={emptyTrashNow}
+                    disabled={emptyingTrashNow || !(auth as any)?.token}
+                    style={{ borderColor: 'rgba(255,90,90,0.35)' }}
+                    title="Permanently delete all trashed notes"
+                  >
+                    {emptyingTrashNow ? 'Emptying…' : 'Empty trash now'}
+                  </button>
+                  <span style={{ color: 'var(--muted)', fontSize: 13 }}>Deletes everything currently in Trash.</span>
+                </div>
+              </div>
+              <div style={{ marginTop: 16, display: 'flex', gap: 8, justifyContent: 'flex-start' }}>
+                <button className="btn" type="button" onClick={() => setActiveSection(null)}>Back</button>
+                <button className="btn" type="button" onClick={onSave}>Save</button>
+                <span style={{ flex: 1 }} />
+                {(auth?.user as any)?.role === 'admin' && <button className="btn" type="button" onClick={() => setShowInvite(true)}>Send Invite</button>}
+                <button className="btn" type="button" onClick={() => { try { onClose(); } catch {} try { auth?.logout?.(); } catch {} }}>Sign out</button>
+              </div>
+            </div>
           ) : activeSection === 'colors' ? (
             <div>
               {!isPhone && <button className="btn" type="button" onClick={() => setActiveSection(null)} aria-label="Back">← Back</button>}
@@ -562,6 +662,7 @@ export default function PreferencesModal({ onClose }: { onClose: () => void }) {
           )}
         </div>
       </div>
+      {showUserMgmt && <UserManagementModal onClose={() => setShowUserMgmt(false)} />}
       {showInvite && <SettingsModal onClose={() => setShowInvite(false)} />}
     </div>
   );

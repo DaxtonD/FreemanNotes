@@ -13,6 +13,8 @@ model User {
   name           String?
   passwordHash   String?
   role           String         @default("user")
+  // Trash retention (0 = never auto-empty)
+  trashAutoEmptyDays Int         @default(0)
   fontFamily     String?        @default("Calibri, system-ui, Arial, sans-serif")
   checkboxBg     String?
   checkboxBorder String?
@@ -116,7 +118,13 @@ model Note {
   ord           Int            @default(0)
   pinned        Boolean        @default(false)
   archived      Boolean        @default(false)
+  // Trash (soft delete)
+  trashedAt     DateTime?
   cardSpan      Int?           @default(1) // number of columns to span in grid (1, 2, or 3)
+  // Reminders (shared per-note): due datetime and when to notify.
+  reminderDueAt DateTime?
+  reminderOffsetMinutes Int    @default(0)
+  reminderAt    DateTime?
   ownerId       Int
   createdAt     DateTime       @default(now())
   updatedAt     DateTime       @updatedAt
@@ -129,6 +137,9 @@ model Note {
   noteCollections NoteCollection[]
 
   @@index([ownerId])
+  @@index([ownerId, trashedAt])
+  @@index([ownerId, reminderAt])
+  @@index([ownerId, reminderDueAt])
 }
 
 model Collection {

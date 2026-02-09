@@ -12,7 +12,7 @@ import { faPalette, faUsers, faTag, faFolder } from '@fortawesome/free-solid-svg
 import LabelsDialog from "./LabelsDialog";
 import ColorPalette from "./ColorPalette";
 import ImageDialog from "./ImageDialog";
-import ReminderPicker from "./ReminderPicker";
+import ReminderPicker, { type ReminderDraft } from "./ReminderPicker";
 import * as Y from 'yjs';
 import { WebsocketProvider } from 'y-websocket';
 import { Editor } from '@tiptap/core';
@@ -103,6 +103,10 @@ export default function NoteCard({
       setImages(next);
     } catch {}
   }, [note.id, (note as any).images]);
+
+  React.useEffect(() => {
+    try { setArchived(!!(note as any).archived); } catch {}
+  }, [note.id, (note as any).archived]);
 
   function notifyImages(next: Array<{ id: number; url: string }>) {
     try { (onChange as any)?.({ type: 'images', noteId: note.id, images: next }); } catch {}
@@ -660,23 +664,117 @@ export default function NoteCard({
     }
   }
 
-  function onSetReminder(iso?: string | null) {
+  async function onConfirmReminder(draft: ReminderDraft) {
     setShowReminderPicker(false);
-    if (iso) window.alert(`Reminder set (UI-only): ${iso}`);
+    try {
+      // Request permission while we still have a user gesture.
+      try {
+        if (typeof Notification !== 'undefined' && Notification.permission === 'default') {
+          await Notification.requestPermission();
+        }
+      } catch {}
+
+      const res = await fetch(`/api/notes/${note.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', Authorization: token ? `Bearer ${token}` : '' },
+        body: JSON.stringify({ reminderDueAt: draft.dueAtIso, reminderOffsetMinutes: draft.offsetMinutes }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      const data = await res.json();
+      const updated = data?.note || {};
+      try {
+        (onChange as any)?.({
+          type: 'reminder',
+          noteId: Number(note.id),
+          reminderDueAt: updated.reminderDueAt ?? draft.dueAtIso,
+          reminderOffsetMinutes: (typeof updated.reminderOffsetMinutes === 'number') ? updated.reminderOffsetMinutes : draft.offsetMinutes,
+          reminderAt: updated.reminderAt ?? null,
+        });
+      } catch {
+        onChange && onChange();
+      }
+    } catch (err) {
+      console.error(err);
+      window.alert('Failed to set reminder');
+    }
   }
 
-  function toggleArchive() {
-    const next = !archived;
-    setArchived(next);
-    // call API to update
-    fetch(`/api/notes/${note.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json', Authorization: token ? `Bearer ${token}` : '' }, body: JSON.stringify({ archived: next }) })
-      .then(() => onChange && onChange())
-      .catch((e) => { console.error(e); window.alert('Failed to archive note'); });
+  async function onClearReminder() {
+    setShowReminderPicker(false);
+    try {
+      const res = await fetch(`/api/notes/${note.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', Authorization: token ? `Bearer ${token}` : '' },
+        body: JSON.stringify({ reminderDueAt: null }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      try { (onChange as any)?.({ type: 'reminder', noteId: Number(note.id), reminderDueAt: null, reminderAt: null }); }
+      catch { onChange && onChange(); }
+    } catch (err) {
+      console.error(err);
+      window.alert('Failed to clear reminder');
+    }
   }
+
+  async function toggleArchive() {
+    const next = !archived;
+    if (next) {
+      const ok = window.confirm('Archive this note?');
+      if (!ok) return;
+    }
+
+    const prev = archived;
+    setArchived(next);
+    try {
+      const res = await fetch(`/api/notes/${note.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', Authorization: token ? `Bearer ${token}` : '' },
+        body: JSON.stringify({ archived: next }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      try { (onChange as any)?.({ type: 'archive', noteId: Number(note.id), archived: next }); } catch { onChange && onChange(); }
+    } catch (e) {
+      console.error(e);
+      setArchived(prev);
+      window.alert('Failed to archive note');
+    }
+  }
+
+  const isTrashed = !!((note as any)?.trashedAt);
+  const ownerId = (typeof (note as any).owner?.id === 'number' ? Number((note as any).owner.id) : undefined);
+  const currentUserId = (user && (user as any).id) ? Number((user as any).id) : undefined;
+  const isOwner = !!(ownerId && currentUserId && ownerId === currentUserId);
+
+  async function onRestoreNote() {
+    if (!isOwner) {
+      window.alert('Only the note owner can restore this note.');
+      return;
+    }
+    try {
+      const res = await fetch(`/api/notes/${note.id}/restore`, { method: 'POST', headers: { Authorization: token ? `Bearer ${token}` : '' } });
+      if (!res.ok) throw new Error(await res.text());
+      onChange && onChange();
+    } catch (err) {
+      console.error(err);
+      window.alert('Failed to restore note');
+    }
+  }
+
   async function onDeleteNote() {
     try {
-      const ownerId = (typeof (note as any).owner?.id === 'number' ? Number((note as any).owner.id) : undefined);
-      const currentUserId = (user && (user as any).id) ? Number((user as any).id) : undefined;
+      if (isTrashed) {
+        if (!isOwner) {
+          window.alert('Only the note owner can permanently delete this note.');
+          return;
+        }
+        const ok = window.confirm('Delete this note permanently? This cannot be undone.');
+        if (!ok) return;
+        const res = await fetch(`/api/notes/${note.id}/purge`, { method: 'DELETE', headers: { Authorization: token ? `Bearer ${token}` : '' } });
+        if (!res.ok) throw new Error(await res.text());
+        onChange && onChange();
+        return;
+      }
+
       if (ownerId && currentUserId && ownerId !== currentUserId) {
         // Collaborator: remove self from this note
         const self = collaborators.find(c => typeof c.userId === 'number' && c.userId === currentUserId);
@@ -689,13 +787,13 @@ export default function NoteCard({
         window.alert('You are not the owner and could not find your collaborator entry to remove.');
         return;
       }
-      // Owner: delete note for everyone
+      // Owner: move note to trash for everyone
       const res = await fetch(`/api/notes/${note.id}`, { method: 'DELETE', headers: { Authorization: token ? `Bearer ${token}` : '' } });
       if (!res.ok) throw new Error(await res.text());
       onChange && onChange();
     } catch (err) {
       console.error(err);
-      window.alert('Failed to delete or leave note');
+      window.alert('Failed to move to trash or leave note');
     }
   }
   const [showLabels, setShowLabels] = useState(false);
@@ -704,6 +802,21 @@ export default function NoteCard({
     try {
       const updated = (noteItems || []).map((it:any, idx:number) => ({ id: it.id, content: it.content, checked: false, ord: typeof it.ord === 'number' ? it.ord : idx, indent: typeof it.indent === 'number' ? it.indent : 0 }));
       setNoteItems(updated);
+
+      // Also update the Yjs checklist so it persists across refresh and syncs to collaborators.
+      try {
+        const yarr = yarrayRef.current;
+        if (yarr && yarr.length > 0) {
+          for (let i = 0; i < yarr.length; i++) {
+            const m = yarr.get(i) as any;
+            if (!m) continue;
+            // Preserve id field if present (helps downstream DB sync assign IDs).
+            try { if (typeof m.get('id') === 'number') m.set('id', m.get('id')); } catch {}
+            try { m.set('checked', false); } catch {}
+          }
+        }
+      } catch {}
+
       const res = await fetch(`/api/notes/${note.id}/items`, { method: 'PUT', headers: { 'Content-Type': 'application/json', Authorization: token ? `Bearer ${token}` : '' }, body: JSON.stringify({ items: updated }) });
       if (!res.ok) throw new Error(await res.text());
       // no full reload needed; local state already reflects changes
@@ -716,6 +829,20 @@ export default function NoteCard({
     try {
       const updated = (noteItems || []).map((it:any, idx:number) => ({ id: it.id, content: it.content, checked: true, ord: typeof it.ord === 'number' ? it.ord : idx, indent: typeof it.indent === 'number' ? it.indent : 0 }));
       setNoteItems(updated);
+
+      // Also update the Yjs checklist so it persists across refresh and syncs to collaborators.
+      try {
+        const yarr = yarrayRef.current;
+        if (yarr && yarr.length > 0) {
+          for (let i = 0; i < yarr.length; i++) {
+            const m = yarr.get(i) as any;
+            if (!m) continue;
+            try { if (typeof m.get('id') === 'number') m.set('id', m.get('id')); } catch {}
+            try { m.set('checked', true); } catch {}
+          }
+        }
+      } catch {}
+
       const res = await fetch(`/api/notes/${note.id}/items`, { method: 'PUT', headers: { 'Content-Type': 'application/json', Authorization: token ? `Bearer ${token}` : '' }, body: JSON.stringify({ items: updated }) });
       if (!res.ok) throw new Error(await res.text());
       // no full reload needed; local state already reflects changes
@@ -867,6 +994,22 @@ export default function NoteCard({
       }}
     >
       <input ref={fileRef} type="file" accept="image/*" style={{ display: "none" }} />
+
+      {(() => {
+        const due = (note as any)?.reminderDueAt;
+        if (!due) return null;
+        const ms = Date.parse(String(due));
+        const d = Number.isFinite(ms) ? new Date(ms) : null;
+        const title = d ? `Reminder: ${d.toLocaleString()}` : 'Reminder set';
+        return (
+          <div className="note-reminder-bell" aria-hidden title={title}>
+            <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+              <path d="M12 22c1.1 0 2-.9 2-2h-4a2 2 0 0 0 2 2z"/>
+              <path d="M18 8V7a6 6 0 1 0-12 0v1c0 3.5-2 5-2 5h16s-2-1.5-2-5z"/>
+            </svg>
+          </div>
+        );
+      })()}
 
       {title && (
         <div
@@ -1209,10 +1352,24 @@ export default function NoteCard({
             </svg>
           </button>
 
-          <button className="tiny" onClick={toggleArchive} aria-label="Archive" title="Archive">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
-              <path d="M20.54 5.23L19.4 4H4.6L3.46 5.23 3 6v2h18V6l-.46-.77zM6 10v9h12V10H6zm3 2h6v2H9v-2z"/>
-            </svg>
+          <button
+            className="tiny"
+            onClick={toggleArchive}
+            aria-label={archived ? 'Unarchive' : 'Archive'}
+            title={archived ? 'Unarchive' : 'Archive'}
+          >
+            {archived ? (
+              // Unarchive icon (box with upward arrow)
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+                <path d="M20.54 5.23L19.4 4H4.6L3.46 5.23 3 6v2h18V6l-.46-.77zM6 10v9h12v-9H6z"/>
+                <path d="M12 17l-4-4h3V9h2v4h3l-4 4z"/>
+              </svg>
+            ) : (
+              // Archive icon
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+                <path d="M20.54 5.23L19.4 4H4.6L3.46 5.23 3 6v2h18V6l-.46-.77zM6 10v9h12V10H6zm3 2h6v2H9v-2z"/>
+              </svg>
+            )}
           </button>
 
           <button
@@ -1230,13 +1387,16 @@ export default function NoteCard({
         <MoreMenu
           anchorRef={noteRef}
           anchorPoint={moreAnchorPoint}
-          itemsCount={5}
+          itemsCount={isTrashed && isOwner ? 6 : 5}
           onClose={() => setShowMore(false)}
           onDelete={onDeleteNote}
+          deleteLabel={isTrashed ? 'Delete permanently' : (isOwner ? 'Move to trash' : 'Leave note')}
+          onRestore={isTrashed && isOwner ? onRestoreNote : undefined}
+          restoreLabel="Restore"
           onMoveToCollection={() => setShowMoveToCollection(true)}
           onAddLabel={onAddLabel}
-          onUncheckAll={onUncheckAll}
-          onCheckAll={onCheckAll}
+          onUncheckAll={(note.type === 'CHECKLIST' || (noteItems && noteItems.length > 0)) ? onUncheckAll : undefined}
+          onCheckAll={(note.type === 'CHECKLIST' || (noteItems && noteItems.length > 0)) ? onCheckAll : undefined}
           onSetWidth={onSetCardWidth}
         />
       )}
@@ -1301,7 +1461,15 @@ export default function NoteCard({
 
       {showImageDialog && <ImageDialog onClose={() => setShowImageDialog(false)} onAdd={onAddImageUrl} />}
 
-      {showReminderPicker && <ReminderPicker onClose={() => setShowReminderPicker(false)} onSet={onSetReminder} />}
+      {showReminderPicker && (
+        <ReminderPicker
+          onClose={() => setShowReminderPicker(false)}
+          onConfirm={onConfirmReminder}
+          onClear={((note as any)?.reminderDueAt ? onClearReminder : undefined)}
+          initialDueAtIso={(note as any)?.reminderDueAt || null}
+          initialOffsetMinutes={typeof (note as any)?.reminderOffsetMinutes === 'number' ? Number((note as any).reminderOffsetMinutes) : 30}
+        />
+      )}
       {showEditor && (
         <ChecklistEditor
           note={{ ...note, items: noteItems, images }}

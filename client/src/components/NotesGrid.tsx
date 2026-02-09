@@ -106,6 +106,7 @@ export default function NotesGrid({
   const [loading, setLoading] = useState(true);
   const [hasLoadedOnce, setHasLoadedOnce] = useState(false);
   const notesRef = useRef<any[]>([]);
+  const [emptyingTrash, setEmptyingTrash] = useState(false);
 
   // Auto-detected layout bucket.
   // "Phone" here means small viewport + touch-first; tablets keep the normal responsive layout.
@@ -1151,6 +1152,24 @@ export default function NotesGrid({
     return Number.isFinite(t) ? t : 0;
   }
 
+  function isSameLocalDay(a: Date, b: Date): boolean {
+    return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+  }
+
+  function startOfLocalDayMs(d: Date): number {
+    const x = new Date(d);
+    x.setHours(0, 0, 0, 0);
+    return x.getTime();
+  }
+
+  function addDaysMs(ms: number, days: number): number {
+    return ms + (days * 24 * 60 * 60 * 1000);
+  }
+
+  function reminderDueMs(n: any): number {
+    return parseDateMaybe((n as any)?.reminderDueAt);
+  }
+
   function applySort(list: any[]): any[] {
     const cfg = sortConfig || DEFAULT_SORT_CONFIG;
     if (cfg.sortKey === 'default') return list;
@@ -1162,6 +1181,17 @@ export default function NotesGrid({
       }
       if (cfg.sortKey === 'updatedAt') {
         return (parseDateMaybe(a.updatedAt) - parseDateMaybe(b.updatedAt)) * dir;
+      }
+      if (cfg.sortKey === 'reminderDueAt') {
+        const ra = reminderDueMs(a);
+        const rb = reminderDueMs(b);
+        // Notes without reminders should sink to bottom in reminder view.
+        if (!ra && !rb) return 0;
+        if (!ra) return 1;
+        if (!rb) return -1;
+        if (ra !== rb) return (ra - rb) * dir;
+        // stable-ish fallback
+        return (parseDateMaybe(a.createdAt) - parseDateMaybe(b.createdAt)) * -1;
       }
       if (cfg.sortKey === 'title') {
         const ta = String(a.title || '').trim();
@@ -1272,6 +1302,20 @@ export default function NotesGrid({
           const msg = JSON.parse(String(ev.data || '{}'));
           if (!msg || !msg.type) return;
           switch (msg.type) {
+            case 'note-title-changed': {
+              const payload = msg.payload || {};
+              const noteId = Number(payload.noteId);
+              if (!Number.isFinite(noteId)) break;
+              const title = (typeof payload.title === 'string') ? String(payload.title) : (payload.title == null ? null : String(payload.title));
+              const updatedAt = (typeof payload.updatedAt === 'string') ? String(payload.updatedAt) : null;
+              setNotes((s) => s.map((n) => {
+                if (Number(n.id) !== noteId) return n;
+                const next: any = { ...n, title: (title == null ? null : title) };
+                if (updatedAt) next.updatedAt = updatedAt;
+                return next;
+              }));
+              break;
+            }
             case 'note-created':
               // Another session for this user created a note
               load();
@@ -1317,6 +1361,29 @@ export default function NotesGrid({
               }
               break;
             }
+            case 'note-trashed': {
+              const payload = msg.payload || {};
+              const noteId = Number(payload.noteId);
+              const trashedAt = (typeof payload.trashedAt === 'string') ? String(payload.trashedAt) : null;
+              if (Number.isFinite(noteId)) {
+                setNotes((s) => s.map((n) => {
+                  if (Number(n.id) !== noteId) return n;
+                  return { ...n, trashedAt: trashedAt || new Date().toISOString() };
+                }));
+              }
+              break;
+            }
+            case 'note-restored': {
+              const payload = msg.payload || {};
+              const noteId = Number(payload.noteId);
+              if (Number.isFinite(noteId)) {
+                setNotes((s) => s.map((n) => {
+                  if (Number(n.id) !== noteId) return n;
+                  return { ...n, trashedAt: null };
+                }));
+              }
+              break;
+            }
             case 'note-images-changed': {
               const payload = msg.payload || {};
               const noteId = Number(payload.noteId);
@@ -1339,6 +1406,89 @@ export default function NotesGrid({
               if (!Number.isFinite(noteId)) break;
               const color = (typeof payload.color === 'string') ? String(payload.color) : '';
               applyColorToNote(noteId, color);
+              break;
+            }
+            case 'note-reminder-changed': {
+              const payload = msg.payload || {};
+              const noteId = Number(payload.noteId);
+              if (!Number.isFinite(noteId)) break;
+              const reminderDueAt = (typeof payload.reminderDueAt === 'string') ? String(payload.reminderDueAt) : null;
+              const reminderOffsetMinutes = (typeof payload.reminderOffsetMinutes === 'number') ? Number(payload.reminderOffsetMinutes) : null;
+              setNotes((s) => s.map((n) => {
+                if (Number(n.id) !== noteId) return n;
+                return {
+                  ...n,
+                  reminderDueAt,
+                  reminderOffsetMinutes: (reminderOffsetMinutes === null ? (n as any).reminderOffsetMinutes : reminderOffsetMinutes),
+                };
+              }));
+              break;
+            }
+            case 'note-labels-changed': {
+              const payload = msg.payload || {};
+              const noteId = Number(payload.noteId);
+              if (!Number.isFinite(noteId)) break;
+              const labels = Array.isArray(payload.labels) ? payload.labels : [];
+              applyLabelsToNote(noteId, labels as any);
+              break;
+            }
+            case 'note-items-changed': {
+              const payload = msg.payload || {};
+              const noteId = Number(payload.noteId);
+              if (!Number.isFinite(noteId)) break;
+              const rawItems = Array.isArray(payload.items) ? payload.items : [];
+              const items = rawItems
+                .map((it: any, idx: number) => ({
+                  id: Number(it?.id),
+                  content: String(it?.content || ''),
+                  checked: !!it?.checked,
+                  indent: (typeof it?.indent === 'number' ? Number(it.indent) : 0),
+                  ord: (typeof it?.ord === 'number' ? Number(it.ord) : idx),
+                }))
+                .filter((it: any) => Number.isFinite(it.id))
+                .sort((a: any, b: any) => (a.ord || 0) - (b.ord || 0));
+              setNotes((s: any[]) => s.map((n: any) => {
+                if (Number(n.id) !== noteId) return n;
+                return { ...n, items };
+              }));
+              break;
+            }
+            case 'collab-added': {
+              const payload = msg.payload || {};
+              const noteId = Number(payload.noteId);
+              if (!Number.isFinite(noteId)) break;
+              const c = payload.collaborator || null;
+              if (!c) break;
+              const collabId = Number(c.collabId);
+              const userId = Number(c.userId);
+              const email = (typeof c.email === 'string') ? String(c.email) : '';
+              const name = (typeof c.name === 'string' ? String(c.name) : (c.name == null ? null : String(c.name)));
+              const userImageUrl = (typeof c.userImageUrl === 'string' ? String(c.userImageUrl) : (c.userImageUrl == null ? null : String(c.userImageUrl)));
+              const role = (typeof c.role === 'string' ? String(c.role) : null);
+              if (!Number.isFinite(userId) || !email) break;
+              setNotes((s) => s.map((n: any) => {
+                if (Number(n.id) !== noteId) return n;
+                const prevCols = Array.isArray(n.collaborators) ? n.collaborators : [];
+                const already = prevCols.some((pc: any) => {
+                  const u = (pc && (pc.user || {}));
+                  const uid = (typeof u.id === 'number' ? Number(u.id) : (typeof pc.userId === 'number' ? Number(pc.userId) : NaN));
+                  return Number(uid) === Number(userId);
+                });
+                if (already) return n;
+                const nextCols = prevCols.concat([{ id: (Number.isFinite(collabId) ? collabId : Date.now()), userId, role: role || 'editor', user: { id: userId, email, name: (name == null ? undefined : name), userImageUrl: (userImageUrl == null ? undefined : userImageUrl) } }]);
+                return { ...n, collaborators: nextCols };
+              }));
+              break;
+            }
+            case 'note-archive-changed': {
+              const payload = msg.payload || {};
+              const noteId = Number(payload.noteId);
+              if (!Number.isFinite(noteId)) break;
+              const archived = !!payload.archived;
+              setNotes((s) => s.map((n) => {
+                if (Number(n.id) !== noteId) return n;
+                return { ...n, archived };
+              }));
               break;
             }
             case 'note-collections-changed': {
@@ -1767,6 +1917,54 @@ export default function NotesGrid({
       return false;
     };
 
+    const matchesSmartFilter = (n: any): boolean => {
+      const cfg = sortConfig || DEFAULT_SORT_CONFIG;
+      const key = cfg.smartFilter;
+      const isTrashed = !!(n && (n as any).trashedAt);
+      const isArchived = !!(n && (n as any).archived);
+      // Trash visibility is orthogonal to other smart filters.
+      if (key === 'trash') return isTrashed;
+      if (isTrashed) return false;
+      if (key === 'archive') return isArchived;
+      if (isArchived) return false;
+      if (!key || key === 'none') return true;
+
+      if (key === 'remindersAll') {
+        return reminderDueMs(n) > 0;
+      }
+
+      // Reminder window filters
+      const dueMs = reminderDueMs(n);
+      if (!dueMs) return false;
+      const due = new Date(dueMs);
+      const now = new Date();
+
+      if (key === 'remindersToday') {
+        return isSameLocalDay(due, now);
+      }
+
+      const thisWeekStart = startOfWeekMs(now);
+      const nextWeekStart = addDaysMs(thisWeekStart, 7);
+      const weekAfterStart = addDaysMs(thisWeekStart, 14);
+
+      if (key === 'remindersThisWeek') {
+        return dueMs >= thisWeekStart && dueMs < nextWeekStart;
+      }
+      if (key === 'remindersNextWeek') {
+        return dueMs >= nextWeekStart && dueMs < weekAfterStart;
+      }
+      if (key === 'remindersNextMonth') {
+        const startNextMonth = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+        const startMonthAfter = new Date(now.getFullYear(), now.getMonth() + 2, 1);
+        const a = startNextMonth.getTime();
+        const b = startMonthAfter.getTime();
+        return dueMs >= a && dueMs < b;
+      }
+
+      // Unknown smart filter keys: don't filter.
+      return true;
+    };
+
     const matchesCollection = (n: any): boolean => {
       if (colId == null || !Number.isFinite(colId)) return true;
       const viewerCollections = Array.isArray(n.viewerCollections) ? n.viewerCollections : [];
@@ -1804,8 +2002,8 @@ export default function NotesGrid({
       return false;
     };
 
-    const pinnedRaw = notes.filter(n => n.pinned).filter(matchesLabels).filter(matchesCollection).filter(matchesCollaborator).filter(matchesSearch);
-    const othersRaw = notes.filter(n => !n.pinned).filter(matchesLabels).filter(matchesCollection).filter(matchesCollaborator).filter(matchesSearch);
+    const pinnedRaw = notes.filter(n => n.pinned).filter(matchesLabels).filter(matchesCollection).filter(matchesCollaborator).filter(matchesSearch).filter(matchesSmartFilter);
+    const othersRaw = notes.filter(n => !n.pinned).filter(matchesLabels).filter(matchesCollection).filter(matchesCollaborator).filter(matchesSearch).filter(matchesSmartFilter);
     const pinnedSorted = applySort(pinnedRaw);
     const othersSorted = applySort(othersRaw);
     return {
@@ -1920,10 +2118,17 @@ export default function NotesGrid({
     }
     if (cfg.smartFilter && cfg.smartFilter !== 'none') {
       const smartLabel = (() => {
+        if (cfg.smartFilter === 'archive') return 'Archive';
         if (cfg.smartFilter === 'dueSoon') return 'Filter: Due soon';
         if (cfg.smartFilter === 'leastAccessed') return 'Filter: Least accessed';
         if (cfg.smartFilter === 'mostEdited') return 'Filter: Most edited';
         if (cfg.smartFilter === 'atRisk') return 'Filter: At risk';
+        if (cfg.smartFilter === 'trash') return 'Trash';
+        if (cfg.smartFilter === 'remindersAll') return 'Reminders: All';
+        if (cfg.smartFilter === 'remindersToday') return 'Reminders: Today';
+        if (cfg.smartFilter === 'remindersThisWeek') return 'Reminders: This week';
+        if (cfg.smartFilter === 'remindersNextWeek') return 'Reminders: Next week';
+        if (cfg.smartFilter === 'remindersNextMonth') return 'Reminders: Next month';
         return `Filter: ${String(cfg.smartFilter)}`;
       })();
       chips.push({
@@ -1936,13 +2141,80 @@ export default function NotesGrid({
     }
 
     const hasAnyFilter = chips.length > 0;
+    const title = colPath || (cfg.smartFilter === 'trash' ? 'Trash' : cfg.smartFilter === 'archive' ? 'Archive' : 'All notes');
     return {
-      title: colPath || 'All notes',
+      title,
       chips,
       show: true,
       hasAnyFilter,
     };
   }, [collectionStack, selectedLabelIds, selectedCollaboratorId, searchQuery, notes, sortConfig, onSetSelectedLabelIds, onSetSelectedCollaboratorId, onSetCollectionStack, onSetSearchQuery, onSortConfigChange]);
+
+  function applyReminderToNote(noteId: number, reminderDueAt: any, reminderOffsetMinutes?: any, reminderAt?: any) {
+    setNotes((s) => s.map((n) => {
+      if (Number(n?.id) !== Number(noteId)) return n;
+      const next: any = { ...n };
+      next.reminderDueAt = (reminderDueAt == null ? null : reminderDueAt);
+      if (typeof reminderOffsetMinutes === 'number') next.reminderOffsetMinutes = reminderOffsetMinutes;
+      if (typeof reminderOffsetMinutes === 'string' && reminderOffsetMinutes.length) {
+        const num = Number(reminderOffsetMinutes);
+        if (Number.isFinite(num)) next.reminderOffsetMinutes = num;
+      }
+      next.reminderAt = (reminderAt == null ? null : reminderAt);
+      return next;
+    }));
+  }
+
+  // Browser notifications for reminders (best-effort; works while app is open).
+  useEffect(() => {
+    const canNotify = typeof Notification !== 'undefined' && Notification.permission === 'granted';
+    if (!canNotify) return;
+
+    // Keep timers per note+timestamp.
+    const timers = new Map<string, number>();
+
+    const now = Date.now();
+    const horizonMs = 7 * 24 * 60 * 60 * 1000; // schedule up to 7 days out
+
+    for (const n of notes) {
+      const noteId = Number((n as any)?.id);
+      if (!Number.isFinite(noteId)) continue;
+      const reminderAtMs = parseDateMaybe((n as any)?.reminderAt) || (() => {
+        const due = parseDateMaybe((n as any)?.reminderDueAt);
+        const off = Number((n as any)?.reminderOffsetMinutes || 0);
+        return due ? (due - (off * 60 * 1000)) : 0;
+      })();
+      if (!reminderAtMs) continue;
+      if (reminderAtMs <= now) continue;
+      if (reminderAtMs > (now + horizonMs)) continue;
+
+      const key = `${noteId}:${reminderAtMs}`;
+
+      // De-dupe across reloads.
+      try {
+        const last = localStorage.getItem('reminder.fired.' + key);
+        if (last) continue;
+      } catch {}
+
+      const delay = Math.max(0, Math.min(reminderAtMs - now, 0x7fffffff));
+      const id = window.setTimeout(() => {
+        try { localStorage.setItem('reminder.fired.' + key, String(Date.now())); } catch {}
+        try {
+          const title = String((n as any)?.title || 'Reminder');
+          const dueMs = parseDateMaybe((n as any)?.reminderDueAt);
+          const body = dueMs ? `Due: ${new Date(dueMs).toLocaleString()}` : 'Reminder';
+          new Notification(title, { body });
+        } catch {}
+      }, delay) as any;
+      timers.set(key, id as any);
+    }
+
+    return () => {
+      for (const id of timers.values()) {
+        try { window.clearTimeout(id); } catch {}
+      }
+    };
+  }, [notes]);
 
   // Animate only column height adjustments after a swap.
   useEffect(() => {
@@ -2174,6 +2446,18 @@ export default function NotesGrid({
     }
     if (evt && evt.type === 'collections' && typeof evt.noteId === 'number' && Array.isArray(evt.collections)) {
       applyCollectionsToNote(evt.noteId, evt.collections);
+      return;
+    }
+    if (evt && evt.type === 'reminder' && typeof evt.noteId === 'number') {
+      applyReminderToNote(evt.noteId, (evt as any).reminderDueAt, (evt as any).reminderOffsetMinutes, (evt as any).reminderAt);
+      return;
+    }
+    if (evt && evt.type === 'archive' && typeof evt.noteId === 'number') {
+      const archived = !!(evt as any).archived;
+      setNotes((s) => s.map((n) => {
+        if (Number(n?.id) !== Number(evt.noteId)) return n;
+        return { ...n, archived };
+      }));
       return;
     }
     if (evt && evt.type === 'collection' && typeof evt.noteId === 'number') {
@@ -2533,6 +2817,38 @@ export default function NotesGrid({
 
   if (loading && !hasLoadedOnce) return <div>Loading notes…</div>;
 
+  const isTrashView = ((sortConfig || DEFAULT_SORT_CONFIG).smartFilter === 'trash');
+  const trashCount = (() => {
+    try { return (notes || []).filter((n: any) => !!(n as any)?.trashedAt).length; } catch { return 0; }
+  })();
+
+  async function onEmptyTrashNow() {
+    if (emptyingTrash) return;
+    if (!token) return;
+    if (!trashCount) return;
+    const ok = window.confirm(`Permanently delete ${trashCount} note${trashCount === 1 ? '' : 's'} from Trash? This cannot be undone.`);
+    if (!ok) return;
+    setEmptyingTrash(true);
+    try {
+      const res = await fetch('/api/trash/empty', { method: 'DELETE', headers: { Authorization: token ? `Bearer ${token}` : '' } });
+      if (!res.ok) throw new Error(await res.text());
+      const data = await res.json();
+      const ids: number[] = Array.isArray(data?.noteIds) ? data.noteIds.map((x: any) => Number(x)).filter((n: any) => Number.isFinite(n)) : [];
+      if (ids.length) {
+        const idSet = new Set<number>(ids);
+        setNotes((s) => (s || []).filter((n: any) => !idSet.has(Number((n as any)?.id))));
+      } else {
+        // Best-effort fallback: clear local trashed notes.
+        setNotes((s) => (s || []).filter((n: any) => !(n as any)?.trashedAt));
+      }
+    } catch (err) {
+      console.error('Failed to empty trash', err);
+      alert('Failed to empty trash');
+    } finally {
+      setEmptyingTrash(false);
+    }
+  }
+
   return (
     <section className="notes-area">
       <div className="take-note-sticky">
@@ -2543,6 +2859,18 @@ export default function NotesGrid({
             <div className="grid-context__text">
               <div className="grid-context__title-row">
                 <div className="grid-context__title">{gridContext.title}</div>
+                {isTrashView && (
+                  <button
+                    type="button"
+                    className="grid-context__clear grid-context__danger"
+                    onClick={onEmptyTrashNow}
+                    disabled={emptyingTrash || !trashCount || !token}
+                    aria-label="Empty trash"
+                    title="Permanently delete all trashed notes"
+                  >
+                    {emptyingTrash ? 'Emptying…' : 'Empty trash'}
+                  </button>
+                )}
                 {!!onClearAllFilters && !!(gridContext as any).hasAnyFilter && (
                   <button
                     type="button"
