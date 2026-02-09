@@ -1,12 +1,49 @@
 import React, { useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
+function MenuIcon({ children }: { children: React.ReactNode }) {
+  return (
+    <span className="more-item__icon" aria-hidden="true">
+      <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
+        {children}
+      </svg>
+    </span>
+  );
+}
+
+function MenuItem({
+  label,
+  icon,
+  onClick,
+  danger,
+}: {
+  label: string;
+  icon: React.ReactNode;
+  onClick: () => void;
+  danger?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      className={`more-item${danger ? " more-item--danger" : ""}`}
+      role="menuitem"
+      onClick={onClick}
+    >
+      {icon}
+      <span className="more-item__label">{label}</span>
+    </button>
+  );
+}
+
 export default function MoreMenu({
   anchorRef,
   anchorPoint, // optional click coordinate { x, y }
   itemsCount = 4,
   onClose,
   onDelete,
+  deleteLabel,
+  onRestore,
+  restoreLabel,
   onMoveToCollection,
   onAddLabel,
   onUncheckAll,
@@ -18,6 +55,9 @@ export default function MoreMenu({
   itemsCount?: number;
   onClose: () => void;
   onDelete: () => void;
+  deleteLabel?: string;
+  onRestore?: () => void;
+  restoreLabel?: string;
   onMoveToCollection?: () => void;
   onAddLabel: () => void;
   onUncheckAll?: () => void;
@@ -26,11 +66,41 @@ export default function MoreMenu({
 }) {
   const rootRef = useRef<HTMLDivElement | null>(null);
   const [style, setStyle] = useState<React.CSSProperties>({ position: "fixed", visibility: "hidden", left: 0, top: 0, zIndex: 10000 });
+  const [isSheet, setIsSheet] = useState(false);
+
+  useLayoutEffect(() => {
+    const decide = () => {
+      try {
+        const coarse = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
+        const narrow = window.innerWidth <= 760;
+        setIsSheet(!!(coarse || narrow));
+      } catch {
+        setIsSheet(window.innerWidth <= 760);
+      }
+    };
+    decide();
+    window.addEventListener('resize', decide);
+    return () => window.removeEventListener('resize', decide);
+  }, []);
 
   useLayoutEffect(() => {
     const anchor = anchorRef?.current;
     const node = rootRef.current;
     if (!node) return;
+
+    if (isSheet) {
+      // Bottom sheet: ignore anchor/click point and stick to bottom.
+      setStyle({
+        position: 'fixed',
+        left: 8,
+        right: 8,
+        bottom: 8,
+        top: 'auto',
+        visibility: 'visible',
+        zIndex: 10000,
+      });
+      return;
+    }
 
     const viewportPadding = 8;
     const measure = () => {
@@ -79,7 +149,7 @@ export default function MoreMenu({
       if (top + h > window.innerHeight - viewportPadding) top = Math.max(viewportPadding, window.innerHeight - h - viewportPadding);
       setStyle({ position: 'fixed', left, top, visibility: 'visible', zIndex: 10000, width: `${w}px`, height: `${h}px` });
     });
-  }, [anchorRef, anchorPoint, itemsCount]);
+  }, [anchorRef, anchorPoint, itemsCount, isSheet]);
 
   useLayoutEffect(() => {
     function onDoc(e: Event) {
@@ -95,25 +165,148 @@ export default function MoreMenu({
   }, [onClose]);
 
   const node = (
-    <div ref={rootRef} className="more-menu" style={style} role="dialog" aria-label="More options">
-      <button className="more-item" onClick={() => { onDelete(); onClose(); }}>Delete</button>
-      {onMoveToCollection && (
-        <button className="more-item" onClick={() => { onMoveToCollection(); onClose(); }}>Add to collection…</button>
+    <>
+      {isSheet && (
+        <div
+          className="more-menu-backdrop"
+          role="presentation"
+          onPointerDown={onClose}
+          onMouseDown={onClose}
+        />
       )}
-      <button className="more-item" onClick={() => { onAddLabel(); onClose(); }}>Add label</button>
-      {onUncheckAll && (
-        <button className="more-item" onClick={() => { onUncheckAll(); onClose(); }}>Uncheck all</button>
-      )}
-      {onCheckAll && (
-        <button className="more-item" onClick={() => { onCheckAll(); onClose(); }}>Check all</button>
-      )}
-      <hr className="more-sep" />
-      <div style={{ display: 'grid', gap: 6 }}>
-        <button className="more-item" onClick={() => { onSetWidth(1); onClose(); }}>Card width: Regular</button>
-        <button className="more-item" onClick={() => { onSetWidth(2); onClose(); }}>Card width: Double</button>
-        <button className="more-item" onClick={() => { onSetWidth(3); onClose(); }}>Card width: Triple</button>
+      <div
+        ref={rootRef}
+        className={`more-menu${isSheet ? ' more-menu--sheet' : ''}`}
+        style={style}
+        role="menu"
+        aria-label="More options"
+      >
+      <div className="more-group">
+        {onRestore && (
+          <MenuItem
+            label={restoreLabel || 'Restore'}
+            icon={
+              <MenuIcon>
+                <path d="M12 5a7 7 0 1 1-6.65 9.2.9.9 0 1 1 1.7-.6A5.2 5.2 0 1 0 12 6.8h-.02l.9.9a.9.9 0 0 1-1.27 1.27L9.2 6.54a.9.9 0 0 1 0-1.27l2.43-2.43a.9.9 0 1 1 1.27 1.27l-.93.93H12Z" />
+              </MenuIcon>
+            }
+            onClick={() => {
+              onRestore();
+              onClose();
+            }}
+          />
+        )}
+        <MenuItem
+          label={deleteLabel || 'Delete'}
+          danger
+          icon={
+            <MenuIcon>
+              <path d="M9 3h6l1 2h4a1 1 0 1 1 0 2h-1l-1 13a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 7H4a1 1 0 1 1 0-2h4l1-2Zm1.2 2h3.6l-.5-1h-2.6l-.5 1ZM7 7l1 13h8l1-13H7Zm3 3a1 1 0 0 1 1 1v7a1 1 0 1 1-2 0v-7a1 1 0 0 1 1-1Zm5 1v7a1 1 0 1 1-2 0v-7a1 1 0 1 1 2 0Z" />
+            </MenuIcon>
+          }
+          onClick={() => {
+            onDelete();
+            onClose();
+          }}
+        />
+        {onMoveToCollection && (
+          <MenuItem
+            label={'Add to collection…'}
+            icon={
+              <MenuIcon>
+                <path d="M3 6a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v1H3V6Zm0 5h20v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-7Zm10-1a1 1 0 0 1 1 1v1h1a1 1 0 1 1 0 2h-1v1a1 1 0 1 1-2 0v-1h-1a1 1 0 1 1 0-2h1v-1a1 1 0 0 1 1-1Z" />
+              </MenuIcon>
+            }
+            onClick={() => {
+              onMoveToCollection();
+              onClose();
+            }}
+          />
+        )}
+        <MenuItem
+          label={'Add label'}
+          icon={
+            <MenuIcon>
+              <path d="M3 12.2V6a3 3 0 0 1 3-3h6.2a3 3 0 0 1 2.12.88l6.8 6.8a3 3 0 0 1 0 4.24l-5.3 5.3a3 3 0 0 1-4.24 0l-6.8-6.8A3 3 0 0 1 3 12.2ZM6 5a1 1 0 0 0-1 1v6.2c0 .27.1.52.29.71l6.8 6.8a1 1 0 0 0 1.42 0l5.3-5.3a1 1 0 0 0 0-1.42l-6.8-6.8A1 1 0 0 0 12.2 5H6Zm1.5 1.5a1.25 1.25 0 1 1 0 2.5 1.25 1.25 0 0 1 0-2.5Z" />
+            </MenuIcon>
+          }
+          onClick={() => {
+            onAddLabel();
+            onClose();
+          }}
+        />
+        {onUncheckAll && (
+          <MenuItem
+            label={'Uncheck all'}
+            icon={
+              <MenuIcon>
+                <path d="M5 5h14a2 2 0 0 1 2 2v14H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2Zm0 2v12h14V7H5Zm4 2a1 1 0 0 1 1 1v3.5l.25-.25a1 1 0 1 1 1.42 1.42l-2 2a1 1 0 0 1-1.42 0l-2-2a1 1 0 1 1 1.42-1.42l.25.25V10a1 1 0 0 1 1-1Z" />
+              </MenuIcon>
+            }
+            onClick={() => {
+              onUncheckAll();
+              onClose();
+            }}
+          />
+        )}
+        {onCheckAll && (
+          <MenuItem
+            label={'Check all'}
+            icon={
+              <MenuIcon>
+                <path d="M5 5h14a2 2 0 0 1 2 2v14H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2Zm0 2v12h14V7H5Zm11.2 4.1a1 1 0 0 1 0 1.4l-4.5 4.5a1 1 0 0 1-1.4 0L8 14.7a1 1 0 1 1 1.4-1.4l1.6 1.6 3.8-3.8a1 1 0 0 1 1.4 0Z" />
+              </MenuIcon>
+            }
+            onClick={() => {
+              onCheckAll();
+              onClose();
+            }}
+          />
+        )}
       </div>
-    </div>
+
+      <hr className="more-sep" />
+
+      <div className="more-group">
+        <MenuItem
+          label={'Card width: Regular'}
+          icon={
+            <MenuIcon>
+              <path d="M6 5h12a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2Zm0 2v10h12V7H6Z" />
+            </MenuIcon>
+          }
+          onClick={() => {
+            onSetWidth(1);
+            onClose();
+          }}
+        />
+        <MenuItem
+          label={'Card width: Double'}
+          icon={
+            <MenuIcon>
+              <path d="M4 7a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V7Zm2 0v10h5V7H6Zm7 0v10h5V7h-5Z" />
+            </MenuIcon>
+          }
+          onClick={() => {
+            onSetWidth(2);
+            onClose();
+          }}
+        />
+        <MenuItem
+          label={'Card width: Triple'}
+          icon={
+            <MenuIcon>
+              <path d="M4 7a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V7Zm2 0v10h3V7H6Zm5 0v10h3V7h-3Zm5 0v10h3V7h-3Z" />
+            </MenuIcon>
+          }
+          onClick={() => {
+            onSetWidth(3);
+            onClose();
+          }}
+        />
+      </div>
+      </div>
+    </>
   );
 
   return createPortal(node, document.body);

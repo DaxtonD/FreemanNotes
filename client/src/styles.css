@@ -325,6 +325,20 @@ body{
   font-weight: 700;
   cursor: pointer;
 }
+.grid-context__clear:disabled{
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.grid-context__danger{
+  border-color: rgba(255, 90, 90, 0.45);
+  color: rgba(255, 190, 190, 1);
+}
+:root[data-theme="light"] .grid-context__danger{
+  border-color: rgba(176, 0, 32, 0.35);
+  color: rgba(176, 0, 32, 0.95);
+}
+.grid-context__danger:hover{ background: rgba(255, 90, 90, 0.12); }
+:root[data-theme="light"] .grid-context__danger:hover{ background: rgba(176, 0, 32, 0.08); }
 :root[data-theme="light"] .grid-context__clear{
   border-color: rgba(0,0,0,0.12);
   background: transparent;
@@ -1413,33 +1427,44 @@ button.chip:focus{outline:2px solid rgba(255,255,255,0.18);outline-offset:2px;}
     z-index: 45;
     background: var(--editor-surface, var(--card));
     box-shadow: 0 -10px 24px rgba(0,0,0,0.22);
+    gap: 16px;
   }
   :root[data-theme="light"] .editor-dialog .dialog-footer{
     box-shadow: 0 -10px 24px rgba(0,0,0,0.10);
   }
 
-  /* Editor footer icons: ~200% larger on mobile (note + checklist editors). */
+  /* Editor footer icons: touch-friendly, but not cramped. */
   .image-dialog.editor-dialog .dialog-footer .note-actions{
-    gap: 12px;
-    flex-wrap: wrap;
+    gap: 23px;
+    flex-wrap: nowrap;
     align-items: center;
+    overflow-x: auto;
+    overflow-y: hidden;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
   }
+
+  /* Mobile note editor is already fullscreen; no maximize toggle needed. */
+  .editor-dialog .dialog-header .toggle-maximize{ display: none; }
+  .image-dialog.editor-dialog .dialog-footer .note-actions::-webkit-scrollbar{ width: 0; height: 0; }
+
   .image-dialog.editor-dialog .dialog-footer .note-actions .tiny{
-    width: 36px;
-    height: 36px;
+    width: 54px;
+    height: 54px;
     display: inline-flex;
     align-items: center;
     justify-content: center;
     border-radius: 10px;
     padding: 0;
+    flex: 0 0 auto;
   }
   .image-dialog.editor-dialog .dialog-footer .note-actions .tiny svg,
   .image-dialog.editor-dialog .dialog-footer .note-actions .palette-svg{
-    width: 36px !important;
-    height: 36px !important;
+    width: 30px !important;
+    height: 30px !important;
   }
   .image-dialog.editor-dialog .dialog-footer .note-actions .tiny.editor-more{
-    font-size: 30px;
+    font-size: 26px;
     line-height: 1;
   }
 }
@@ -1523,25 +1548,38 @@ button.chip:focus{outline:2px solid rgba(255,255,255,0.18);outline-offset:2px;}
 :root[data-theme="light"] .prefs-item--danger{ color: #c23b3b; }
 
 /* User management modal */
-.user-mgmt{ width:min(900px,calc(100vw - 24px)); max-height:min(80vh,760px); }
+.user-mgmt{ width:min(900px,calc(100vw - 24px)); max-height:min(80vh,760px); overflow-x:hidden; font-size: 14px; }
 .user-mgmt__toolbar{ display:flex; gap:8px; align-items:center; }
 .user-mgmt__toolbar input{ flex:1; min-width:0; }
-.user-mgmt__list{ border:1px solid rgba(255,255,255,0.08); border-radius:10px; overflow:hidden; }
+.user-mgmt__list{ border:1px solid rgba(255,255,255,0.08); border-radius:10px; overflow:hidden; max-height:min(46vh, 420px); overflow-y:auto; -webkit-overflow-scrolling:touch; overscroll-behavior:contain; }
 :root[data-theme="light"] .user-mgmt__list{ border-color: rgba(0,0,0,0.10); }
 .user-mgmt__row{ display:grid; grid-template-columns: 1fr 160px 140px; gap:10px; align-items:center; padding:10px; border-top:1px solid rgba(255,255,255,0.06); }
 :root[data-theme="light"] .user-mgmt__row{ border-top-color: rgba(0,0,0,0.08); }
-.user-mgmt__row--head{ border-top:none; font-weight:700; color:var(--muted); background: rgba(255,255,255,0.03); }
-:root[data-theme="light"] .user-mgmt__row--head{ background: rgba(0,0,0,0.03); }
+.user-mgmt__row--head{ border-top:none; font-weight:700; color:var(--muted); background: var(--editor-surface, var(--card)); position: sticky; top: 0; z-index: 2; border-bottom: 1px solid rgba(255,255,255,0.08); }
+:root[data-theme="light"] .user-mgmt__row--head{ background: var(--editor-surface, #ffffff); border-bottom-color: rgba(0,0,0,0.10); }
 .user-mgmt__usercell{ display:flex; align-items:center; gap:10px; min-width:0; }
 .user-mgmt__avatar{ width:34px; height:34px; border-radius:50%; object-fit:cover; flex:0 0 auto; }
 .user-mgmt__email{ font-weight:700; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .user-mgmt__name{ font-size:12px; color:var(--muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.user-mgmt__rolecell{ display:flex; justify-content:flex-end; }
+.user-mgmt__actioncell{ display:flex; justify-content:flex-end; }
+.user-mgmt__delete{ min-width: 88px; }
 .user-mgmt__create{ border:1px solid rgba(255,255,255,0.08); border-radius:10px; padding:10px; }
 :root[data-theme="light"] .user-mgmt__create{ border-color: rgba(0,0,0,0.10); }
 .user-mgmt__createform{ margin-top:8px; display:grid; grid-template-columns: 1fr 1fr 1fr 160px 120px; gap:8px; }
 
 @media (max-width: 760px){
-  .user-mgmt__row{ grid-template-columns: 1fr; gap:8px; align-items:stretch; }
+  .user-mgmt{ font-size: 13px; }
+  .user-mgmt__row--head{ display:none; }
+  .user-mgmt__row{ grid-template-columns: 1fr auto auto; gap:8px; align-items:center; padding: 8px 10px; }
+  .user-mgmt__toolbar{ flex-direction: column; align-items: stretch; }
+  .user-mgmt__toolbar .btn{ width: 100%; font-size: 13px; padding: 7px 10px; }
+  .user-mgmt .image-url-input{ font-size: 13px; padding: 7px 10px; }
+  .user-mgmt__avatar{ width:28px; height:28px; }
+  .user-mgmt__email{ font-size: 12.5px; }
+  .user-mgmt__name{ display:none; }
+  .user-mgmt__rolecell .image-url-input{ width: 92px; padding: 6px 8px; }
+  .user-mgmt__delete{ min-width: 34px; width: 34px; padding: 6px 0; text-align:center; }
   .user-mgmt__createform{ grid-template-columns: 1fr; }
 }
 
@@ -1652,73 +1690,266 @@ button.chip:focus{outline:2px solid rgba(255,255,255,0.18);outline-offset:2px;}
   color: inherit;
 }
 
+/* Note reminder bell indicator */
+.note-reminder-bell{
+  position:absolute;
+  top:10px;
+  right:10px;
+  width:18px;
+  height:18px;
+  color: var(--muted);
+  opacity: 0.85;
+  pointer-events: none;
+}
+.note-reminder-bell svg{ width:100%; height:100%; display:block; }
+
 /* compact completed-toggle inside notes/editors */
 .completed-toggle { display:inline-flex; align-items:center; gap:8px; background:transparent; border:none; padding:6px; color:inherit; cursor:pointer; margin-bottom: var(--checklist-gap); }
 
 /* Reminder picker */
-.reminder-backdrop{position:fixed;inset:0;background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;z-index:60}
+.reminder-backdrop{
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10000;
+}
 .reminder-popover{
-  width: min(320px, var(--note-card-width));
+  width: min(360px, calc(100vw - 24px));
   background:#181818;   /* solid opaque background */
   color:#ffffff;        /* white text */
   border-radius:10px;
   padding:12px;
   border:1px solid rgba(255,255,255,0.04);
+  max-height: min(90vh, calc(100vh - 24px));
+  overflow: auto;
 }
 :root[data-theme="light"] .reminder-popover{
   background:#ffffff;
   color:#000000;
   border:1px solid rgba(0,0,0,0.08);
 }
-.reminder-popover input[type="date"],
-.reminder-popover input[type="time"] {
-  background:#1c1c1c;
-  color:#fff;
-  border:1px solid rgba(255,255,255,0.04);
-  padding:6px;
-  border-radius:6px;
+
+.reminder-popover--fancy{ width: min(720px, calc(100vw - 24px)); }
+.reminder-grid{ display:flex; gap:14px; margin-top:10px; }
+.reminder-field{ flex:1; min-width: 0; }
+.reminder-label{ font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+.reminder-actions{ display:flex; gap:8px; justify-content:flex-end; margin-top: 12px; }
+.reminder-summary{ margin-top: 10px; font-size: 12px; line-height: 1.35; }
+.reminder-summary .muted{ color: var(--muted); }
+
+/* react-datepicker theming (scoped to reminder modal) */
+.reminder-popover--fancy .react-datepicker{
+  border: 1px solid rgba(255,255,255,0.06);
+  border-radius: 10px;
+  background: #181818;
+  color: inherit;
+  font-family: inherit;
 }
-:root[data-theme="light"] .reminder-popover input[type="date"],
-:root[data-theme="light"] .reminder-popover input[type="time"]{
-  background:#f7f7f9;
-  color:#000000;
-  border:1px solid rgba(0,0,0,0.1);
+:root[data-theme="light"] .reminder-popover--fancy .react-datepicker{
+  border-color: rgba(0,0,0,0.10);
+  background: #ffffff;
+}
+.reminder-popover--fancy .react-datepicker__header{
+  background: rgba(255,255,255,0.06);
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+}
+:root[data-theme="light"] .reminder-popover--fancy .react-datepicker__header{
+  background: rgba(0,0,0,0.04);
+  border-bottom-color: rgba(0,0,0,0.10);
+}
+.reminder-popover--fancy .react-datepicker__current-month,
+.reminder-popover--fancy .react-datepicker-time__header,
+.reminder-popover--fancy .react-datepicker-year-header{
+  color: inherit;
+}
+.reminder-popover--fancy .react-datepicker__day-name,
+.reminder-popover--fancy .react-datepicker__day,
+.reminder-popover--fancy .react-datepicker__time-name{
+  color: inherit;
+}
+.reminder-popover--fancy .react-datepicker__day:hover,
+.reminder-popover--fancy .react-datepicker__time-list-item:hover{
+  background: rgba(255,255,255,0.06);
+}
+:root[data-theme="light"] .reminder-popover--fancy .react-datepicker__day:hover,
+:root[data-theme="light"] .reminder-popover--fancy .react-datepicker__time-list-item:hover{
+  background: rgba(0,0,0,0.06);
+}
+.reminder-popover--fancy .react-datepicker__day--selected,
+.reminder-popover--fancy .react-datepicker__day--keyboard-selected{
+  background: rgba(125, 211, 252, 0.25);
+  color: inherit;
+}
+.reminder-popover--fancy .react-datepicker__triangle{ display:none; }
+.reminder-popover--fancy .react-datepicker__navigation-icon::before{ border-color: var(--muted); }
+.reminder-popover--fancy .react-datepicker__time-container{
+  border-left: 1px solid rgba(255,255,255,0.06);
+}
+:root[data-theme="light"] .reminder-popover--fancy .react-datepicker__time-container{
+  border-left-color: rgba(0,0,0,0.10);
+}
+.reminder-popover--fancy .react-datepicker__time,
+.reminder-popover--fancy .react-datepicker__time-box,
+.reminder-popover--fancy .react-datepicker__time-list{
+  background: #181818;
+  color: inherit;
+}
+:root[data-theme="light"] .reminder-popover--fancy .react-datepicker__time,
+:root[data-theme="light"] .reminder-popover--fancy .react-datepicker__time-box,
+:root[data-theme="light"] .reminder-popover--fancy .react-datepicker__time-list{
+  background: #ffffff;
+}
+
+.reminder-popover--fancy .react-datepicker__time-container .react-datepicker__time,
+.reminder-popover--fancy .react-datepicker__time-container .react-datepicker__time .react-datepicker__time-box,
+.reminder-popover--fancy .react-datepicker__time-container .react-datepicker__time .react-datepicker__time-box ul.react-datepicker__time-list{
+  background: #181818;
+  color: inherit;
+}
+:root[data-theme="light"] .reminder-popover--fancy .react-datepicker__time-container .react-datepicker__time,
+:root[data-theme="light"] .reminder-popover--fancy .react-datepicker__time-container .react-datepicker__time .react-datepicker__time-box,
+:root[data-theme="light"] .reminder-popover--fancy .react-datepicker__time-container .react-datepicker__time .react-datepicker__time-box ul.react-datepicker__time-list{
+  background: #ffffff;
+  color: inherit;
+}
+
+.reminder-popover--fancy .react-datepicker__time-list-item{
+  background: transparent;
+  color: inherit;
+}
+
+.reminder-popover--fancy .react-datepicker__time-container .react-datepicker__time .react-datepicker__time-box ul.react-datepicker__time-list li.react-datepicker__time-list-item{
+  background: transparent;
+  color: inherit;
+}
+
+.reminder-popover--fancy .react-datepicker__time-list-item--selected{
+  background: rgba(125, 211, 252, 0.25) !important;
+  color: inherit !important;
+}
+
+.reminder-popover--fancy .react-datepicker__time-list{ scrollbar-color: rgba(255,255,255,0.15) transparent; }
+
+/* Safety net for non-inline poppers (and to beat card z-index/stacking contexts) */
+.reminder-popover--fancy .react-datepicker-popper,
+.reminder-popper{
+  z-index: 10001;
+}
+
+@media (max-width: 760px){
+  .reminder-popover--fancy{ width: min(520px, calc(100vw - 18px)); }
+  .reminder-grid{ flex-direction: column; }
+  .reminder-actions{ justify-content: stretch; }
+  .reminder-actions .btn{ flex:1; }
 }
 
 /* More menu (portal) */
+.more-menu-backdrop{
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.42);
+  z-index: 9999;
+  touch-action: none;
+}
+:root[data-theme="light"] .more-menu-backdrop{ background: rgba(0,0,0,0.22); }
+
+.more-menu--sheet{
+  border-radius: 18px;
+  padding-bottom: calc(10px + env(safe-area-inset-bottom));
+  transform-origin: 50% 100%;
+  animation: moreSheetIn 160ms cubic-bezier(.2,0,.2,1);
+}
+
+@keyframes moreSheetIn{
+  from{ transform: translateY(14px); opacity: 0; }
+  to{ transform: translateY(0); opacity: 1; }
+}
+
 .more-menu{
-  background:#232323; /* solid opaque background */
-  border-radius:8px;
-  padding:6px 8px;
-  box-shadow:0 6px 18px rgba(0,0,0,0.6);
-  display:flex;
-  flex-direction:column;
-  box-sizing:border-box;
-  color:#ffffff;
+  background: rgba(35,35,35,0.96);
+  border-radius: 14px;
+  padding: 10px;
+  box-shadow: 0 18px 50px rgba(0,0,0,0.62);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  box-sizing: border-box;
+  color: #ffffff;
+  border: 1px solid rgba(255,255,255,0.10);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  font-size: 15px;
+  min-width: 248px;
+  max-width: min(420px, calc(100vw - 16px));
+  max-height: min(70vh, 520px);
+  overflow: auto;
+  -webkit-overflow-scrolling: touch;
 }
 :root[data-theme="light"] .more-menu{
-  background:#ffffff;
-  color:#000000;
-  box-shadow:0 6px 18px rgba(0,0,0,0.15);
-  border:1px solid rgba(0,0,0,0.06);
+  background: rgba(255,255,255,0.98);
+  color: #000000;
+  box-shadow: 0 18px 50px rgba(0,0,0,0.18);
+  border: 1px solid rgba(0,0,0,0.10);
 }
+
+.more-group{ display: grid; gap: 4px; }
+
 .more-item{
   background:transparent;
   border:none;
-  color:#ffffff;
-  padding:6px 10px;
-  text-align:left;
-  cursor:pointer;
+  color: inherit;
+  padding: 10px 12px;
+  text-align: left;
+  cursor: pointer;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border-radius: 12px;
+  font-size: 15px;
+  line-height: 1.2;
+  min-height: 42px;
 }
+
+.more-item__icon{ width: 20px; height: 20px; display: inline-flex; align-items: center; justify-content: center; flex: 0 0 20px; opacity: 0.92; }
+.more-item__icon svg{ width: 20px; height: 20px; fill: currentColor; }
+.more-item__label{ flex: 1 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+.more-item--danger{ color: #ff7676; }
+:root[data-theme="light"] .more-item--danger{ color: #b30000; }
 
 /* ensure items are sized normally */
 .more-item { white-space: nowrap; }
 
-.more-item:hover{background:rgba(255,255,255,0.02);color:#fff}
-:root[data-theme="light"] .more-item{ color:#000000; }
-:root[data-theme="light"] .more-item:hover{ background: rgba(0,0,0,0.06); color: inherit; }
-.more-sep{ border:none; border-top:1px solid rgba(255,255,255,0.06); margin:6px 0; }
+.more-item:hover{ background: rgba(255,255,255,0.06); }
+.more-item:active{ transform: translateY(0.5px); }
+:root[data-theme="light"] .more-item:hover{ background: rgba(0,0,0,0.06); }
+.more-sep{ border:none; border-top:1px solid rgba(255,255,255,0.10); margin:0; }
 :root[data-theme="light"] .more-sep{ border-top-color: rgba(0,0,0,0.08); }
+
+@media (pointer: coarse), (max-width: 760px){
+  .more-menu{
+    min-width: min(92vw, 360px);
+    font-size: 16px;
+    border-radius: 16px;
+    padding: 12px;
+  }
+  .more-menu--sheet{
+    left: 10px !important;
+    right: 10px !important;
+    bottom: 10px !important;
+    top: auto !important;
+    width: auto !important;
+    max-width: none;
+    min-width: 0;
+  }
+  .more-item{ font-size: 16px; min-height: 46px; padding: 12px 14px; }
+  .more-item__icon{ width: 22px; height: 22px; flex-basis: 22px; }
+  .more-item__icon svg{ width: 22px; height: 22px; }
+}
 
 /* Collaborator modal */
 .collab-modal-backdrop{
@@ -1967,5 +2198,19 @@ button.chip:focus{outline:2px solid rgba(255,255,255,0.18);outline-offset:2px;}
 }
 .take-note-expanded .note-actions {
   justify-content: flex-end;
-  gap: 8px;
+  gap: 12px;
+}
+
+/* Phone: slightly larger/touch-friendly quick-create footer icons */
+@media (pointer: coarse) and (max-width: 720px) {
+  .take-note-expanded .note-actions .tiny{
+    width: 34px;
+    height: 34px;
+    border-radius: 10px;
+  }
+  .take-note-expanded .note-actions .tiny svg,
+  .take-note-expanded .note-actions .palette-svg{
+    width: 24px !important;
+    height: 24px !important;
+  }
 }

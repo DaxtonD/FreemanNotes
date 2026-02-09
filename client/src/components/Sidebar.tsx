@@ -29,6 +29,7 @@ export default function Sidebar({
   const [sortingOpen, setSortingOpen] = useState(false);
   const [filtersListOpen, setFiltersListOpen] = useState(false);
   const [groupingListOpen, setGroupingListOpen] = useState(false);
+  const [remindersOpen, setRemindersOpen] = useState(false);
 
   const [collectionsOpen, setCollectionsOpen] = useState(false);
   const [collections, setCollections] = useState<Array<{ id: number; name: string; parentId: number | null; hasChildren?: boolean; noteCount?: number }>>([]);
@@ -92,6 +93,7 @@ export default function Sidebar({
     try { setSortingOpen(false); } catch {}
     try { setFiltersListOpen(false); } catch {}
     try { setGroupingListOpen(false); } catch {}
+    try { setRemindersOpen(false); } catch {}
     // Clear label filters when returning to default view.
     try { onClearLabels && onClearLabels(); } catch {}
     // Return to root collections view.
@@ -106,48 +108,38 @@ export default function Sidebar({
   };
 
   const toggleLabelsOpen = () => {
-    setOpen((wasOpen) => {
-      const next = !wasOpen;
-      if (!next) {
-        // When Labels filter is collapsed, clear filters and return to default view.
-        try { onClearLabels && onClearLabels(); } catch {}
-        try { resetToDefault(); } catch {}
-      }
-      return next;
-    });
+    setOpen((wasOpen) => !wasOpen);
   };
 
   const toggleSortingOpen = () => {
-    setSortingOpen((wasOpen) => {
-      const next = !wasOpen;
-      if (!next) {
-        // When Sorting is collapsed/cleared, clear Sorting + Filters + Grouping + label filters.
-        try { resetToDefault(); } catch {}
-      }
-      return next;
-    });
+    setSortingOpen((wasOpen) => !wasOpen);
+  };
+
+  const toggleRemindersOpen = () => {
+    setRemindersOpen((wasOpen) => !wasOpen);
+  };
+
+  const setReminderFilter = (key: SmartFilterKey) => {
+    // Reminder views always sort by due date ascending.
+    try {
+      onSortConfigChange && onSortConfigChange({
+        ...sortConfig,
+        smartFilter: key,
+        sortKey: 'reminderDueAt' as any,
+        sortDir: 'asc',
+        groupBy: 'none',
+      });
+    } catch {
+      try { setSmartFilter(key); } catch {}
+    }
   };
 
   const toggleFiltersOpen = () => {
-    setFiltersListOpen((wasOpen) => {
-      const next = !wasOpen;
-      if (!next) {
-        // Clear filter state when the Filters section is collapsed.
-        try { setSmartFilter('none'); } catch {}
-      }
-      return next;
-    });
+    setFiltersListOpen((wasOpen) => !wasOpen);
   };
 
   const toggleGroupingOpen = () => {
-    setGroupingListOpen((wasOpen) => {
-      const next = !wasOpen;
-      if (!next) {
-        // Clear grouping when the Grouping section is collapsed.
-        try { setSort({ groupBy: 'none' }); } catch {}
-      }
-      return next;
-    });
+    setGroupingListOpen((wasOpen) => !wasOpen);
   };
 
   const currentParentId = (Array.isArray(collectionStack) && collectionStack.length)
@@ -304,8 +296,58 @@ export default function Sidebar({
               <path d="M18 8V7a6 6 0 1 0-12 0v1c0 3.5-2 5-2 5h16s-2-1.5-2-5z"/>
             </svg>
           </span>
-          {!collapsed && <span className="text">Reminders</span>}
+          {!collapsed && (
+            <span className="text" style={{ cursor: 'pointer' }} onClick={toggleRemindersOpen}>
+              <span className="sidebar-indicator leading"><span className={"chev" + (remindersOpen ? " open" : "")}>▶</span></span>
+              Reminders
+            </span>
+          )}
         </div>
+        {remindersOpen && !collapsed && (
+          <div style={{ paddingLeft: 10 }}>
+            <div
+              className="sidebar-item"
+              style={{ cursor: 'pointer', fontWeight: sortConfig.smartFilter === 'remindersAll' ? 700 : undefined }}
+              onClick={() => setReminderFilter('remindersAll')}
+              title="All notes with reminders"
+            >
+              <span className="text">All</span>
+            </div>
+            <div
+              className="sidebar-item"
+              style={{ cursor: 'pointer', fontWeight: sortConfig.smartFilter === 'remindersToday' ? 700 : undefined }}
+              onClick={() => setReminderFilter('remindersToday')}
+              title="Reminders due today"
+            >
+              <span className="text">Today</span>
+            </div>
+            <div
+              className="sidebar-item"
+              style={{ cursor: 'pointer', fontWeight: sortConfig.smartFilter === 'remindersThisWeek' ? 700 : undefined }}
+              onClick={() => setReminderFilter('remindersThisWeek')}
+              title="Reminders due this week"
+            >
+              <span className="text">This week</span>
+            </div>
+            <div
+              className="sidebar-item"
+              style={{ cursor: 'pointer', fontWeight: sortConfig.smartFilter === 'remindersNextWeek' ? 700 : undefined }}
+              onClick={() => setReminderFilter('remindersNextWeek')}
+              title="Reminders due next week"
+            >
+              <span className="text">Next week</span>
+            </div>
+            <div
+              className="sidebar-item"
+              style={{ cursor: 'pointer', fontWeight: sortConfig.smartFilter === 'remindersNextMonth' ? 700 : undefined }}
+              onClick={() => setReminderFilter('remindersNextMonth')}
+              title="Reminders due next month"
+            >
+              <span className="text">Next month</span>
+            </div>
+            <button className="btn" style={{ marginTop: 6, width: '100%' }} onClick={() => { try { setSmartFilter('none'); } catch {}; try { setRemindersOpen(false); } catch {} }}>Clear</button>
+          </div>
+        )}
         <div className="sidebar-item" onClick={toggleLabelsOpen} style={{ cursor: 'pointer' }} title="Labels">
           <span className="icon" aria-hidden>
             <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden>
@@ -497,7 +539,27 @@ export default function Sidebar({
             </div>
           </div>
         )}
-        <div className="sidebar-item" title="Archive">
+        <div
+          className="sidebar-item"
+          title="Archive"
+          style={{ cursor: 'pointer', fontWeight: sortConfig.smartFilter === 'archive' ? 700 : undefined }}
+          onClick={() => {
+            try { onClearLabels && onClearLabels(); } catch {}
+            try { onCollectionStackChange && onCollectionStackChange([]); } catch {}
+            try {
+              onSortConfigChange && onSortConfigChange({
+                ...sortConfig,
+                smartFilter: 'archive',
+                sortKey: 'updatedAt' as any,
+                sortDir: 'desc',
+                groupBy: 'none',
+              });
+            } catch {
+              try { setSmartFilter('archive' as any); } catch {}
+            }
+            try { onRequestClose && onRequestClose(); } catch {}
+          }}
+        >
           <span className="icon" aria-hidden>
             <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden>
               <path d="M20.54 5.23L19.4 4H4.6L3.46 5.23 3 6v2h18V6l-.46-.77zM6 10v9h12V10H6zm3 2h6v2H9v-2z"/>
@@ -505,7 +567,27 @@ export default function Sidebar({
           </span>
           {!collapsed && <span className="text">Archive</span>}
         </div>
-        <div className="sidebar-item" title="Bin">
+        <div
+          className="sidebar-item"
+          title="Trash"
+          style={{ cursor: 'pointer', fontWeight: sortConfig.smartFilter === 'trash' ? 700 : undefined }}
+          onClick={() => {
+            try { onClearLabels && onClearLabels(); } catch {}
+            try { onCollectionStackChange && onCollectionStackChange([]); } catch {}
+            try {
+              onSortConfigChange && onSortConfigChange({
+                ...sortConfig,
+                smartFilter: 'trash',
+                sortKey: 'updatedAt' as any,
+                sortDir: 'desc',
+                groupBy: 'none',
+              });
+            } catch {
+              try { setSmartFilter('trash'); } catch {}
+            }
+            try { onRequestClose && onRequestClose(); } catch {}
+          }}
+        >
           <span className="icon" aria-hidden>
             <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden>
               <path d="M4 7h16"/>
@@ -513,7 +595,7 @@ export default function Sidebar({
               <path d="M9 7V5h6v2"/>
             </svg>
           </span>
-          {!collapsed && <span className="text">Bin</span>}
+          {!collapsed && <span className="text">Trash</span>}
         </div>
       </div>
     </aside>

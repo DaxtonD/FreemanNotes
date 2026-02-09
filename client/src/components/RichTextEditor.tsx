@@ -11,7 +11,7 @@ import Underline from '@tiptap/extension-underline';
 import * as Y from 'yjs';
 import { WebsocketProvider } from 'y-websocket';
 import ColorPalette from './ColorPalette';
-import ReminderPicker from './ReminderPicker';
+import ReminderPicker, { type ReminderDraft } from './ReminderPicker';
 import CollaboratorModal from './CollaboratorModal';
 import ImageDialog from './ImageDialog';
 import ImageLightbox from './ImageLightbox';
@@ -58,6 +58,8 @@ export default function RichTextEditor({ note, onClose, onSaved, noteBg, onImage
 
   const [title, setTitle] = React.useState<string>(note.title || '');
   const [maximized, setMaximized] = React.useState<boolean>(false);
+  const lastSavedTitleRef = React.useRef<string>(note.title || '');
+  const titleSaveTimerRef = React.useRef<number | null>(null);
   const [showPalette, setShowPalette] = React.useState(false);
   const [showReminderPicker, setShowReminderPicker] = React.useState(false);
   const [showCollaborator, setShowCollaborator] = React.useState(false);
@@ -72,11 +74,79 @@ export default function RichTextEditor({ note, onClose, onSaved, noteBg, onImage
   const syncedRef = React.useRef<boolean>(false);
   const dirtyRef = React.useRef<boolean>(false);
 
+  async function onConfirmReminder(draft: ReminderDraft) {
+    setShowReminderPicker(false);
+    try {
+      try {
+        if (typeof Notification !== 'undefined' && Notification.permission === 'default') {
+          await Notification.requestPermission();
+        }
+      } catch {}
+
+      const res = await fetch(`/api/notes/${note.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', Authorization: token ? `Bearer ${token}` : '' },
+        body: JSON.stringify({ reminderDueAt: draft.dueAtIso, reminderOffsetMinutes: draft.offsetMinutes }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+    } catch (err) {
+      console.error(err);
+      window.alert('Failed to set reminder');
+    }
+  }
+
+  async function onClearReminder() {
+    setShowReminderPicker(false);
+    try {
+      const res = await fetch(`/api/notes/${note.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', Authorization: token ? `Bearer ${token}` : '' },
+        body: JSON.stringify({ reminderDueAt: null }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+    } catch (err) {
+      console.error(err);
+      window.alert('Failed to clear reminder');
+    }
+  }
+
   const markDirty = React.useCallback(() => {
     if (dirtyRef.current) return;
     dirtyRef.current = true;
     try { window.dispatchEvent(new CustomEvent('freemannotes:draft/dirty', { detail: { noteId: Number(note?.id) } })); } catch {}
   }, [note?.id]);
+
+  React.useEffect(() => {
+    lastSavedTitleRef.current = note.title || '';
+    setTitle(note.title || '');
+  }, [note.id]);
+
+  const saveTitleNow = React.useCallback(async (nextTitle?: string) => {
+    const t = (typeof nextTitle === 'string' ? nextTitle : title);
+    if ((lastSavedTitleRef.current || '') === (t || '')) return;
+    lastSavedTitleRef.current = t || '';
+    try {
+      const r1 = await fetch(`/api/notes/${note.id}` as any, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ title: t || '' }),
+      });
+      if (!r1.ok) throw new Error(await r1.text());
+    } catch (err) {
+      // revert saved pointer so we retry on next change
+      lastSavedTitleRef.current = note.title || '';
+      console.error('Failed to update title', err);
+      window.alert('Failed to update title');
+    }
+  }, [note.id, note.title, title, token]);
+
+  React.useEffect(() => {
+    if ((note.title || '') === (title || '')) return;
+    if (titleSaveTimerRef.current) window.clearTimeout(titleSaveTimerRef.current);
+    titleSaveTimerRef.current = window.setTimeout(() => {
+      saveTitleNow(title);
+    }, 350);
+  }, [title, note.title, saveTitleNow]);
 
   // Collaborative setup via Yjs + y-websocket (room per note)
   const ydoc = React.useMemo(() => new Y.Doc(), [note.id]);
@@ -235,19 +305,12 @@ export default function RichTextEditor({ note, onClose, onSaved, noteBg, onImage
     return () => { editor.off('update', onUpdate); if (savePreviewTimer.current) window.clearTimeout(savePreviewTimer.current); };
   }, [editor, note.id, token, markDirty]);
 
-  async function saveTitleOnly() {
+  function handleClose() {
     try {
       const bodySnapshot = (() => { try { return JSON.stringify(editor?.getJSON() || {}); } catch { return note.body || ''; } })();
-      if ((note.title || '') !== title) {
-        const r1 = await fetch(`/api/notes/${note.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ title }) });
-        if (!r1.ok) throw new Error(await r1.text());
-      }
       onSaved && onSaved({ title, body: bodySnapshot });
-      onClose();
-    } catch (err) {
-      console.error('Failed to update title', err);
-      window.alert('Failed to update title');
-    }
+    } catch {}
+    onClose();
   }
 
   // Contrast color for adaptive text/icon colors
@@ -380,19 +443,25 @@ export default function RichTextEditor({ note, onClose, onSaved, noteBg, onImage
   }
 
   const dialog = (
-    <div className="image-dialog-backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget) { saveTitleOnly(); } }}>
+    <div className="image-dialog-backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget) { handleClose(); } }}>
       <div className={`image-dialog editor-dialog${maximized ? ' maximized' : ''}`} role="dialog" aria-modal style={{ width: maximized ? '96vw' : 'min(1000px, 86vw)', ...dialogStyle }}>
         <div className="dialog-header">
           <strong>Edit note</strong>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-            <button className="tiny" onClick={() => setMaximized(m => !m)} aria-label="Toggle maximize" title="Toggle maximize">⤢</button>
-            <button className="icon-close" onClick={onClose}>✕</button>
+            <button className="tiny toggle-maximize" onClick={() => setMaximized(m => !m)} aria-label="Toggle maximize" title="Toggle maximize">⤢</button>
+            <button className="icon-close" onClick={handleClose}>✕</button>
           </div>
         </div>
         <div className="dialog-body">
           <div className="rt-sticky-header">
             <div style={{ display: 'flex', gap: 12, marginBottom: 8 }}>
-              <input placeholder="Title" value={title} onChange={(e) => { setTitle(e.target.value); try { markDirty(); } catch {} }} style={{ flex: 1, background: 'transparent', border: 'none', color: 'inherit', fontWeight: 600, fontSize: 18 }} />
+              <input
+                placeholder="Title"
+                value={title}
+                onChange={(e) => { setTitle(e.target.value); try { markDirty(); } catch {} }}
+                onBlur={() => { try { saveTitleNow(); } catch {} }}
+                style={{ flex: 1, background: 'transparent', border: 'none', color: 'inherit', fontWeight: 600, fontSize: 18 }}
+              />
             </div>
             <div className="rt-toolbar" style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center', marginTop: 0, marginBottom: 0, overflowX: 'auto', color: textColor }}>
               <button className="tiny" onClick={() => toggleMarkAcrossLine('bold')} aria-pressed={editor?.isActive('bold')} aria-label="Bold" title="Bold">B</button>
@@ -518,7 +587,7 @@ export default function RichTextEditor({ note, onClose, onSaved, noteBg, onImage
             )}
           </div>
           <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
-            <button className="btn" onClick={saveTitleOnly}>Save</button>
+            <button className="btn" onClick={handleClose}>Close</button>
           </div>
         </div>
       </div>
@@ -526,7 +595,15 @@ export default function RichTextEditor({ note, onClose, onSaved, noteBg, onImage
   );
 
   {showPalette && <ColorPalette anchorRef={undefined as any} onPick={onPickColor} onClose={() => setShowPalette(false)} />}
-  {showReminderPicker && <ReminderPicker onClose={() => setShowReminderPicker(false)} onSet={(iso) => { setShowReminderPicker(false); if (iso) window.alert(`Reminder set (UI-only): ${iso}`); }} />}
+  {showReminderPicker && (
+    <ReminderPicker
+      onClose={() => setShowReminderPicker(false)}
+      onConfirm={onConfirmReminder}
+      onClear={((note as any)?.reminderDueAt ? onClearReminder : undefined)}
+      initialDueAtIso={(note as any)?.reminderDueAt || null}
+      initialOffsetMinutes={typeof (note as any)?.reminderOffsetMinutes === 'number' ? (note as any).reminderOffsetMinutes : null}
+    />
+  )}
   {showCollaborator && (
     <CollaboratorModal
       onClose={() => setShowCollaborator(false)}
@@ -573,7 +650,15 @@ export default function RichTextEditor({ note, onClose, onSaved, noteBg, onImage
         />
       )}
       {showPalette && <ColorPalette anchorRef={undefined as any} onPick={onPickColor} onClose={() => setShowPalette(false)} />}
-      {showReminderPicker && <ReminderPicker onClose={() => setShowReminderPicker(false)} onSet={(iso) => { setShowReminderPicker(false); if (iso) window.alert(`Reminder set (UI-only): ${iso}`); }} />}
+      {showReminderPicker && (
+        <ReminderPicker
+          onClose={() => setShowReminderPicker(false)}
+          onConfirm={onConfirmReminder}
+          onClear={((note as any)?.reminderDueAt ? onClearReminder : undefined)}
+          initialDueAtIso={(note as any)?.reminderDueAt || null}
+          initialOffsetMinutes={typeof (note as any)?.reminderOffsetMinutes === 'number' ? (note as any).reminderOffsetMinutes : null}
+        />
+      )}
       {showCollaborator && (
         <CollaboratorModal
           onClose={() => setShowCollaborator(false)}

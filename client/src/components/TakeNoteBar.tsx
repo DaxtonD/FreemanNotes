@@ -10,7 +10,7 @@ import { makeWebSocketUrl } from '../lib/ws';
 import { useAuth } from '../authContext';
 import ChecklistItemRT from './ChecklistItemRT';
 import ColorPalette from './ColorPalette';
-import ReminderPicker from './ReminderPicker';
+import ReminderPicker, { type ReminderDraft } from './ReminderPicker';
 import CollaboratorModal from './CollaboratorModal';
 import ImageDialog from './ImageDialog';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
@@ -192,6 +192,7 @@ export default function TakeNoteBar({
   const [textColor, setTextColor] = useState<string | undefined>(undefined);
   const [showPalette, setShowPalette] = useState(false);
   const [showReminderPicker, setShowReminderPicker] = useState(false);
+  const [pendingReminder, setPendingReminder] = useState<ReminderDraft | null>(null);
   const [showCollaborator, setShowCollaborator] = useState(false);
   const [showImageDialog, setShowImageDialog] = useState(false);
   const [imageUrl, setImageUrl] = useState<string | null>(null);
@@ -321,7 +322,7 @@ export default function TakeNoteBar({
     try { setShowReminderPicker(false); } catch {}
     try { setShowCollaborator(false); } catch {}
     try { setShowImageDialog(false); } catch {}
-    try { setTitle(''); setBody(''); setItems([]); setBg(''); setImageUrl(null); setSelectedCollaborators([]); } catch {}
+    try { setTitle(''); setBody(''); setItems([]); setBg(''); setImageUrl(null); setSelectedCollaborators([]); setPendingReminder(null); } catch {}
     try { editor?.commands.clearContent(); } catch {}
   }
 
@@ -434,6 +435,10 @@ export default function TakeNoteBar({
       // Do not store body for text notes; rely on Yjs collaboration persistence.
       const payload: any = { title, body: null, type: mode === 'checklist' ? 'CHECKLIST' : 'TEXT', color: bg || null };
       if (mode === 'checklist') payload.items = items.map((it, i) => ({ content: it.content, ord: i }));
+      if (pendingReminder && pendingReminder.dueAtIso) {
+        payload.reminderDueAt = pendingReminder.dueAtIso;
+        payload.reminderOffsetMinutes = pendingReminder.offsetMinutes;
+      }
       const res = await fetch('/api/notes', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
@@ -498,7 +503,7 @@ export default function TakeNoteBar({
       if (noteId && imageUrl) {
         try { await fetch(`/api/notes/${noteId}/images`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ url: imageUrl }) }); } catch {}
       }
-      setTitle(''); setBody(''); setItems([]); setExpanded(false); setBg(''); setImageUrl(null); setSelectedCollaborators([]);
+      setTitle(''); setBody(''); setItems([]); setExpanded(false); setBg(''); setImageUrl(null); setSelectedCollaborators([]); setPendingReminder(null);
       try { setAddToCurrentCollection(activeCollectionId != null); } catch {}
       editor?.commands.clearContent();
       onCreated && onCreated();
@@ -863,7 +868,24 @@ export default function TakeNoteBar({
       </div>
 
       {showPalette && <ColorPalette anchorRef={rootRef} onPick={(c) => { setBg(c); /* keep palette open */ }} onClose={() => setShowPalette(false)} />}
-      {showReminderPicker && <ReminderPicker onClose={() => setShowReminderPicker(false)} onSet={(iso) => { setShowReminderPicker(false); /* TODO: persist reminder when supported */ }} />}
+      {showReminderPicker && (
+        <ReminderPicker
+          onClose={() => setShowReminderPicker(false)}
+          onConfirm={(draft) => {
+            setShowReminderPicker(false);
+            try {
+              // Request permission while we still have a user gesture.
+              if (typeof Notification !== 'undefined' && Notification.permission === 'default') {
+                Notification.requestPermission();
+              }
+            } catch {}
+            setPendingReminder(draft);
+          }}
+          onClear={pendingReminder ? (() => setPendingReminder(null)) : undefined}
+          initialDueAtIso={pendingReminder?.dueAtIso || null}
+          initialOffsetMinutes={typeof pendingReminder?.offsetMinutes === 'number' ? pendingReminder.offsetMinutes : null}
+        />
+      )}
       {showCollaborator && (
         <CollaboratorModal
           onClose={() => setShowCollaborator(false)}

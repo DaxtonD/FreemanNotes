@@ -25,6 +25,33 @@ export default function UserManagementModal({ onClose }: { onClose: () => void }
   const token = auth?.token;
   const me = auth?.user as any;
 
+  const [isNarrow, setIsNarrow] = React.useState<boolean>(() => {
+    try { return window.matchMedia('(max-width: 760px)').matches; } catch { return false; }
+  });
+
+  React.useEffect(() => {
+    try {
+      const mq = window.matchMedia('(max-width: 760px)');
+      const onChange = () => setIsNarrow(!!mq.matches);
+      onChange();
+      // Older Safari uses addListener/removeListener.
+      // @ts-ignore
+      if (typeof mq.addEventListener === 'function') mq.addEventListener('change', onChange);
+      // @ts-ignore
+      else if (typeof mq.addListener === 'function') mq.addListener(onChange);
+      return () => {
+        try {
+          // @ts-ignore
+          if (typeof mq.removeEventListener === 'function') mq.removeEventListener('change', onChange);
+          // @ts-ignore
+          else if (typeof mq.removeListener === 'function') mq.removeListener(onChange);
+        } catch {}
+      };
+    } catch {
+      return;
+    }
+  }, []);
+
   const [q, setQ] = React.useState('');
   const [users, setUsers] = React.useState<AdminUser[]>([]);
   const [loading, setLoading] = React.useState(false);
@@ -208,7 +235,7 @@ export default function UserManagementModal({ onClose }: { onClose: () => void }
               users.map((u) => {
                 const isMe = Number(u.id) === Number(me?.id);
                 return (
-                  <div className="user-mgmt__row" key={u.id} role="row">
+                  <div className="user-mgmt__row user-mgmt__row--user" key={u.id} role="row">
                     <div role="cell" className="user-mgmt__usercell">
                       {u.userImageUrl ? (
                         <img src={u.userImageUrl} alt="" className="user-mgmt__avatar" />
@@ -221,7 +248,7 @@ export default function UserManagementModal({ onClose }: { onClose: () => void }
                       </div>
                     </div>
 
-                    <div role="cell">
+                    <div role="cell" className="user-mgmt__rolecell">
                       <select
                         className="image-url-input"
                         value={u.role === 'admin' ? 'admin' : 'user'}
@@ -234,8 +261,17 @@ export default function UserManagementModal({ onClose }: { onClose: () => void }
                       </select>
                     </div>
 
-                    <div role="cell" style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
-                      <button className="btn btn-danger" type="button" onClick={() => deleteUser(u.id)} disabled={isMe}>Delete</button>
+                    <div role="cell" className="user-mgmt__actioncell">
+                      <button
+                        className="btn btn-danger user-mgmt__delete"
+                        type="button"
+                        onClick={() => deleteUser(u.id)}
+                        disabled={isMe}
+                        title="Delete user"
+                        aria-label={`Delete ${u.email}`}
+                      >
+                        {isNarrow ? '🗑' : 'Delete'}
+                      </button>
                     </div>
                   </div>
                 );

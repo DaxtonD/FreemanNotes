@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { useAuth } from '../authContext';
 import ChecklistItemRT from './ChecklistItemRT';
 import ColorPalette from './ColorPalette';
-import ReminderPicker from './ReminderPicker';
+import ReminderPicker, { type ReminderDraft } from './ReminderPicker';
 import CollaboratorModal from './CollaboratorModal';
 import ImageDialog from './ImageDialog';
 import ImageLightbox from './ImageLightbox';
@@ -32,6 +32,42 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
     };
   }) {
   const { token, user } = useAuth();
+
+  async function onConfirmReminder(draft: ReminderDraft) {
+    setShowReminderPicker(false);
+    try {
+      try {
+        if (typeof Notification !== 'undefined' && Notification.permission === 'default') {
+          await Notification.requestPermission();
+        }
+      } catch {}
+
+      const res = await fetch(`/api/notes/${note.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', Authorization: token ? `Bearer ${token}` : '' },
+        body: JSON.stringify({ reminderDueAt: draft.dueAtIso, reminderOffsetMinutes: draft.offsetMinutes }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+    } catch (err) {
+      console.error(err);
+      window.alert('Failed to set reminder');
+    }
+  }
+
+  async function onClearReminder() {
+    setShowReminderPicker(false);
+    try {
+      const res = await fetch(`/api/notes/${note.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', Authorization: token ? `Bearer ${token}` : '' },
+        body: JSON.stringify({ reminderDueAt: null }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+    } catch (err) {
+      console.error(err);
+      window.alert('Failed to clear reminder');
+    }
+  }
 
   const backIdRef = useRef<string>((() => {
     try { return `ce-${note?.id || 'x'}-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`; } catch { return `ce-${Math.random()}`; }
@@ -82,6 +118,8 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
   const [autoFocusIndex, setAutoFocusIndex] = useState<number | null>(null);
   const [activeRowKey, setActiveRowKey] = useState<string | number | null>(null);
   const [title, setTitle] = useState<string>(note.title || '');
+  const lastSavedTitleRef = useRef<string>(note.title || '');
+  const titleSaveTimerRef = useRef<number | null>(null);
   // prefer explicit `noteBg` passed from the parent (NoteCard); fallback to viewer-specific color
   const [bg, setBg] = useState<string>(noteBg ?? ((note as any).viewerColor || note.color || ''));
   const [showPalette, setShowPalette] = useState(false);
@@ -106,6 +144,37 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
   const itemEditorRefs = useRef<Array<any | null>>([]);
   const [showMore, setShowMore] = useState(false);
   const moreBtnRef = useRef<HTMLButtonElement | null>(null);
+
+  React.useEffect(() => {
+    lastSavedTitleRef.current = note.title || '';
+    setTitle(note.title || '');
+  }, [note.id]);
+
+  const saveTitleNow = React.useCallback(async (nextTitle?: string) => {
+    const t = (typeof nextTitle === 'string' ? nextTitle : title);
+    if ((lastSavedTitleRef.current || '') === (t || '')) return;
+    lastSavedTitleRef.current = t || '';
+    try {
+      const r1 = await fetch(`/api/notes/${note.id}` as any, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ title: t || '' }),
+      });
+      if (!r1.ok) throw new Error(await r1.text());
+    } catch (err) {
+      lastSavedTitleRef.current = note.title || '';
+      console.error('Failed to update title', err);
+      window.alert('Failed to update title');
+    }
+  }, [note.id, note.title, title, token]);
+
+  React.useEffect(() => {
+    if ((note.title || '') === (title || '')) return;
+    if (titleSaveTimerRef.current) window.clearTimeout(titleSaveTimerRef.current);
+    titleSaveTimerRef.current = window.setTimeout(() => {
+      saveTitleNow(title);
+    }, 350);
+  }, [title, note.title, saveTitleNow]);
 
   function getCurrentChecklistEditor(): any | null {
     let ed = activeChecklistEditor.current as any;
@@ -935,19 +1004,42 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
     }
   }
 
+  function handleClose() {
+    try {
+      const yarr = yarrayRef.current;
+      const arr = yarr
+        ? yarr.toArray().map((m, idx) => ({
+          id: (typeof m.get('id') === 'number' ? Number(m.get('id')) : undefined),
+          content: String(m.get('content') || ''),
+          checked: !!m.get('checked'),
+          indent: Number(m.get('indent') || 0),
+          ord: idx,
+        }))
+        : (items || []).map((it: any, idx: number) => ({ id: it?.id, content: String(it?.content || ''), checked: !!it?.checked, indent: Number(it?.indent || 0), ord: idx }));
+      onSaved && onSaved({ items: (arr as any), title });
+    } catch {}
+    onClose();
+  }
+
   const dialog = (
-    <div className="image-dialog-backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget) { save(); } }}>
+    <div className="image-dialog-backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget) { handleClose(); } }}>
       <div className="image-dialog checklist-editor editor-dialog" role="dialog" aria-modal style={{ width: 'min(1000px, 86vw)', ...dialogStyle }}>
         <div className="dialog-header">
           <strong>Edit checklist</strong>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-            <button className="icon-close" onClick={onClose}>✕</button>
+            <button className="icon-close" onClick={handleClose}>✕</button>
           </div>
         </div>
         <div className="dialog-body">
           <div className="rt-sticky-header">
             <div style={{ display: 'flex', gap: 12, marginBottom: 8 }}>
-              <input placeholder="Checklist title" value={title} onChange={(e) => { setTitle(e.target.value); try { markDirty(); } catch {} }} style={{ flex: 1, background: 'transparent', border: 'none', color: 'inherit', fontWeight: 600, fontSize: 18 }} />
+              <input
+                placeholder="Checklist title"
+                value={title}
+                onChange={(e) => { setTitle(e.target.value); try { markDirty(); } catch {} }}
+                onBlur={() => { try { saveTitleNow(); } catch {} }}
+                style={{ flex: 1, background: 'transparent', border: 'none', color: 'inherit', fontWeight: 600, fontSize: 18 }}
+              />
             </div>
             <div
               className="rt-toolbar"
@@ -1493,8 +1585,7 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
 
                 </div>
                 <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
-                  <button className="btn" onClick={onClose}>Cancel</button>
-                  <button className="btn" onClick={save} disabled={saving}>{saving ? 'Saving...' : 'Save'}</button>
+                  <button className="btn" onClick={handleClose}>Close</button>
                 </div>
               </div>
             </div>
@@ -1518,7 +1609,15 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
                 />
               )}
               {showPalette && <ColorPalette anchorRef={undefined as any} onPick={onPickColor} onClose={() => setShowPalette(false)} />}
-              {showReminderPicker && <ReminderPicker onClose={() => setShowReminderPicker(false)} onSet={(iso) => { setShowReminderPicker(false); if (iso) window.alert(`Reminder set (UI-only): ${iso}`); }} />}
+              {showReminderPicker && (
+                <ReminderPicker
+                  onClose={() => setShowReminderPicker(false)}
+                  onConfirm={onConfirmReminder}
+                  onClear={((note as any)?.reminderDueAt ? onClearReminder : undefined)}
+                  initialDueAtIso={(note as any)?.reminderDueAt || null}
+                  initialOffsetMinutes={typeof (note as any)?.reminderOffsetMinutes === 'number' ? (note as any).reminderOffsetMinutes : null}
+                />
+              )}
               {showCollaborator && (
                 <CollaboratorModal
                   onClose={() => setShowCollaborator(false)}
