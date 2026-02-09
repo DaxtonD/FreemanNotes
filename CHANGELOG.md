@@ -19,6 +19,11 @@ Adheres to Semantic Versioning (MAJOR.MINOR.PATCH).
 - Mobile image and menu UX (bottom-sheet picker, long-press actions, in-app confirm dialog).
 - Collapsed desktop sidebar icons now expand and perform their actions.
 
+## [0.5.1] - 2026-02-09
+
+### Fixed
+- Docker/GitHub build: `npm ci` no longer fails when the repository hasn’t copied `prisma/schema.prisma` yet (postinstall now skips Prisma steps until schema exists).
+
 ## [0.4.6] - 2026-02-08
 
 ### Added
