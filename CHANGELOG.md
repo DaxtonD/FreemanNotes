@@ -7,6 +7,11 @@ Adheres to Semantic Versioning (MAJOR.MINOR.PATCH).
 ## [Unreleased]
 
 ### Added
+- 
+
+## [0.6.2] - 2026-02-10
+
+### Added
 - Mobile/PWA: long-press on a note card body opens the More menu.
 
 ## [0.6.1] - 2026-02-10
