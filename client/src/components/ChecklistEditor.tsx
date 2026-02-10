@@ -14,6 +14,7 @@ import DOMPurify from 'dompurify';
 import MoreMenu from './MoreMenu';
 import * as Y from 'yjs';
 import { WebsocketProvider } from 'y-websocket';
+import UrlEntryModal from './UrlEntryModal';
 
 export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImagesUpdated, onColorChanged, moreMenu }:
   {
@@ -25,14 +26,20 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
     onColorChanged?: (color: string) => void;
     moreMenu?: {
       onDelete: () => void;
-      onAddLabel: () => void;
+      deleteLabel?: string;
+      onRestore?: () => void;
+      restoreLabel?: string;
+      onAddLabel?: () => void;
       onMoveToCollection?: () => void;
       onUncheckAll?: () => void;
       onCheckAll?: () => void;
-      onSetWidth: (span: 1 | 2 | 3) => void;
+      onSetWidth?: (span: 1 | 2 | 3) => void;
     };
   }) {
   const { token, user } = useAuth();
+  const ownerId = (typeof (note as any).owner?.id === 'number' ? Number((note as any).owner.id) : (typeof (note as any).ownerId === 'number' ? Number((note as any).ownerId) : undefined));
+  const currentUserId = (user && (user as any).id) ? Number((user as any).id) : undefined;
+  const isOwner = !!(ownerId && currentUserId && ownerId === currentUserId);
   const imageLongPressTimerRef = React.useRef<number | null>(null);
   const imageLongPressStartRef = React.useRef<{ x: number; y: number } | null>(null);
   const suppressNextImageClickRef = React.useRef(false);
@@ -52,6 +59,10 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
 
   async function onConfirmReminder(draft: ReminderDraft) {
     setShowReminderPicker(false);
+    if (!isOwner) {
+      window.alert('Only the note owner can set reminders.');
+      return;
+    }
     try {
       try {
         if (typeof Notification !== 'undefined' && Notification.permission === 'default') {
@@ -73,6 +84,10 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
 
   async function onClearReminder() {
     setShowReminderPicker(false);
+    if (!isOwner) {
+      window.alert('Only the note owner can clear reminders.');
+      return;
+    }
     try {
       const res = await fetch(`/api/notes/${note.id}`, {
         method: 'PATCH',
@@ -144,7 +159,16 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
   const [showCollaborator, setShowCollaborator] = useState(false);
   const [showImageDialog, setShowImageDialog] = useState(false);
   const [images, setImages] = useState<Array<{ id:number; url:string }>>(((note as any).images || []).map((i:any)=>({ id:Number(i.id), url:String(i.url) })));
-  const [imagesOpen, setImagesOpen] = useState(false);
+  const defaultImagesOpen = (() => {
+    try {
+      const stored = localStorage.getItem('prefs.editorImagesExpandedByDefault');
+      if (stored !== null) return stored === 'true';
+      const v = (user as any)?.editorImagesExpandedByDefault;
+      if (typeof v === 'boolean') return v;
+    } catch {}
+    return false;
+  })();
+  const [imagesOpen, setImagesOpen] = useState(defaultImagesOpen);
   React.useEffect(() => {
     try {
       const next = (((note as any).images || []).map((i:any)=>({ id:Number(i.id), url:String(i.url) })));
@@ -176,6 +200,7 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
   const itemEditorRefs = useRef<Array<any | null>>([]);
   const [showMore, setShowMore] = useState(false);
   const moreBtnRef = useRef<HTMLButtonElement | null>(null);
+  const [urlModal, setUrlModal] = useState<{ mode: 'add' | 'edit'; previewId?: number; initialUrl?: string } | null>(null);
 
   React.useEffect(() => {
     lastSavedTitleRef.current = note.title || '';
@@ -260,6 +285,30 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
   function stripHtmlToText(html: string): string {
     return String(html || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
   }
+
+  function pruneEmptyChecklistItemsFromYjs(): number {
+    try {
+      const yarr = yarrayRef.current;
+      if (!yarr || yarr.length === 0) return 0;
+      const emptyIdxs: number[] = [];
+      for (let i = 0; i < yarr.length; i++) {
+        const m = yarr.get(i) as Y.Map<any> | undefined;
+        const txt = stripHtmlToText(String((m as any)?.get?.('content') || ''));
+        if (!txt) emptyIdxs.push(i);
+      }
+      if (emptyIdxs.length === 0) return 0;
+      // Delete from end to preserve indices.
+      ydoc.transact(() => {
+        for (let k = emptyIdxs.length - 1; k >= 0; k--) {
+          const idx = emptyIdxs[k];
+          try { yarr.delete(idx, 1); } catch {}
+        }
+      });
+      return emptyIdxs.length;
+    } catch {
+      return 0;
+    }
+  }
   async function requestLinkPreview(url: string) {
     try {
       const res = await fetch(`/api/notes/${note.id}/link-preview`, {
@@ -334,9 +383,19 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
       window.alert('Failed to delete URL');
     }
   }
-  async function editPreview(previewId: number) {
-    const nextUrl = window.prompt('Edit URL:');
-    if (!nextUrl) return;
+
+  function editPreview(previewId: number) {
+    const currentUrl = (() => {
+      try {
+        const found = (linkPreviews || []).find((p: any) => Number(p?.id) === Number(previewId));
+        return found?.url ? String(found.url) : '';
+      } catch { return ''; }
+    })();
+    try { setPreviewMenu(null); } catch {}
+    setUrlModal({ mode: 'edit', previewId: Number(previewId), initialUrl: currentUrl });
+  }
+
+  async function submitEditPreview(previewId: number, nextUrl: string) {
     try {
       const res = await fetch(`/api/notes/${note.id}/link-previews/${previewId}`, {
         method: 'PATCH',
@@ -354,13 +413,7 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
   }
 
   function applyChecklistLink() {
-    const ed = getCurrentChecklistEditor() as any;
-    if (!ed) return;
-    const url = window.prompt('Enter URL:');
-    if (url) {
-      ed.chain().focus().extendMarkRange('link').setLink({ href: url }).run();
-      try { requestLinkPreview(String(url)); } catch {}
-    }
+    try { setUrlModal({ mode: 'add' }); } catch {}
   }
 
   function applyChecklistMarkAcrossLine(mark: 'bold' | 'italic' | 'underline') {
@@ -667,7 +720,7 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
               });
               const res = await fetch(`/api/notes/${note.id}/items`, {
                 method: 'PUT', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-                body: JSON.stringify({ items: ordered })
+                body: JSON.stringify({ items: ordered, replaceMissing: true })
               });
               if (res.ok) {
                 const data = await res.json();
@@ -860,19 +913,22 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
     if (yarr) {
       const pos = typeof idx === 'number' ? Math.max(0, Math.min(idx, yarr.length)) : yarr.length;
       const m = new Y.Map<any>(); m.set('content', ''); m.set('checked', false); m.set('indent', 0);
-      m.set('uid', genUid());
+      const uid = genUid();
+      m.set('uid', uid);
       yarr.insert(pos, [m]);
+      try { setActiveRowKey(uid); } catch {}
       setAutoFocusIndex(pos);
     } else {
       // Fallback when collaboration doc isn't ready yet: update local state
+      const pos = typeof idx === 'number' ? Math.max(0, Math.min(idx, items.length)) : items.length;
+      const uid = genUid();
       setItems(s => {
-        const pos = typeof idx === 'number' ? Math.max(0, Math.min(idx, s.length)) : s.length;
-        const uid = genUid();
         const next = [...s];
         next.splice(pos, 0, { uid, content: '', checked: false, indent: 0 });
         return next;
       });
-      setAutoFocusIndex(typeof idx === 'number' ? idx : (items.length + 1));
+      try { setActiveRowKey(uid); } catch {}
+      setAutoFocusIndex(pos);
     }
   }
 
@@ -1023,15 +1079,17 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
   async function save() {
     setSaving(true);
     try {
+      try { pruneEmptyChecklistItemsFromYjs(); } catch {}
       if ((note.title || '') !== title) {
         const r1 = await fetch(`/api/notes/${note.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ title }) });
         if (!r1.ok) throw new Error(await r1.text());
       }
       // derive payload from Yjs state
       const yarr = yarrayRef.current;
-      const arr = yarr ? yarr.toArray().map((m) => ({ id: (typeof m.get('id') === 'number' ? Number(m.get('id')) : undefined), content: String(m.get('content') || ''), checked: !!m.get('checked'), indent: Number(m.get('indent') || 0) })) : items;
+      const arrRaw = yarr ? yarr.toArray().map((m) => ({ id: (typeof m.get('id') === 'number' ? Number(m.get('id')) : undefined), content: String(m.get('content') || ''), checked: !!m.get('checked'), indent: Number(m.get('indent') || 0) })) : items;
+      const arr = (arrRaw || []).filter((it: any) => !!stripHtmlToText(String(it?.content || '')));
       const payloadItems = arr.map((it, i) => { const payload: any = { content: it.content, checked: !!it.checked, ord: i, indent: it.indent || 0 }; if (typeof it.id === 'number') payload.id = it.id; return payload; });
-      const res = await fetch(`/api/notes/${note.id}/items`, { method: 'PUT', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ items: payloadItems }) });
+      const res = await fetch(`/api/notes/${note.id}/items`, { method: 'PUT', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ items: payloadItems, replaceMissing: true }) });
       if (!res.ok) throw new Error(await res.text());
       onSaved && onSaved({ items: payloadItems, title });
       onClose();
@@ -1185,9 +1243,11 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
   }
 
   function handleClose() {
+    try { setUrlModal(null); } catch {}
     try {
+      try { pruneEmptyChecklistItemsFromYjs(); } catch {}
       const yarr = yarrayRef.current;
-      const arr = yarr
+      const arrRaw = yarr
         ? yarr.toArray().map((m, idx) => ({
           id: (typeof m.get('id') === 'number' ? Number(m.get('id')) : undefined),
           content: String(m.get('content') || ''),
@@ -1196,7 +1256,10 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
           ord: idx,
         }))
         : (items || []).map((it: any, idx: number) => ({ id: it?.id, content: String(it?.content || ''), checked: !!it?.checked, indent: Number(it?.indent || 0), ord: idx }));
-      onSaved && onSaved({ items: (arr as any), title });
+
+      const arr = (arrRaw || []).filter((it: any) => !!stripHtmlToText(String(it?.content || '')));
+      const normalized = arr.map((it: any, idx: number) => ({ ...it, ord: idx }));
+      onSaved && onSaved({ items: (normalized as any), title });
     } catch {}
     onClose();
   }
@@ -1271,8 +1334,8 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
                 onMouseDownCapture={(e) => { e.preventDefault(); e.stopPropagation(); }}
                 onMouseUp={(e) => e.preventDefault()}
                 onClick={() => { if (skipNextToolbarClickRef.current) { skipNextToolbarClickRef.current = false; return; } applyChecklistLink(); }}
-                aria-label="Insert link"
-                title="Insert link"
+                aria-label="Add URL preview"
+                title="Add URL preview"
               >
                 <FontAwesomeIcon icon={faLink} />
               </button>
@@ -1613,7 +1676,77 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
                           <ChecklistItemRT
                             value={it.content || ''}
                             onChange={(html) => updateItem(realIdx, html)}
+                            onRequestUrlPreview={() => { try { setUrlModal({ mode: 'add' }); } catch {} }}
                             onEnter={() => addItemAt(realIdx + 1)}
+                            onArrowUp={() => {
+                              try {
+                                const list = previewItems ?? items;
+                                const domIdx = realToDomIndexUnchecked(realIdx, list);
+                                const prevRealIdx = domToRealIndexUnchecked(domIdx - 1, list);
+                                if (prevRealIdx < 0) return;
+                                const prev = list[prevRealIdx];
+                                if (!prev) return;
+                                try { setActiveRowKey(getKey(prev)); } catch {}
+                                try { setAutoFocusIndex(prevRealIdx); } catch {}
+                                window.setTimeout(() => {
+                                  try {
+                                    const prevEd = itemEditorRefs.current[prevRealIdx];
+                                    if (!prevEd) return;
+                                    const endPos = Math.max(0, Number(prevEd?.state?.doc?.content?.size || 0));
+                                    if (prevEd?.chain) prevEd.chain().focus().setTextSelection(endPos).run();
+                                    else if (prevEd?.commands?.focus) { try { prevEd.commands.focus('end'); } catch { prevEd.commands.focus(); } }
+                                  } catch {}
+                                }, 30);
+                              } catch {}
+                            }}
+                            onArrowDown={() => {
+                              try {
+                                const list = previewItems ?? items;
+                                const domIdx = realToDomIndexUnchecked(realIdx, list);
+                                const nextRealIdx = domToRealIndexUnchecked(domIdx + 1, list);
+                                if (nextRealIdx < 0) return;
+                                const next = list[nextRealIdx];
+                                if (!next) return;
+                                try { setActiveRowKey(getKey(next)); } catch {}
+                                try { setAutoFocusIndex(nextRealIdx); } catch {}
+                                window.setTimeout(() => {
+                                  try {
+                                    const nextEd = itemEditorRefs.current[nextRealIdx];
+                                    if (!nextEd) return;
+                                    const endPos = Math.max(0, Number(nextEd?.state?.doc?.content?.size || 0));
+                                    if (nextEd?.chain) nextEd.chain().focus().setTextSelection(endPos).run();
+                                    else if (nextEd?.commands?.focus) { try { nextEd.commands.focus('end'); } catch { nextEd.commands.focus(); } }
+                                  } catch {}
+                                }, 30);
+                              } catch {}
+                            }}
+                            onBackspaceEmpty={() => {
+                              if (realIdx <= 0) return;
+                              try {
+                                const currentList = previewItems ?? items;
+                                const prev = currentList[realIdx - 1];
+                                if (prev) {
+                                  try { setActiveRowKey(getKey(prev)); } catch {}
+                                }
+                              } catch {}
+                              deleteItemAt(realIdx);
+                              try { setAutoFocusIndex(realIdx - 1); } catch {}
+                              try {
+                                window.setTimeout(() => {
+                                  try {
+                                    const prevEd = itemEditorRefs.current[realIdx - 1];
+                                    if (!prevEd) return;
+                                    const endPos = Math.max(0, Number(prevEd?.state?.doc?.content?.size || 0));
+                                    // Focus and move caret to the end of the previous item.
+                                    if (prevEd?.chain) {
+                                      prevEd.chain().focus().setTextSelection(endPos).run();
+                                    } else if (prevEd?.commands?.focus) {
+                                      try { prevEd.commands.focus('end'); } catch { prevEd.commands.focus(); }
+                                    }
+                                  } catch {}
+                                }, 30);
+                              } catch {}
+                            }}
                             autoFocus={autoFocusIndex === realIdx}
                             onFocus={(ed) => {
                               activeChecklistEditor.current = ed;
@@ -1910,7 +2043,14 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
                   <button className="tiny palette" onClick={() => setShowPalette(true)} aria-label="Change color" title="Change color">
                     <FontAwesomeIcon icon={faPalette} className="palette-svg" />
                   </button>
-                  <button className="tiny" onClick={() => setShowReminderPicker(true)} aria-label="Reminder" title="Reminder">
+                  <button
+                    className="tiny"
+                    onClick={() => { if (isOwner) setShowReminderPicker(true); else window.alert('Only the note owner can set reminders.'); }}
+                    aria-label="Reminder"
+                    title={isOwner ? 'Reminder' : 'Reminder (owner-only)'}
+                    disabled={!isOwner}
+                    style={!isOwner ? { opacity: 0.45, cursor: 'not-allowed' } : undefined}
+                  >
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
                       <path d="M12 22c1.1 0 2-.9 2-2h-4a2 2 0 0 0 2 2z"/>
                       <path d="M18 8V7a6 6 0 1 0-12 0v1c0 3.5-2 5-2 5h16s-2-1.5-2-5z"/>
@@ -1951,12 +2091,31 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
           if (typeof document !== 'undefined') {
             const portal = createPortal(dialog, document.body);
             return (<>{portal}
+              <UrlEntryModal
+                open={!!urlModal}
+                title={(urlModal?.mode === 'edit') ? 'Edit URL preview' : 'Add URL preview'}
+                initialUrl={urlModal?.initialUrl}
+                onCancel={() => setUrlModal(null)}
+                onSubmit={(url) => {
+                  const st = urlModal;
+                  setUrlModal(null);
+                  if (!st) return;
+                  if (st.mode === 'edit' && st.previewId != null) {
+                    submitEditPreview(Number(st.previewId), String(url));
+                    return;
+                  }
+                  try { requestLinkPreview(String(url)); } catch {}
+                }}
+              />
               {moreMenu && showMore && (
                 <MoreMenu
                   anchorRef={moreBtnRef as any}
-                  itemsCount={moreMenu.onMoveToCollection ? 5 : 4}
+                  itemsCount={((note as any)?.trashedAt ? 2 : (moreMenu.onMoveToCollection ? 5 : 4))}
                   onClose={() => setShowMore(false)}
                   onDelete={moreMenu.onDelete}
+                  deleteLabel={moreMenu.deleteLabel}
+                  onRestore={moreMenu.onRestore}
+                  restoreLabel={moreMenu.restoreLabel}
                   onMoveToCollection={moreMenu.onMoveToCollection}
                   onAddLabel={moreMenu.onAddLabel}
                   onUncheckAll={moreMenu.onUncheckAll}

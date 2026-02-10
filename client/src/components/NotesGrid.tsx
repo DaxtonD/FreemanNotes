@@ -167,6 +167,9 @@ export default function NotesGrid({
   const [takeNoteOpenMode, setTakeNoteOpenMode] = useState<'text' | 'checklist'>('text');
   const [mobileCreateMode, setMobileCreateMode] = useState<null | 'text' | 'checklist'>(null);
 
+  // Mobile back button: if the FAB menu is open, Back should close it.
+  const mobileAddBackIdRef = useRef<string>('');
+
   const activeCollection = useMemo(() => {
     const stack = Array.isArray(collectionStack) ? collectionStack : [];
     if (!stack.length) return null;
@@ -532,10 +535,47 @@ export default function NotesGrid({
   useEffect(() => { pinnedLayoutRef.current = pinnedLayout; }, [pinnedLayout]);
   useEffect(() => { othersLayoutRef.current = othersLayout; }, [othersLayout]);
 
+  const isPhoneLike = (() => {
+    try {
+      const mq = window.matchMedia;
+      const touchLike = !!(mq && (mq('(pointer: coarse)').matches || mq('(any-pointer: coarse)').matches));
+      const vw = (window.visualViewport && typeof window.visualViewport.width === 'number') ? window.visualViewport.width : window.innerWidth;
+      const vh = (window.visualViewport && typeof window.visualViewport.height === 'number') ? window.visualViewport.height : window.innerHeight;
+      const shortSide = Math.min(vw, vh);
+      return touchLike && shortSide <= 600;
+    } catch { return false; }
+  })();
+
+  useEffect(() => {
+    if (!isPhoneLike) return;
+    if (!mobileAddOpen) return;
+    try {
+      if (!mobileAddBackIdRef.current) mobileAddBackIdRef.current = `mobile-add-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+      const id = mobileAddBackIdRef.current;
+      const onBack = () => { try { setMobileAddOpen(false); } catch {} };
+      window.dispatchEvent(new CustomEvent('freemannotes:back/register', { detail: { id, onBack } }));
+      return () => {
+        try { window.dispatchEvent(new CustomEvent('freemannotes:back/unregister', { detail: { id } })); } catch {}
+      };
+    } catch {
+      return;
+    }
+  }, [isPhoneLike, mobileAddOpen]);
+
   const canManualReorder = !!(sortConfig && sortConfig.sortKey === 'default' && sortConfig.groupBy === 'none' && sortConfig.smartFilter === 'none');
-  const dragBehavior = (() => {
+  const storedDragBehavior = (() => {
     try { return (localStorage.getItem('prefs.dragBehavior') || 'swap'); } catch { return 'swap'; }
   })();
+  // Mobile: rearrange is disabled.
+  const dragBehavior = isPhoneLike ? 'swap' : storedDragBehavior;
+
+  useEffect(() => {
+    if (!isPhoneLike) return;
+    try {
+      if (storedDragBehavior !== 'rearrange') return;
+      localStorage.setItem('prefs.dragBehavior', 'swap');
+    } catch {}
+  }, [isPhoneLike, storedDragBehavior]);
   const manualSwapEnabled = canManualReorder && dragBehavior === 'swap';
   const keepRearrangeEnabled = canManualReorder && dragBehavior === 'rearrange';
   const usePinnedPlacements = manualSwapEnabled && manualDragActive;
@@ -1623,9 +1663,20 @@ export default function NotesGrid({
                   document.documentElement.style.setProperty('--image-thumb-size', `${Number(payload.imageThumbSize)}px`);
                   try { localStorage.setItem('prefs.imageThumbSize', String(Number(payload.imageThumbSize))); } catch {}
                 }
+                if (typeof payload.editorImageThumbSize === 'number') {
+                  document.documentElement.style.setProperty('--editor-image-thumb-size', `${Number(payload.editorImageThumbSize)}px`);
+                  try { localStorage.setItem('prefs.editorImageThumbSize', String(Number(payload.editorImageThumbSize))); } catch {}
+                }
                 if (typeof payload.fontFamily === 'string' && payload.fontFamily) {
                   document.documentElement.style.setProperty('--app-font-family', String(payload.fontFamily));
                   try { localStorage.setItem('prefs.fontFamily', String(payload.fontFamily)); } catch {}
+                }
+
+                if (typeof payload.editorImagesExpandedByDefault === 'boolean') {
+                  try { localStorage.setItem('prefs.editorImagesExpandedByDefault', String(payload.editorImagesExpandedByDefault)); } catch {}
+                }
+                if (typeof payload.disableNoteCardLinks === 'boolean') {
+                  try { localStorage.setItem('prefs.disableNoteCardLinks', String(payload.disableNoteCardLinks)); } catch {}
                 }
 
                 // User-scoped hyperlink colors (broadcast without deviceKey)
@@ -3143,7 +3194,7 @@ export default function NotesGrid({
                   height: swapOverlayRect ? `${swapOverlayRect.height}px` : undefined,
                 }}
               >
-                <NoteCard note={activeSwapNote} onChange={handleNoteChange} />
+                <NoteCard key={activeSwapNote.id} note={activeSwapNote} onChange={handleNoteChange} />
               </div>
             ) : null}
           </DragOverlay>
@@ -3221,9 +3272,8 @@ export default function NotesGrid({
                                   if (!canManualReorder) return;
                                   e.preventDefault();
                                   try {
-                                    const behavior = localStorage.getItem('prefs.dragBehavior') || 'swap';
                                     const draggingIndex = draggingIdxRef.current;
-                                    if (behavior === 'rearrange' && draggingIndex !== null && draggingIndex !== globalIdx) {
+                                    if (dragBehavior === 'rearrange' && draggingIndex !== null && draggingIndex !== globalIdx) {
                                       const now = Date.now();
                                       const targetEl = e.currentTarget as HTMLElement;
                                       const rect = targetEl.getBoundingClientRect();
@@ -3247,8 +3297,7 @@ export default function NotesGrid({
                                   const from = Number.isFinite(raw) ? raw : (draggingIdxRef.current ?? -1);
                                   const to = globalIdx;
                                   try {
-                                    const behavior = localStorage.getItem('prefs.dragBehavior') || 'swap';
-                                    if (behavior === 'rearrange') moveNoteSplice(from, to);
+                                    if (dragBehavior === 'rearrange') moveNoteSplice(from, to);
                                     else moveNote(from, to);
                                   } catch { moveNote(from, to); }
                                   requestAnimationFrame(() => { try { persistOrder(notesRef.current); } catch {} });
@@ -3347,9 +3396,8 @@ export default function NotesGrid({
                                 if (!canManualReorder) return;
                                 e.preventDefault();
                                 try {
-                                  const behavior = localStorage.getItem('prefs.dragBehavior') || 'swap';
                                   const draggingIndex = draggingIdxRef.current;
-                                  if (behavior === 'rearrange' && draggingIndex !== null && draggingIndex !== globalIdx) {
+                                  if (dragBehavior === 'rearrange' && draggingIndex !== null && draggingIndex !== globalIdx) {
                                     const now = Date.now();
                                     const targetEl = e.currentTarget as HTMLElement;
                                     const rect = targetEl.getBoundingClientRect();
@@ -3373,8 +3421,7 @@ export default function NotesGrid({
                                 const from = Number.isFinite(raw) ? raw : (draggingIdxRef.current ?? -1);
                                 const to = globalIdx;
                                 try {
-                                  const behavior = localStorage.getItem('prefs.dragBehavior') || 'swap';
-                                  if (behavior === 'rearrange') moveNoteSplice(from, to);
+                                  if (dragBehavior === 'rearrange') moveNoteSplice(from, to);
                                   else moveNote(from, to);
                                 } catch { moveNote(from, to); }
                                 requestAnimationFrame(() => { try { persistOrder(notesRef.current); } catch {} });

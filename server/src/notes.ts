@@ -54,6 +54,10 @@ function clampInt(v: any, min: number, max: number, fallback: number): number {
   return Math.max(min, Math.min(max, Math.trunc(n)));
 }
 
+function stripHtmlToText(html: any): string {
+  return String(html || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
 function computeReminderAt(dueAt: Date, offsetMinutes: number): Date {
   const ms = dueAt.getTime() - (offsetMinutes * 60 * 1000);
   return new Date(ms);
@@ -118,15 +122,45 @@ router.get('/api/notes', async (req: Request, res: Response) => {
     });
     // ensure checklist items are returned in ord order
       const normalized = (notes as any[]).map((n: any) => {
+        const isOwnerView = Number(n.ownerId) === Number(user.id);
+        // Prefer authoritative Yjs snapshot for checklist items when available.
+        // This prevents stale/ghost DB rows from briefly appearing before the client finishes Yjs sync.
+        let itemsFromDb = (n.items || []).slice().sort((a: any, b: any) => (a.ord || 0) - (b.ord || 0));
+        try {
+          if (String(n.type || '') === 'CHECKLIST') {
+            const buf = n.yData as unknown as Buffer | null;
+            if (buf && (buf as any).length) {
+              const ydoc = new Y.Doc();
+              Y.applyUpdate(ydoc, new Uint8Array(buf as any));
+              const yarr = ydoc.getArray<Y.Map<any>>('checklist');
+              if (yarr) {
+                // Important: trust the snapshot even when it's empty, so we don't fall back
+                // to stale DB rows.
+                itemsFromDb = yarr.toArray().map((m: any, idx: number) => ({
+                  id: (typeof m.get('id') === 'number' ? Number(m.get('id')) : undefined),
+                  content: String(m.get('content') || ''),
+                  checked: !!m.get('checked'),
+                  indent: Number(m.get('indent') || 0),
+                  ord: idx,
+                }));
+              }
+            }
+          }
+        } catch {}
       const viewerCollections = (Array.isArray(n.noteCollections) ? n.noteCollections : [])
         .map((nc: any) => nc && nc.collection)
         .filter((c: any) => c && typeof c.id === 'number' && typeof c.name === 'string')
         .map((c: any) => ({ id: Number(c.id), name: String(c.name), parentId: (c.parentId == null ? null : Number(c.parentId)) }));
         return {
           ...n,
-          items: (n.items || []).slice().sort((a, b) => (a.ord || 0) - (b.ord || 0)),
+          items: itemsFromDb,
           viewerColor: (Array.isArray(n.notePrefs) && n.notePrefs[0]?.color) ? String(n.notePrefs[0].color) : null,
         viewerCollections,
+          // Reminders are owner-only; collaborators should not see the owner's reminder state.
+          reminderDueAt: isOwnerView ? (n as any).reminderDueAt : null,
+          reminderAt: isOwnerView ? (n as any).reminderAt : null,
+          reminderOffsetMinutes: isOwnerView ? (n as any).reminderOffsetMinutes : 0,
+          reminderNotifiedAt: isOwnerView ? (n as any).reminderNotifiedAt : null,
         };
       });
     res.json({ notes: normalized });
@@ -215,7 +249,17 @@ router.post('/api/notes', async (req: Request, res: Response) => {
       data.reminderAt = computeReminderAt(reminderDueAt, reminderOffsetMinutes);
     }
     if (Array.isArray(items) && items.length > 0) {
-      data.items = { create: items.map((it: any, idx: number) => ({ content: String(it.content || ''), checked: !!it.checked, ord: typeof it.ord === 'number' ? it.ord : idx, indent: typeof it.indent === 'number' ? it.indent : 0 })) };
+      const filtered = items
+        .map((it: any) => ({
+          content: String(it?.content || ''),
+          checked: !!it?.checked,
+          ord: (typeof it?.ord === 'number' ? Number(it.ord) : undefined),
+          indent: (typeof it?.indent === 'number' ? Number(it.indent) : 0),
+        }))
+        .filter((it: any) => stripHtmlToText(it.content).length > 0);
+      if (filtered.length > 0) {
+        data.items = { create: filtered.map((it: any, idx: number) => ({ content: it.content, checked: !!it.checked, ord: (typeof it.ord === 'number' ? it.ord : idx), indent: (typeof it.indent === 'number' ? it.indent : 0) })) };
+      }
     }
     const note = await prisma.note.create({ data, include: { items: true, collaborators: true, images: true, noteLabels: true } });
     // sort items by ord before returning
@@ -591,12 +635,23 @@ router.patch('/api/notes/:id', async (req: Request, res: Response) => {
   try {
     const note = await prisma.note.findUnique({ where: { id } });
     if (!note) return res.status(404).json({ error: 'not found' });
+    const isOwner = note.ownerId === user.id;
+
+    // Business rule: trashed notes can't be archived (restore first).
+    if ('archived' in (req.body || {}) && !!(note as any).trashedAt && !!(req.body as any).archived) {
+      return res.status(409).json({ error: 'cannot archive trashed note' });
+    }
+
+    const wantsReminderDueAt = ('reminderDueAt' in (req.body || {}));
+    const wantsOffset = ('reminderOffsetMinutes' in (req.body || {}));
     if (note.ownerId !== user.id) {
       // allow collaborators to update body/title but not archive/delete
       const collab = await prisma.collaborator.findFirst({ where: { noteId: id, userId: user.id } });
       if (!collab) return res.status(403).json({ error: 'forbidden' });
       if ('archived' in req.body) return res.status(403).json({ error: 'forbidden' });
       if ('pinned' in req.body) return res.status(403).json({ error: 'forbidden' });
+      // Reminders are owner-only.
+      if (wantsReminderDueAt || wantsOffset) return res.status(403).json({ error: 'forbidden' });
     }
 
     // If pinning, bump this note to the top of the pinned group by setting ord to (minPinnedOrd - 1).
@@ -618,8 +673,6 @@ router.patch('/api/notes/:id', async (req: Request, res: Response) => {
       }
     }
     // Reminders: compute reminderAt and normalize nulls.
-    const wantsReminderDueAt = ('reminderDueAt' in req.body);
-    const wantsOffset = ('reminderOffsetMinutes' in req.body);
     if (wantsReminderDueAt || wantsOffset) {
       // Any reminder change should allow a new notification.
       data.reminderNotifiedAt = null;
@@ -682,13 +735,7 @@ router.patch('/api/notes/:id', async (req: Request, res: Response) => {
     // Realtime: update reminder bell chips across other clients/collaborators.
     if (wantsReminderDueAt || wantsOffset) {
       try {
-        const collabs = await prisma.collaborator.findMany({ where: { noteId: id }, select: { userId: true } });
-        const participantIds = new Set<number>([Number((updated as any).ownerId)]);
-        for (const c of (collabs || [])) {
-          const uid = Number((c as any).userId);
-          if (Number.isFinite(uid)) participantIds.add(uid);
-        }
-
+        // Reminders are owner-only: notify only the owner so their other devices update.
         const dueAt = (updated as any).reminderDueAt ? new Date((updated as any).reminderDueAt as any) : null;
         const payload = {
           noteId: id,
@@ -697,13 +744,20 @@ router.patch('/api/notes/:id', async (req: Request, res: Response) => {
             ? Number((updated as any).reminderOffsetMinutes)
             : null,
         };
-        for (const uid of participantIds) {
-          notifyUser(uid, 'note-reminder-changed', payload);
-        }
+        notifyUser(Number((updated as any).ownerId), 'note-reminder-changed', payload);
       } catch {}
     }
 
-    res.json({ note: updated });
+    const out: any = updated as any;
+    if (!isOwner) {
+      // Collaborators should not see reminder state.
+      out.reminderDueAt = null;
+      out.reminderAt = null;
+      out.reminderOffsetMinutes = 0;
+      out.reminderNotifiedAt = null;
+    }
+
+    res.json({ note: out });
   } catch (err) {
     res.status(500).json({ error: String(err) });
   }
@@ -788,7 +842,9 @@ router.put('/api/notes/:id/items', async (req: Request, res: Response) => {
   if (!user) return res.status(401).json({ error: 'unauthenticated' });
   const noteId = Number(req.params.id);
   if (!Number.isInteger(noteId)) return res.status(400).json({ error: 'invalid note id' });
-  const items: Array<any> = Array.isArray(req.body.items) ? req.body.items : [];
+  const itemsRaw: Array<any> = Array.isArray(req.body.items) ? req.body.items : [];
+  const items: Array<any> = (itemsRaw || []).filter((it: any) => stripHtmlToText(it?.content).length > 0);
+  const replaceMissing = !!(req.body && (req.body.replaceMissing === true || req.body.fullReplace === true || req.body.replace === true));
   try {
     const note = await prisma.note.findUnique({ where: { id: noteId } });
     if (!note) return res.status(404).json({ error: 'note not found' });
@@ -797,15 +853,28 @@ router.put('/api/notes/:id/items', async (req: Request, res: Response) => {
       if (!collab) return res.status(403).json({ error: 'forbidden' });
     }
 
-    // Safety: if client sends an empty array unexpectedly (e.g., transient sync), do not delete
+    // Safety: if client sends an empty array unexpectedly (e.g., transient sync), do not delete.
+    // If the client explicitly opts into full replacement, allow clearing all items.
     if (items.length === 0) {
+      if (replaceMissing) {
+        await prisma.noteItem.deleteMany({ where: { noteId } });
+        try {
+          const participantIds = await getParticipantIdsForNote(noteId, note);
+          for (const uid of (participantIds.length ? participantIds : [note.ownerId])) {
+            notifyUser(uid, 'note-items-changed', { noteId, items: [] });
+          }
+        } catch {}
+        return res.json({ items: [] });
+      }
+
       const current = await prisma.note.findUnique({ where: { id: noteId }, include: { items: true } });
       const ordered = (current?.items || []).slice().sort((a, b) => (a.ord || 0) - (b.ord || 0));
       return res.json({ items: ordered });
     }
 
-    // sync: upsert provided items only; do NOT delete missing here to avoid accidental wipe during transient states
-    await prisma.$transaction(
+    // Sync: upsert provided items. If `replaceMissing` is true, also delete DB rows
+    // that are not present in the provided list (full authoritative replace).
+    const results = await prisma.$transaction(
       items.map((it, idx) => {
         const base = { content: String(it.content || ''), checked: !!it.checked, ord: typeof it.ord === 'number' ? it.ord : idx, indent: typeof it.indent === 'number' ? it.indent : 0 };
         if (it.id) {
@@ -814,6 +883,19 @@ router.put('/api/notes/:id/items', async (req: Request, res: Response) => {
         return prisma.noteItem.create({ data: { noteId, ...base } });
       })
     );
+
+    if (replaceMissing) {
+      try {
+        const keepIds = (Array.isArray(results) ? results : [])
+          .map((r: any) => Number(r?.id))
+          .filter((n: any) => Number.isFinite(n));
+
+        // If none of the upserts returned ids, avoid deleting everything.
+        if (keepIds.length) {
+          await prisma.noteItem.deleteMany({ where: { noteId, id: { notIn: keepIds } } });
+        }
+      } catch {}
+    }
 
     const updated = await prisma.note.findUnique({ where: { id: noteId }, include: { items: true } });
     const ordered = (updated?.items || []).slice().sort((a, b) => (a.ord || 0) - (b.ord || 0));

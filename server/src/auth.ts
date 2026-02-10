@@ -113,7 +113,10 @@ function mergeEffectivePrefs(user: any, devicePrefs: any | null): any {
     'animationBehavior',
     'animationsEnabled',
     'chipDisplayMode',
-    'imageThumbSize'
+    'imageThumbSize',
+    'editorImageThumbSize',
+    'editorImagesExpandedByDefault',
+    'disableNoteCardLinks'
   ];
   const merged: any = { ...user };
   for (const k of prefKeys) {
@@ -189,7 +192,10 @@ router.post("/api/auth/register", async (req: Request, res: Response) => {
             animationSpeed: user.animationSpeed,
             chipDisplayMode: user.chipDisplayMode,
             animationsEnabled: true,
-            imageThumbSize: 96
+            imageThumbSize: 96,
+            editorImageThumbSize: 115,
+            editorImagesExpandedByDefault: false,
+            disableNoteCardLinks: false
           },
           update: { lastSeenAt: new Date() }
         });
@@ -228,7 +234,16 @@ router.post("/api/auth/login", async (req: Request, res: Response) => {
       const ctx = await resolveDeviceContext(user.id, req);
       if (ctx) {
         const prismaAny = prisma as any;
-        const devicePrefs = await prismaAny.userDevicePrefs.findUnique({ where: { profileId: ctx.profileId } });
+        let devicePrefs = await prismaAny.userDevicePrefs.findUnique({ where: { profileId: ctx.profileId } });
+        // Backfill newly device-scoped fields from legacy user-scoped defaults.
+        try {
+          if (devicePrefs && (devicePrefs as any).disableNoteCardLinks == null && typeof (user as any).disableNoteCardLinks === 'boolean') {
+            devicePrefs = await prismaAny.userDevicePrefs.update({
+              where: { profileId: ctx.profileId },
+              data: { disableNoteCardLinks: (user as any).disableNoteCardLinks }
+            });
+          }
+        } catch {}
         (user as any) = mergeEffectivePrefs(user, devicePrefs);
         (user as any).device = { deviceKey: ctx.deviceKey, deviceName: ctx.deviceName };
       }
@@ -250,7 +265,16 @@ router.get("/api/auth/me", async (req: Request, res: Response) => {
     const ctx = await resolveDeviceContext(user.id, req);
     if (ctx) {
       const prismaAny = prisma as any;
-      const devicePrefs = await prismaAny.userDevicePrefs.findUnique({ where: { profileId: ctx.profileId } });
+      let devicePrefs = await prismaAny.userDevicePrefs.findUnique({ where: { profileId: ctx.profileId } });
+      // Backfill newly device-scoped fields from legacy user-scoped defaults.
+      try {
+        if (devicePrefs && (devicePrefs as any).disableNoteCardLinks == null && typeof (user as any).disableNoteCardLinks === 'boolean') {
+          devicePrefs = await prismaAny.userDevicePrefs.update({
+            where: { profileId: ctx.profileId },
+            data: { disableNoteCardLinks: (user as any).disableNoteCardLinks }
+          });
+        }
+      } catch {}
       effective = mergeEffectivePrefs(user, devicePrefs);
       effective.device = { deviceKey: ctx.deviceKey, deviceName: ctx.deviceName };
     }
@@ -265,7 +289,12 @@ router.patch('/api/auth/me', async (req: Request, res: Response) => {
   const user = await getUserFromToken(req);
   if (!user) return res.status(401).json({ error: 'unauthenticated' });
   const body = req.body || {};
-  const { name, fontFamily, noteWidth, dragBehavior, animationSpeed, checklistSpacing, checkboxSize, checklistTextSize, chipDisplayMode, noteLineSpacing, themeChoice, animationBehavior, animationsEnabled, imageThumbSize, trashAutoEmptyDays, linkColorDark, linkColorLight } = body as any;
+  const { name, fontFamily, noteWidth, dragBehavior, animationSpeed, checklistSpacing, checkboxSize, checklistTextSize, chipDisplayMode, noteLineSpacing, themeChoice, animationBehavior, animationsEnabled, imageThumbSize, trashAutoEmptyDays, linkColorDark, linkColorLight, editorImageThumbSize, editorImagesExpandedByDefault, disableNoteCardLinks } = body as any;
+
+  // Resolve device context early so we can decide whether a pref is user-scoped or device-scoped.
+  let deviceCtxEarly: DeviceContext | null = null;
+  try { deviceCtxEarly = await resolveDeviceContext((user as any).id, req); } catch {}
+
   const data: any = {};
   if (typeof name === 'string') data.name = name;
   // Store fontFamily on the user as a durable fallback (covers clients that don't send device headers)
@@ -277,6 +306,8 @@ router.patch('/api/auth/me', async (req: Request, res: Response) => {
   // User-scoped hyperlink colors (persist across devices)
   if ('linkColorDark' in body) data.linkColorDark = (body as any).linkColorDark;
   if ('linkColorLight' in body) data.linkColorLight = (body as any).linkColorLight;
+  // Note-card preferences: device-scoped when device headers exist, otherwise fall back to user-scoped.
+  if (typeof disableNoteCardLinks === 'boolean' && !deviceCtxEarly) data.disableNoteCardLinks = disableNoteCardLinks;
   // Preference fields are stored per-device profile when a device key is present.
   const prefData: any = {};
   if (typeof fontFamily === 'string') prefData.fontFamily = fontFamily;
@@ -292,6 +323,15 @@ router.patch('/api/auth/me', async (req: Request, res: Response) => {
   if (typeof animationBehavior === 'string') prefData.animationBehavior = animationBehavior;
   if (typeof animationsEnabled === 'boolean') prefData.animationsEnabled = animationsEnabled;
   if (typeof imageThumbSize === 'number') prefData.imageThumbSize = imageThumbSize;
+  if (typeof editorImageThumbSize === 'number' && Number.isFinite(editorImageThumbSize)) {
+    prefData.editorImageThumbSize = Math.max(48, Math.min(240, Math.trunc(editorImageThumbSize)));
+  }
+  if (typeof editorImagesExpandedByDefault === 'boolean') {
+    prefData.editorImagesExpandedByDefault = editorImagesExpandedByDefault;
+  }
+  if (typeof disableNoteCardLinks === 'boolean' && deviceCtxEarly) {
+    prefData.disableNoteCardLinks = disableNoteCardLinks;
+  }
   // allow setting checkbox colors to string values or null to clear
   if ('checkboxBg' in body) data.checkboxBg = (body as any).checkboxBg;
   if ('checkboxBorder' in body) data.checkboxBorder = (body as any).checkboxBorder;
@@ -299,10 +339,9 @@ router.patch('/api/auth/me', async (req: Request, res: Response) => {
     const updatedUser = await prisma.user.update({ where: { id: (user as any).id }, data });
 
     let effective: any = updatedUser;
-    let deviceCtx: DeviceContext | null = null;
+    let deviceCtx: DeviceContext | null = deviceCtxEarly;
     let updatedPrefs: any | null = null;
     try {
-      deviceCtx = await resolveDeviceContext((user as any).id, req);
       if (deviceCtx) {
         const prismaAny = prisma as any;
         if (Object.keys(prefData).length > 0) {

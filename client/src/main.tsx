@@ -12,12 +12,13 @@ function applySavedPrefs() {
 				'prefs.checklistTextSize': '--checklist-text-size',
 				'prefs.noteWidth': '--note-card-width',
 				'prefs.imageThumbSize': '--image-thumb-size',
+				'prefs.editorImageThumbSize': '--editor-image-thumb-size',
 				'prefs.fontFamily': '--app-font-family',
 				'prefs.noteLineSpacing': '--note-line-height',
 				'prefs.linkColorDark': '--link-color-dark',
 				'prefs.linkColorLight': '--link-color-light',
 			};
-			const pxKeys = new Set(['prefs.checklistSpacing', 'prefs.checkboxSize', 'prefs.checklistTextSize', 'prefs.noteWidth', 'prefs.imageThumbSize']);
+			const pxKeys = new Set(['prefs.checklistSpacing', 'prefs.checkboxSize', 'prefs.checklistTextSize', 'prefs.noteWidth', 'prefs.imageThumbSize', 'prefs.editorImageThumbSize']);
 			Object.entries(map).forEach(([key, cssVar]) => {
 				const v = localStorage.getItem(key);
 				if (v === null || v === '') return;

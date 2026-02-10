@@ -8,6 +8,7 @@ import RichTextEditor from "./RichTextEditor";
 import CollaboratorModal from "./CollaboratorModal";
 import MoreMenu from "./MoreMenu";
 import MoveToCollectionModal from "./MoveToCollectionModal";
+import UrlEntryModal from "./UrlEntryModal";
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faPalette, faUsers, faTag, faFolder } from '@fortawesome/free-solid-svg-icons';
 import LabelsDialog from "./LabelsDialog";
@@ -355,10 +356,21 @@ export default function NoteCard({
 
   const fileRef = useRef<HTMLInputElement | null>(null);
   const { token, user } = useAuth();
+  const disableNoteCardLinks = (() => {
+    try {
+      const stored = localStorage.getItem('prefs.disableNoteCardLinks');
+      if (stored !== null) return stored === 'true';
+      const v = (user as any)?.disableNoteCardLinks;
+      if (typeof v === 'boolean') return v;
+    } catch {}
+    return false;
+  })();
+  const disableNoteCardLinkClicksNow = !!disableNoteCardLinks;
 
   const [previewMenu, setPreviewMenu] = useState<{ x: number; y: number; previewId: number } | null>(null);
   const longPressTimerRef = useRef<number | null>(null);
   const [previewMenuIsSheet, setPreviewMenuIsSheet] = useState(false);
+  const [urlModal, setUrlModal] = useState<{ previewId: number; initialUrl: string } | null>(null);
   function clearLongPress() {
     if (longPressTimerRef.current) window.clearTimeout(longPressTimerRef.current);
     longPressTimerRef.current = null;
@@ -409,8 +421,17 @@ export default function NoteCard({
   }
 
   async function editPreview(previewId: number) {
-    const nextUrl = window.prompt('Edit URL:');
-    if (!nextUrl) return;
+    const currentUrl = (() => {
+      try {
+        const list = Array.isArray((note as any)?.linkPreviews) ? (note as any).linkPreviews : [];
+        const found = list.find((p: any) => Number(p?.id) === Number(previewId));
+        return found?.url ? String(found.url) : '';
+      } catch { return ''; }
+    })();
+    setUrlModal({ previewId: Number(previewId), initialUrl: currentUrl });
+  }
+
+  async function submitEditPreview(previewId: number, nextUrl: string) {
     try {
       const res = await fetch(`/api/notes/${note.id}/link-previews/${previewId}`, {
         method: 'PATCH',
@@ -743,6 +764,10 @@ export default function NoteCard({
 
   async function onConfirmReminder(draft: ReminderDraft) {
     setShowReminderPicker(false);
+    if (!isOwner) {
+      window.alert('Only the note owner can set reminders.');
+      return;
+    }
     try {
       // Request permission while we still have a user gesture.
       try {
@@ -778,6 +803,10 @@ export default function NoteCard({
 
   async function onClearReminder() {
     setShowReminderPicker(false);
+    if (!isOwner) {
+      window.alert('Only the note owner can clear reminders.');
+      return;
+    }
     try {
       const res = await fetch(`/api/notes/${note.id}`, {
         method: 'PATCH',
@@ -794,6 +823,10 @@ export default function NoteCard({
   }
 
   async function toggleArchive() {
+    if (!!((note as any)?.trashedAt)) {
+      window.alert('This note is in Trash. Restore it before archiving.');
+      return;
+    }
     const next = !archived;
     if (next) {
       const ok = window.confirm('Archive this note?');
@@ -918,7 +951,7 @@ export default function NoteCard({
         }
       } catch {}
 
-      const res = await fetch(`/api/notes/${note.id}/items`, { method: 'PUT', headers: { 'Content-Type': 'application/json', Authorization: token ? `Bearer ${token}` : '' }, body: JSON.stringify({ items: updated }) });
+      const res = await fetch(`/api/notes/${note.id}/items`, { method: 'PUT', headers: { 'Content-Type': 'application/json', Authorization: token ? `Bearer ${token}` : '' }, body: JSON.stringify({ items: updated, replaceMissing: true }) });
       if (!res.ok) throw new Error(await res.text());
       // no full reload needed; local state already reflects changes
     } catch (err) {
@@ -944,7 +977,7 @@ export default function NoteCard({
         }
       } catch {}
 
-      const res = await fetch(`/api/notes/${note.id}/items`, { method: 'PUT', headers: { 'Content-Type': 'application/json', Authorization: token ? `Bearer ${token}` : '' }, body: JSON.stringify({ items: updated }) });
+      const res = await fetch(`/api/notes/${note.id}/items`, { method: 'PUT', headers: { 'Content-Type': 'application/json', Authorization: token ? `Bearer ${token}` : '' }, body: JSON.stringify({ items: updated, replaceMissing: true }) });
       if (!res.ok) throw new Error(await res.text());
       // no full reload needed; local state already reflects changes
     } catch (err) {
@@ -1345,6 +1378,19 @@ export default function NoteCard({
       <div
         className="note-body"
         ref={bodyRef}
+        onClickCapture={(e) => {
+          try {
+            if (!disableNoteCardLinkClicksNow) return;
+            const target = e.target as HTMLElement | null;
+            const a = target && (target as any).closest ? (target as any).closest('a') as HTMLAnchorElement | null : null;
+            if (!a || !a.getAttribute) return;
+            const href = a.getAttribute('href');
+            if (!href) return;
+            e.preventDefault();
+            e.stopPropagation();
+            openEditor();
+          } catch {}
+        }}
         onClick={() => { openEditor(); }}
       >
         {noteItems && noteItems.length > 0 ? (
@@ -1477,7 +1523,21 @@ export default function NoteCard({
                     onPointerCancel={clearLongPress}
                     onPointerMove={clearLongPress}
                   >
-                    <a className="link-preview" href={p.url} target="_blank" rel="noopener noreferrer" title={p.title || domain || p.url}>
+                    <a
+                      className="link-preview"
+                      href={p.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      title={p.title || domain || p.url}
+                      onClick={(e) => {
+                        try {
+                          if (!disableNoteCardLinkClicksNow) return;
+                          e.preventDefault();
+                          e.stopPropagation();
+                          openEditor();
+                        } catch {}
+                      }}
+                    >
                       <div className="link-preview-image" aria-hidden>
                         {p.imageUrl ? (
                           <img src={p.imageUrl} alt="" loading="lazy" />
@@ -1569,7 +1629,14 @@ export default function NoteCard({
           <button className="tiny palette" onClick={() => setShowPalette(true)} aria-label="Change color" title="Change color">
             <FontAwesomeIcon icon={faPalette} className="palette-svg" />
           </button>
-          <button className="tiny" onClick={() => setShowReminderPicker(true)} aria-label="Reminder" title="Reminder">
+          <button
+            className="tiny"
+            onClick={() => { if (isOwner) setShowReminderPicker(true); else window.alert('Only the note owner can set reminders.'); }}
+            aria-label="Reminder"
+            title={isOwner ? 'Reminder' : 'Reminder (owner-only)'}
+            disabled={!isOwner}
+            style={!isOwner ? { opacity: 0.45, cursor: 'not-allowed' } : undefined}
+          >
             <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
               <path d="M12 22c1.1 0 2-.9 2-2h-4a2 2 0 0 0 2 2z"/>
               <path d="M18 8V7a6 6 0 1 0-12 0v1c0 3.5-2 5-2 5h16s-2-1.5-2-5z"/>
@@ -1594,7 +1661,9 @@ export default function NoteCard({
             className="tiny"
             onClick={toggleArchive}
             aria-label={archived ? 'Unarchive' : 'Archive'}
-            title={archived ? 'Unarchive' : 'Archive'}
+            title={isTrashed ? 'Cannot archive from Trash' : (archived ? 'Unarchive' : 'Archive')}
+            disabled={isTrashed}
+            style={isTrashed ? { opacity: 0.45, cursor: 'not-allowed' } : undefined}
           >
             {archived ? (
               // Unarchive icon (box with upward arrow)
@@ -1625,7 +1694,7 @@ export default function NoteCard({
         <MoreMenu
           anchorRef={noteRef}
           anchorPoint={moreAnchorPoint}
-          itemsCount={isTrashed && isOwner ? 7 : 6}
+          itemsCount={isTrashed ? 2 : 6}
           onClose={() => setShowMore(false)}
           pinned={pinned}
           onTogglePin={(!isTrashed && isOwner) ? togglePinned : undefined}
@@ -1633,11 +1702,11 @@ export default function NoteCard({
           deleteLabel={isTrashed ? 'Delete permanently' : (isOwner ? 'Move to trash' : 'Leave note')}
           onRestore={isTrashed && isOwner ? onRestoreNote : undefined}
           restoreLabel="Restore"
-          onMoveToCollection={() => setShowMoveToCollection(true)}
-          onAddLabel={onAddLabel}
-          onUncheckAll={(note.type === 'CHECKLIST' || (noteItems && noteItems.length > 0)) ? onUncheckAll : undefined}
-          onCheckAll={(note.type === 'CHECKLIST' || (noteItems && noteItems.length > 0)) ? onCheckAll : undefined}
-          onSetWidth={onSetCardWidth}
+          onMoveToCollection={isTrashed ? undefined : (() => setShowMoveToCollection(true))}
+          onAddLabel={isTrashed ? undefined : onAddLabel}
+          onUncheckAll={isTrashed ? undefined : ((note.type === 'CHECKLIST' || (noteItems && noteItems.length > 0)) ? onUncheckAll : undefined)}
+          onCheckAll={isTrashed ? undefined : ((note.type === 'CHECKLIST' || (noteItems && noteItems.length > 0)) ? onCheckAll : undefined)}
+          onSetWidth={isTrashed ? undefined : onSetCardWidth}
         />
       )}
 
@@ -1668,6 +1737,19 @@ export default function NoteCard({
           }}
         />
       )}
+
+      <UrlEntryModal
+        open={!!urlModal}
+        title="Edit URL preview"
+        initialUrl={urlModal?.initialUrl}
+        onCancel={() => setUrlModal(null)}
+        onSubmit={(url) => {
+          const st = urlModal;
+          setUrlModal(null);
+          if (!st) return;
+          submitEditPreview(Number(st.previewId), String(url));
+        }}
+      />
 
       {showCollaborator && (
         <CollaboratorModal
@@ -1727,11 +1809,14 @@ export default function NoteCard({
           onImagesUpdated={(imgs) => { setImagesWithNotify(() => imgs); }}
           moreMenu={{
             onDelete: onDeleteNote,
-            onAddLabel,
-            onMoveToCollection: () => setShowMoveToCollection(true),
-            onUncheckAll,
-            onCheckAll,
-            onSetWidth: onSetCardWidth,
+            deleteLabel: isTrashed ? 'Delete permanently' : undefined,
+            onRestore: (isTrashed && isOwner) ? onRestoreNote : undefined,
+            restoreLabel: 'Restore',
+            onAddLabel: isTrashed ? undefined : onAddLabel,
+            onMoveToCollection: isTrashed ? undefined : (() => setShowMoveToCollection(true)),
+            onUncheckAll: isTrashed ? undefined : onUncheckAll,
+            onCheckAll: isTrashed ? undefined : onCheckAll,
+            onSetWidth: isTrashed ? undefined : onSetCardWidth,
           }}
         />
       )}
@@ -1752,9 +1837,12 @@ export default function NoteCard({
           onImagesUpdated={(imgs) => { setImagesWithNotify(() => imgs); }}
           moreMenu={{
             onDelete: onDeleteNote,
-            onAddLabel,
-            onMoveToCollection: () => setShowMoveToCollection(true),
-            onSetWidth: onSetCardWidth,
+            deleteLabel: isTrashed ? 'Delete permanently' : undefined,
+            onRestore: (isTrashed && isOwner) ? onRestoreNote : undefined,
+            restoreLabel: 'Restore',
+            onAddLabel: isTrashed ? undefined : onAddLabel,
+            onMoveToCollection: isTrashed ? undefined : (() => setShowMoveToCollection(true)),
+            onSetWidth: isTrashed ? undefined : onSetCardWidth,
           }}
         />
       )}

@@ -5,6 +5,7 @@ import { Editor, Extension } from '@tiptap/core';
 import StarterKit from '@tiptap/starter-kit';
 import TextAlign from '@tiptap/extension-text-align';
 import Underline from '@tiptap/extension-underline';
+import Link from '@tiptap/extension-link';
 import Collaboration from '@tiptap/extension-collaboration';
 import * as Y from 'yjs';
 import { WebsocketProvider } from 'y-websocket';
@@ -17,7 +18,8 @@ import CollaboratorModal from './CollaboratorModal';
 import ImageDialog from './ImageDialog';
 import CreateMoreMenu from './CreateMoreMenu';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faPalette } from '@fortawesome/free-solid-svg-icons';
+import { faLink, faPalette } from '@fortawesome/free-solid-svg-icons';
+import UrlEntryModal from './UrlEntryModal';
 
 export default function MobileCreateModal({
   open,
@@ -40,6 +42,7 @@ export default function MobileCreateModal({
 
   const [title, setTitle] = React.useState('');
   const [items, setItems] = React.useState<Array<{ uid: string; content: string; checked: boolean; indent: number }>>([]);
+  const [activeChecklistRowKey, setActiveChecklistRowKey] = React.useState<string | null>(null);
   const [bg, setBg] = React.useState<string>('');
   const [textColor, setTextColor] = React.useState<string | undefined>(undefined);
   const [showPalette, setShowPalette] = React.useState(false);
@@ -49,6 +52,8 @@ export default function MobileCreateModal({
   const [showImageDialog, setShowImageDialog] = React.useState(false);
   const [imageUrl, setImageUrl] = React.useState<string | null>(null);
   const [selectedCollaborators, setSelectedCollaborators] = React.useState<Array<{ id: number; email: string }>>([]);
+  const [pendingLinkUrls, setPendingLinkUrls] = React.useState<string[]>([]);
+  const [showUrlModal, setShowUrlModal] = React.useState(false);
 
   const activeCollectionId = (activeCollection && Number.isFinite(Number(activeCollection.id))) ? Number(activeCollection.id) : null;
   const activeCollectionPath = (activeCollection && typeof activeCollection.path === 'string') ? String(activeCollection.path) : '';
@@ -65,6 +70,7 @@ export default function MobileCreateModal({
       StarterKit.configure({ heading: { levels: [1, 2, 3] } }),
       TextAlign.configure({ types: ['heading', 'paragraph'] }),
       Underline,
+      Link.configure({ openOnClick: true, autolink: true }),
       Extension.create({
         name: 'paragraphEnterFix',
         priority: 1000,
@@ -89,6 +95,14 @@ export default function MobileCreateModal({
     editorProps: { attributes: { class: 'rt-editor' } },
     content: '',
   });
+
+  function applyTextLink() {
+    try { setShowUrlModal(true); } catch {}
+  }
+
+  function applyChecklistLink() {
+    try { setShowUrlModal(true); } catch {}
+  }
 
   const overlayStateRef = React.useRef({
     showPalette: false,
@@ -154,10 +168,13 @@ export default function MobileCreateModal({
     try { setAddToCurrentCollection(activeCollectionId != null); } catch {}
 
     if (mode === 'checklist') {
-      setItems([{ uid: genUid(), content: '', checked: false, indent: 0 }]);
+      const firstUid = genUid();
+      setItems([{ uid: firstUid, content: '', checked: false, indent: 0 }]);
+      setActiveChecklistRowKey(firstUid);
       window.setTimeout(() => focusItem(0), 30);
     } else {
       setItems([]);
+      setActiveChecklistRowKey(null);
       requestAnimationFrame(() => {
         try { editor?.commands.focus('end'); } catch {}
       });
@@ -179,8 +196,10 @@ export default function MobileCreateModal({
     try { setShowReminderPicker(false); } catch {}
     try { setShowCollaborator(false); } catch {}
     try { setShowImageDialog(false); } catch {}
+    try { setShowUrlModal(false); } catch {}
     try { editor?.commands.clearContent(); } catch {}
-    try { setTitle(''); setItems([]); setBg(''); setImageUrl(null); setSelectedCollaborators([]); setPendingReminder(null); } catch {}
+    try { setTitle(''); setItems([]); setActiveChecklistRowKey(null); setBg(''); setImageUrl(null); setSelectedCollaborators([]); setPendingReminder(null); } catch {}
+    try { setPendingLinkUrls([]); } catch {}
     onClose();
   }
 
@@ -188,7 +207,7 @@ export default function MobileCreateModal({
     try {
       const hasTitle = !!title.trim();
       const hasBg = !!bg;
-      const hasExtras = !!(imageUrl || (selectedCollaborators && selectedCollaborators.length));
+      const hasExtras = !!(imageUrl || (selectedCollaborators && selectedCollaborators.length) || (pendingLinkUrls && pendingLinkUrls.length));
       if (mode === 'checklist') {
         const anyItem = (items || []).some((it) => !!String(it.content || '').trim() || !!it.checked);
         return hasTitle || hasBg || hasExtras || anyItem;
@@ -222,6 +241,18 @@ export default function MobileCreateModal({
       if (!res.ok) throw new Error(await res.text());
       const data = await res.json();
       const noteId = data?.note?.id;
+
+      if (noteId && pendingLinkUrls.length) {
+        for (const url of pendingLinkUrls) {
+          try {
+            await fetch(`/api/notes/${noteId}/link-preview`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', Authorization: token ? `Bearer ${token}` : '' },
+              body: JSON.stringify({ url }),
+            });
+          } catch {}
+        }
+      }
 
       if (noteId && addToCurrentCollection && activeCollectionId != null) {
         try {
@@ -294,6 +325,7 @@ export default function MobileCreateModal({
       }
 
       try { editor?.commands.clearContent(); } catch {}
+  try { setPendingLinkUrls([]); } catch {}
       onCreated();
       onClose();
     } catch (err) {
@@ -598,6 +630,38 @@ export default function MobileCreateModal({
         </div>
 
         <div className="dialog-body">
+          <UrlEntryModal
+            open={showUrlModal}
+            title="Add URL preview"
+            onCancel={() => setShowUrlModal(false)}
+            onSubmit={(url) => {
+              setShowUrlModal(false);
+              setPendingLinkUrls((cur) => {
+                const next = Array.isArray(cur) ? cur.slice() : [];
+                if (next.includes(String(url))) return next;
+                next.push(String(url));
+                return next;
+              });
+            }}
+          />
+
+          {pendingLinkUrls.length > 0 && (
+            <div className="note-link-previews" style={{ marginBottom: 10 }}>
+              {pendingLinkUrls.map((u) => {
+                const domain = (() => { try { return new URL(u).hostname.replace(/^www\./i, ''); } catch { return ''; } })();
+                return (
+                  <div key={u} className="link-preview-row editor-link-preview" style={{ alignItems: 'center' }}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{domain || u}</div>
+                      <div style={{ fontSize: 12, opacity: 0.85, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{u}</div>
+                    </div>
+                    <button className="tiny" type="button" onClick={() => setPendingLinkUrls((cur) => (cur || []).filter((x) => x !== u))} aria-label="Remove URL" title="Remove URL">✕</button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
           {mode === 'text' ? (
             <>
               <div className="rt-sticky-header">
@@ -613,6 +677,7 @@ export default function MobileCreateModal({
                   <button className="tiny" onClick={() => editor?.chain().focus().toggleBold().run()} aria-pressed={editor?.isActive('bold')} aria-label="Bold" title="Bold">B</button>
                   <button className="tiny" onClick={() => editor?.chain().focus().toggleItalic().run()} aria-pressed={editor?.isActive('italic')} aria-label="Italic" title="Italic">I</button>
                   <button className="tiny" onClick={() => editor?.chain().focus().toggleUnderline().run()} aria-pressed={editor?.isActive('underline')} aria-label="Underline" title="Underline">U</button>
+                  <button className="tiny" onClick={applyTextLink} aria-label="Add URL preview" title="Add URL preview"><FontAwesomeIcon icon={faLink} /></button>
                   <button className="tiny" onClick={() => editor?.chain().focus().toggleHeading({ level: 1 }).run()} aria-pressed={editor?.isActive('heading', { level: 1 })} aria-label="Heading 1" title="Heading 1">H1</button>
                   <button className="tiny" onClick={() => editor?.chain().focus().toggleHeading({ level: 2 }).run()} aria-pressed={editor?.isActive('heading', { level: 2 })} aria-label="Heading 2" title="Heading 2">H2</button>
                   <button className="tiny" onClick={() => editor?.chain().focus().toggleHeading({ level: 3 }).run()} aria-pressed={editor?.isActive('heading', { level: 3 })} aria-label="Heading 3" title="Heading 3">H3</button>
@@ -644,7 +709,8 @@ export default function MobileCreateModal({
                   <button className="tiny" onClick={() => applyChecklistMarkAcrossLine('bold')} aria-pressed={isCurrentLineMarked('bold')} aria-label="Bold" title="Bold">B</button>
                   <button className="tiny" onClick={() => applyChecklistMarkAcrossLine('italic')} aria-pressed={isCurrentLineMarked('italic')} aria-label="Italic" title="Italic">I</button>
                   <button className="tiny" onClick={() => applyChecklistMarkAcrossLine('underline')} aria-pressed={isCurrentLineMarked('underline')} aria-label="Underline" title="Underline">U</button>
-                  <button className="btn" type="button" onClick={() => { addItem(); focusItem(items.length); }} style={{ padding: '6px 10px' }}>Add item</button>
+                  <button className="tiny" onClick={applyChecklistLink} aria-label="Add URL preview" title="Add URL preview"><FontAwesomeIcon icon={faLink} /></button>
+                  <button className="btn" type="button" onClick={() => { const newUid = genUid(); setItems((cur) => [...(cur || []), { uid: newUid, content: '', checked: false, indent: 0 }]); setActiveChecklistRowKey(newUid); focusItem(items.length); }} style={{ padding: '6px 10px' }}>Add item</button>
                 </div>
               </div>
 
@@ -652,10 +718,11 @@ export default function MobileCreateModal({
                 {(previewItems ?? items ?? []).map((it, idx) => {
                   const currentList = (previewItems ?? items ?? []);
                   const shiftClass = shiftClassForIndex(idx, currentList);
+                  const isActive = activeChecklistRowKey != null && String(activeChecklistRowKey) === String(it.uid);
                   return (
                     <div
                       key={it.uid || String(idx)}
-                      className={`checklist-item${dragging === idx ? ' drag-source' : ''}${shiftClass ? ' ' + shiftClass : ''}`}
+                      className={`checklist-item${isActive ? ' is-active' : ''}${dragging === idx ? ' drag-source' : ''}${shiftClass ? ' ' + shiftClass : ''}`}
                       style={{ marginLeft: Number(it.indent || 0) * 18 }}
                       draggable={false}
                       onClick={(e) => { try { e.stopPropagation(); } catch {} }}
@@ -813,10 +880,13 @@ export default function MobileCreateModal({
                         <ChecklistItemRT
                           value={it.content}
                           onChange={(html) => updateItem(idx, html)}
+                          onRequestUrlPreview={() => { try { setShowUrlModal(true); } catch {} }}
                           onEnter={() => {
+                            const newUid = genUid();
+                            try { setActiveChecklistRowKey(newUid); } catch {}
                             setItems((cur) => {
                               const copy = [...(cur || [])];
-                              copy.splice(idx + 1, 0, { uid: genUid(), content: '', checked: false, indent: Number(it.indent || 0) });
+                              copy.splice(idx + 1, 0, { uid: newUid, content: '', checked: false, indent: Number(it.indent || 0) });
                               return copy;
                             });
                             focusItem(idx + 1);
@@ -825,6 +895,7 @@ export default function MobileCreateModal({
                           onArrowDown={() => focusItem(Math.min(items.length - 1, idx + 1))}
                           onBackspaceEmpty={() => {
                             if (idx > 0) {
+                              try { setActiveChecklistRowKey(items[idx - 1]?.uid || null); } catch {}
                               setItems((cur) => { const copy = [...(cur || [])]; copy.splice(idx, 1); return copy; });
                               focusItem(idx - 1);
                             }
@@ -832,6 +903,7 @@ export default function MobileCreateModal({
                           onFocus={(ed: any) => {
                             activeChecklistEditor.current = ed;
                             itemEditorRefs.current[idx] = ed;
+                            try { setActiveChecklistRowKey(it.uid); } catch {}
                             try { setChecklistToolbarTick(t => t + 1); } catch {}
                           }}
                           placeholder={''}
@@ -849,9 +921,11 @@ export default function MobileCreateModal({
                             if (next.length === 0) {
                               activeChecklistEditor.current = null;
                               itemEditorRefs.current = [];
+                              try { setActiveChecklistRowKey(null); } catch {}
                               return next;
                             }
                             const focusIdx = Math.max(0, Math.min(idx - 1, next.length - 1));
+                            try { setActiveChecklistRowKey(next[focusIdx]?.uid || null); } catch {}
                             window.setTimeout(() => focusItem(focusIdx), 30);
                             return next;
                           });

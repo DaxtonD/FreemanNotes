@@ -19,6 +19,8 @@ model User {
   // Hyperlink colors (user-scoped across devices)
   linkColorDark  String?        @default("#8ab4f8")
   linkColorLight String?        @default("#0b57d0")
+  // Note-card preferences (user-scoped across devices)
+  disableNoteCardLinks Boolean?  @default(false)
   checkboxBg     String?
   checkboxBorder String?
   noteWidth      Int?           @default(288)
@@ -94,6 +96,9 @@ model UserDevicePrefs {
   animationsEnabled Boolean?         @default(true)
   chipDisplayMode  String?
   imageThumbSize   Int?
+  editorImageThumbSize Int?          @default(115)
+  editorImagesExpandedByDefault Boolean? @default(false)
+  disableNoteCardLinks Boolean?       @default(false)
   createdAt        DateTime          @default(now())
   updatedAt        DateTime          @updatedAt
   profile          UserDeviceProfile @relation(fields: [profileId], references: [id])

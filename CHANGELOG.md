@@ -4,6 +4,24 @@ All notable changes to this project will be documented in this file.
 
 Adheres to Semantic Versioning (MAJOR.MINOR.PATCH).
 
+## [0.5.2] - 2026-02-10
+
+### Added
+- Per-device preferences for editor and note-card behavior (stored under device profile when device headers are present).
+
+### Changed
+- Note creation and editing UX refinements across desktop and mobile (create modal/flows, note-card interactions, and grid behavior).
+
+### Fixed
+- Trash menus now match across all devices and editors: trashed notes show Restore + Delete permanently.
+- Enforced rule: trashed notes can’t be archived (UI guard + server-side conflict response).
+- Checklists automatically prune empty-text items on save/close (client-side Yjs + server-side filtering on create/sync).
+
+## [0.5.1] - 2026-02-09
+
+### Fixed
+- Docker/GitHub build: `npm ci` no longer fails when the repository hasn’t copied `prisma/schema.prisma` yet (postinstall now skips Prisma steps until schema exists).
+
 ## [0.5.0] - 2026-02-08
 
 ### Added
@@ -18,11 +36,6 @@ Adheres to Semantic Versioning (MAJOR.MINOR.PATCH).
 ### Fixed
 - Mobile image and menu UX (bottom-sheet picker, long-press actions, in-app confirm dialog).
 - Collapsed desktop sidebar icons now expand and perform their actions.
-
-## [0.5.1] - 2026-02-09
-
-### Fixed
-- Docker/GitHub build: `npm ci` no longer fails when the repository hasn’t copied `prisma/schema.prisma` yet (postinstall now skips Prisma steps until schema exists).
 
 ## [0.4.6] - 2026-02-08
 

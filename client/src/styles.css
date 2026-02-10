@@ -35,6 +35,7 @@
   /* Max card height for preview. Tuned to roughly fit ~18 checklist rows on typical settings. */
   --note-card-max-height: 672px;
   --image-thumb-size: 96px;
+  --editor-image-thumb-size: 115px;
   /* Multi-line clamp for plain-text preview (TEXT notes). */
   --note-text-preview-lines: 14;
   --app-font-family: Inter, system-ui, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
@@ -791,10 +792,19 @@ html.is-editor-modal-open .mobile-add-note{
 .image-dialog .checklist-item { align-items: center; }
 .image-dialog.checklist-editor .checklist-item { align-items: center; }
 .image-dialog.checklist-editor .checklist-item .drag-gutter { align-items: center; }
-.image-dialog .checklist-item:hover { background: rgba(255,255,255,0.06); }
-:root[data-theme="light"] .image-dialog .checklist-item:hover { background: rgba(0,0,0,0.06); }
-.take-note-expanded .checklist-item:hover { background: rgba(255,255,255,0.06); }
-:root[data-theme="light"] .take-note-expanded .checklist-item:hover { background: rgba(0,0,0,0.06); }
+.image-dialog .checklist-item.is-active { background: rgba(255,255,255,0.06); }
+:root[data-theme="light"] .image-dialog .checklist-item.is-active { background: rgba(0,0,0,0.06); }
+.take-note-expanded .checklist-item.is-active { background: rgba(255,255,255,0.06); }
+:root[data-theme="light"] .take-note-expanded .checklist-item.is-active { background: rgba(0,0,0,0.06); }
+
+/* Apply hover affordances only on devices that actually support hover.
+   On touch devices, `:hover` can stick and cause the wrong row to stay highlighted after Enter/new item. */
+@media (hover: hover) and (pointer: fine) {
+  .image-dialog .checklist-item:hover { background: rgba(255,255,255,0.06); }
+  :root[data-theme="light"] .image-dialog .checklist-item:hover { background: rgba(0,0,0,0.06); }
+  .take-note-expanded .checklist-item:hover { background: rgba(255,255,255,0.06); }
+  :root[data-theme="light"] .take-note-expanded .checklist-item:hover { background: rgba(0,0,0,0.06); }
+}
 .checklist-item .drag-gutter { display:flex; align-items:center; gap:8px; }
 .checklist-item .drag-handle {
   opacity: 0.9;
@@ -1313,9 +1323,6 @@ button.chip:focus{outline:2px solid rgba(255,255,255,0.18);outline-offset:2px;}
 }
 
 /* Editor (modal) image group */
-.image-dialog{
-  --editor-image-thumb-size: calc(var(--image-thumb-size) * 1.2);
-}
 .image-dialog .editor-images-toggle{
   padding: 6px 10px;
 }
@@ -1455,6 +1462,34 @@ button.chip:focus{outline:2px solid rgba(255,255,255,0.18);outline-offset:2px;}
     padding: 0;
     border: none;
   }
+
+  /* Phone: keep URL entry as a compact centered dialog (not fullscreen). */
+  .image-dialog-backdrop.url-entry-backdrop{
+    align-items: center;
+    justify-content: center;
+    padding: 10px;
+  }
+  .editor-dialog.url-entry-dialog{
+    width: min(560px, 94vw) !important;
+    height: auto;
+    max-height: min(80dvh, 460px) !important;
+    border-radius: 16px;
+    padding: 12px;
+    border: 1px solid rgba(255,255,255,0.04);
+  }
+  :root[data-theme="light"] .editor-dialog.url-entry-dialog{
+    border-color: rgba(0,0,0,0.08);
+  }
+  .editor-dialog.url-entry-dialog .dialog-header{
+    padding: 10px 12px;
+  }
+  .editor-dialog.url-entry-dialog .dialog-footer{
+    padding: 10px 12px;
+    position: static;
+    box-shadow: none;
+    gap: 8px;
+  }
+
   .editor-dialog.maximized{ width: 100vw !important; max-height: none !important; }
   .editor-dialog .dialog-header{
     padding: calc(10px + env(safe-area-inset-top)) 12px 10px;
@@ -1729,7 +1764,9 @@ button.chip:focus{outline:2px solid rgba(255,255,255,0.18);outline-offset:2px;}
   .create-collection-toggle input{ width: 22px; height: 22px; }
 }
 .delete-item{ background:transparent;border:none;color:var(--muted);cursor:pointer;opacity:0; transition:opacity 140ms; padding:4px 6px;border-radius:6px; align-self:center; pointer-events:none }
-.checklist-item:hover .delete-item{ opacity:1; pointer-events:auto }
+@media (hover: hover) and (pointer: fine) {
+  .checklist-item:hover .delete-item{ opacity:1; pointer-events:auto }
+}
 .checklist-item.is-active .delete-item{ opacity:1; pointer-events:auto }
 
 /* Checklist editor: remove Chrome focus ring/border around the rich-text item editor */

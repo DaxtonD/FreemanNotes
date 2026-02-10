@@ -63,10 +63,10 @@ export default function MoreMenu({
   onRestore?: () => void;
   restoreLabel?: string;
   onMoveToCollection?: () => void;
-  onAddLabel: () => void;
+  onAddLabel?: () => void;
   onUncheckAll?: () => void;
   onCheckAll?: () => void;
-  onSetWidth: (span: 1 | 2 | 3) => void;
+  onSetWidth?: (span: 1 | 2 | 3) => void;
 }) {
   const rootRef = useRef<HTMLDivElement | null>(null);
   const [style, setStyle] = useState<React.CSSProperties>({ position: "fixed", visibility: "hidden", left: 0, top: 0, zIndex: 10000 });
@@ -243,18 +243,20 @@ export default function MoreMenu({
             }}
           />
         )}
-        <MenuItem
-          label={'Add label'}
-          icon={
-            <MenuIcon>
-              <path d="M3 12.2V6a3 3 0 0 1 3-3h6.2a3 3 0 0 1 2.12.88l6.8 6.8a3 3 0 0 1 0 4.24l-5.3 5.3a3 3 0 0 1-4.24 0l-6.8-6.8A3 3 0 0 1 3 12.2ZM6 5a1 1 0 0 0-1 1v6.2c0 .27.1.52.29.71l6.8 6.8a1 1 0 0 0 1.42 0l5.3-5.3a1 1 0 0 0 0-1.42l-6.8-6.8A1 1 0 0 0 12.2 5H6Zm1.5 1.5a1.25 1.25 0 1 1 0 2.5 1.25 1.25 0 0 1 0-2.5Z" />
-            </MenuIcon>
-          }
-          onClick={() => {
-            onAddLabel();
-            onClose();
-          }}
-        />
+        {onAddLabel && (
+          <MenuItem
+            label={'Add label'}
+            icon={
+              <MenuIcon>
+                <path d="M3 12.2V6a3 3 0 0 1 3-3h6.2a3 3 0 0 1 2.12.88l6.8 6.8a3 3 0 0 1 0 4.24l-5.3 5.3a3 3 0 0 1-4.24 0l-6.8-6.8A3 3 0 0 1 3 12.2ZM6 5a1 1 0 0 0-1 1v6.2c0 .27.1.52.29.71l6.8 6.8a1 1 0 0 0 1.42 0l5.3-5.3a1 1 0 0 0 0-1.42l-6.8-6.8A1 1 0 0 0 12.2 5H6Zm1.5 1.5a1.25 1.25 0 1 1 0 2.5 1.25 1.25 0 0 1 0-2.5Z" />
+              </MenuIcon>
+            }
+            onClick={() => {
+              onAddLabel();
+              onClose();
+            }}
+          />
+        )}
         {onUncheckAll && (
           <MenuItem
             label={'Uncheck all'}
@@ -285,46 +287,50 @@ export default function MoreMenu({
         )}
       </div>
 
-      <hr className="more-sep" />
+      {onSetWidth && (
+        <>
+          <hr className="more-sep" />
 
-      <div className="more-group">
-        <MenuItem
-          label={'Card width: Regular'}
-          icon={
-            <MenuIcon>
-              <path d="M6 5h12a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2Zm0 2v10h12V7H6Z" />
-            </MenuIcon>
-          }
-          onClick={() => {
-            onSetWidth(1);
-            onClose();
-          }}
-        />
-        <MenuItem
-          label={'Card width: Double'}
-          icon={
-            <MenuIcon>
-              <path d="M4 7a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V7Zm2 0v10h5V7H6Zm7 0v10h5V7h-5Z" />
-            </MenuIcon>
-          }
-          onClick={() => {
-            onSetWidth(2);
-            onClose();
-          }}
-        />
-        <MenuItem
-          label={'Card width: Triple'}
-          icon={
-            <MenuIcon>
-              <path d="M4 7a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V7Zm2 0v10h3V7H6Zm5 0v10h3V7h-3Zm5 0v10h3V7h-3Z" />
-            </MenuIcon>
-          }
-          onClick={() => {
-            onSetWidth(3);
-            onClose();
-          }}
-        />
-      </div>
+          <div className="more-group">
+            <MenuItem
+              label={'Card width: Regular'}
+              icon={
+                <MenuIcon>
+                  <path d="M6 5h12a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2Zm0 2v10h12V7H6Z" />
+                </MenuIcon>
+              }
+              onClick={() => {
+                onSetWidth(1);
+                onClose();
+              }}
+            />
+            <MenuItem
+              label={'Card width: Double'}
+              icon={
+                <MenuIcon>
+                  <path d="M4 7a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V7Zm2 0v10h5V7H6Zm7 0v10h5V7h-5Z" />
+                </MenuIcon>
+              }
+              onClick={() => {
+                onSetWidth(2);
+                onClose();
+              }}
+            />
+            <MenuItem
+              label={'Card width: Triple'}
+              icon={
+                <MenuIcon>
+                  <path d="M4 7a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V7Zm2 0v10h3V7H6Zm5 0v10h3V7h-3Zm5 0v10h3V7h-3Z" />
+                </MenuIcon>
+              }
+              onClick={() => {
+                onSetWidth(3);
+                onClose();
+              }}
+            />
+          </div>
+        </>
+      )}
       </div>
     </>
   );

@@ -70,6 +70,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         document.documentElement.style.setProperty('--image-thumb-size', String((user as any).imageThumbSize) + 'px');
         localStorage.setItem('prefs.imageThumbSize', String((user as any).imageThumbSize));
       }
+      // Editor preferences are device-scoped, but they come through on the effective user
+      // via server-side mergeEffectivePrefs (so applying them here is still correct).
+      if (typeof (user as any).editorImageThumbSize === 'number') {
+        document.documentElement.style.setProperty('--editor-image-thumb-size', String((user as any).editorImageThumbSize) + 'px');
+        localStorage.setItem('prefs.editorImageThumbSize', String((user as any).editorImageThumbSize));
+      }
+      if (typeof (user as any).editorImagesExpandedByDefault === 'boolean') {
+        localStorage.setItem('prefs.editorImagesExpandedByDefault', String((user as any).editorImagesExpandedByDefault));
+      }
+      if (typeof (user as any).disableNoteCardLinks === 'boolean') {
+        localStorage.setItem('prefs.disableNoteCardLinks', String((user as any).disableNoteCardLinks));
+      }
       if ((user as any).checkboxBg) {
         document.documentElement.style.setProperty('--checkbox-bg', (user as any).checkboxBg);
         localStorage.setItem('prefs.checkboxBg', (user as any).checkboxBg);

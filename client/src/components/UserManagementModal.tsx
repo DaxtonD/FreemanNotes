@@ -25,6 +25,37 @@ export default function UserManagementModal({ onClose }: { onClose: () => void }
   const token = auth?.token;
   const me = auth?.user as any;
 
+  // Mobile back button: treat this as an overlay.
+  const backIdRef = React.useRef<string>('');
+  const onCloseRef = React.useRef<(() => void) | null>(null);
+  onCloseRef.current = onClose;
+  const isPhoneLike = (() => {
+    try {
+      const mq = window.matchMedia;
+      const touchLike = !!(mq && (mq('(pointer: coarse)').matches || mq('(any-pointer: coarse)').matches));
+      const vw = (window.visualViewport && typeof window.visualViewport.width === 'number') ? window.visualViewport.width : window.innerWidth;
+      const vh = (window.visualViewport && typeof window.visualViewport.height === 'number') ? window.visualViewport.height : window.innerHeight;
+      const shortSide = Math.min(vw, vh);
+      return touchLike && shortSide <= 600;
+    } catch { return false; }
+  })();
+
+  React.useEffect(() => {
+    if (!isPhoneLike) return;
+    try {
+      if (!backIdRef.current) backIdRef.current = `user-mgmt-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+      const id = backIdRef.current;
+      const onBack = () => { try { onCloseRef.current?.(); } catch {} };
+      window.dispatchEvent(new CustomEvent('freemannotes:back/register', { detail: { id, onBack } }));
+      return () => {
+        try { window.dispatchEvent(new CustomEvent('freemannotes:back/unregister', { detail: { id } })); } catch {}
+      };
+    } catch {
+      return;
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isPhoneLike]);
+
   const [isNarrow, setIsNarrow] = React.useState<boolean>(() => {
     try { return window.matchMedia('(max-width: 760px)').matches; } catch { return false; }
   });

@@ -19,6 +19,7 @@ import ConfirmDialog from './ConfirmDialog';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faLink, faPalette } from '@fortawesome/free-solid-svg-icons';
 import MoreMenu from './MoreMenu';
+import UrlEntryModal from './UrlEntryModal';
 
 export default function RichTextEditor({ note, onClose, onSaved, noteBg, onImagesUpdated, onColorChanged, moreMenu }:
   {
@@ -30,12 +31,18 @@ export default function RichTextEditor({ note, onClose, onSaved, noteBg, onImage
     onColorChanged?: (color: string) => void;
     moreMenu?: {
       onDelete: () => void;
-      onAddLabel: () => void;
+      deleteLabel?: string;
+      onRestore?: () => void;
+      restoreLabel?: string;
+      onAddLabel?: () => void;
       onMoveToCollection?: () => void;
-      onSetWidth: (span: 1 | 2 | 3) => void;
+      onSetWidth?: (span: 1 | 2 | 3) => void;
     };
   }) {
   const { token, user } = useAuth();
+  const ownerId = (typeof (note as any).owner?.id === 'number' ? Number((note as any).owner.id) : (typeof (note as any).ownerId === 'number' ? Number((note as any).ownerId) : undefined));
+  const currentUserId = (user && (user as any).id) ? Number((user as any).id) : undefined;
+  const isOwner = !!(ownerId && currentUserId && ownerId === currentUserId);
   const clientIdRef = React.useRef<string>((() => {
     try { return `c${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`; } catch { return `c${Math.random()}`; }
   })());
@@ -86,7 +93,16 @@ export default function RichTextEditor({ note, onClose, onSaved, noteBg, onImage
   const [showCollaborator, setShowCollaborator] = React.useState(false);
   const [showImageDialog, setShowImageDialog] = React.useState(false);
   const [images, setImages] = React.useState<Array<{ id:number; url:string }>>(((note as any).images || []).map((i:any)=>({ id:Number(i.id), url:String(i.url) })));
-  const [imagesOpen, setImagesOpen] = React.useState(false);
+  const defaultImagesOpen = (() => {
+    try {
+      const stored = localStorage.getItem('prefs.editorImagesExpandedByDefault');
+      if (stored !== null) return stored === 'true';
+      const v = (user as any)?.editorImagesExpandedByDefault;
+      if (typeof v === 'boolean') return v;
+    } catch {}
+    return false;
+  })();
+  const [imagesOpen, setImagesOpen] = React.useState(defaultImagesOpen);
   const [linkPreviews, setLinkPreviews] = React.useState<any[]>(() => {
     try {
       const raw = Array.isArray((note as any).linkPreviews) ? (note as any).linkPreviews : [];
@@ -109,9 +125,14 @@ export default function RichTextEditor({ note, onClose, onSaved, noteBg, onImage
   const seededOnceRef = React.useRef<boolean>(false);
   const syncedRef = React.useRef<boolean>(false);
   const dirtyRef = React.useRef<boolean>(false);
+  const [urlModal, setUrlModal] = React.useState<{ mode: 'add' | 'edit'; previewId?: number; initialUrl?: string } | null>(null);
 
   async function onConfirmReminder(draft: ReminderDraft) {
     setShowReminderPicker(false);
+    if (!isOwner) {
+      window.alert('Only the note owner can set reminders.');
+      return;
+    }
     try {
       try {
         if (typeof Notification !== 'undefined' && Notification.permission === 'default') {
@@ -133,6 +154,10 @@ export default function RichTextEditor({ note, onClose, onSaved, noteBg, onImage
 
   async function onClearReminder() {
     setShowReminderPicker(false);
+    if (!isOwner) {
+      window.alert('Only the note owner can clear reminders.');
+      return;
+    }
     try {
       const res = await fetch(`/api/notes/${note.id}`, {
         method: 'PATCH',
@@ -312,12 +337,7 @@ export default function RichTextEditor({ note, onClose, onSaved, noteBg, onImage
   }, [editor]);
 
   function applyLink() {
-    if (!editor) return;
-    const url = window.prompt('Enter URL:');
-    if (url) {
-      editor.chain().focus().extendMarkRange('link').setLink({ href: url }).run();
-      try { requestLinkPreview(String(url)); } catch {}
-    }
+    try { setUrlModal({ mode: 'add' }); } catch {}
   }
 
   const linkPreviewTimerRef = React.useRef<number | null>(null);
@@ -352,6 +372,33 @@ export default function RichTextEditor({ note, onClose, onSaved, noteBg, onImage
         .filter((p: any) => Number.isFinite(p.id) && p.url);
       setLinkPreviews(next);
     } catch {}
+  }
+
+  async function submitEditPreview(previewId: number, nextUrl: string) {
+    try {
+      const res = await fetch(`/api/notes/${note.id}/link-previews/${previewId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', Authorization: token ? `Bearer ${token}` : '' },
+        body: JSON.stringify({ url: nextUrl }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      const data = await res.json();
+      const raw = Array.isArray(data?.previews) ? data.previews : [];
+      const next = raw
+        .map((p: any) => ({
+          id: Number(p?.id),
+          url: String(p?.url || ''),
+          title: (p?.title == null ? null : String(p.title)),
+          description: (p?.description == null ? null : String(p.description)),
+          imageUrl: (p?.imageUrl == null ? null : String(p.imageUrl)),
+          domain: (p?.domain == null ? null : String(p.domain)),
+        }))
+        .filter((p: any) => Number.isFinite(p.id) && p.url);
+      setLinkPreviews(next);
+    } catch (e) {
+      console.error(e);
+      window.alert('Failed to edit URL');
+    }
   }
 
   const [previewMenu, setPreviewMenu] = React.useState<{ x: number; y: number; previewId: number } | null>(null);
@@ -879,7 +926,14 @@ export default function RichTextEditor({ note, onClose, onSaved, noteBg, onImage
             <button className="tiny palette" onClick={() => setShowPalette(true)} aria-label="Change color" title="Change color">
               <FontAwesomeIcon icon={faPalette} className="palette-svg" />
             </button>
-            <button className="tiny" onClick={() => setShowReminderPicker(true)} aria-label="Reminder" title="Reminder">
+            <button
+              className="tiny"
+              onClick={() => { if (isOwner) setShowReminderPicker(true); else window.alert('Only the note owner can set reminders.'); }}
+              aria-label="Reminder"
+              title={isOwner ? 'Reminder' : 'Reminder (owner-only)'}
+              disabled={!isOwner}
+              style={!isOwner ? { opacity: 0.45, cursor: 'not-allowed' } : undefined}
+            >
               <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
                 <path d="M12 22c1.1 0 2-.9 2-2h-4a2 2 0 0 0 2 2z"/>
                 <path d="M18 8V7a6 6 0 1 0-12 0v1c0 3.5-2 5-2 5h16s-2-1.5-2-5z"/>
@@ -962,9 +1016,12 @@ export default function RichTextEditor({ note, onClose, onSaved, noteBg, onImage
       {moreMenu && showMore && (
         <MoreMenu
           anchorRef={moreBtnRef as any}
-          itemsCount={moreMenu.onMoveToCollection ? 5 : 4}
+          itemsCount={((note as any)?.trashedAt ? 2 : (moreMenu.onMoveToCollection ? 5 : 4))}
           onClose={() => setShowMore(false)}
           onDelete={moreMenu.onDelete}
+          deleteLabel={moreMenu.deleteLabel}
+          onRestore={moreMenu.onRestore}
+          restoreLabel={moreMenu.restoreLabel}
           onMoveToCollection={moreMenu.onMoveToCollection}
           onAddLabel={moreMenu.onAddLabel}
           onSetWidth={moreMenu.onSetWidth}

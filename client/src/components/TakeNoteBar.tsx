@@ -14,8 +14,10 @@ import ReminderPicker, { type ReminderDraft } from './ReminderPicker';
 import CollaboratorModal from './CollaboratorModal';
 import ImageDialog from './ImageDialog';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faPalette } from '@fortawesome/free-solid-svg-icons';
+import { faLink, faPalette } from '@fortawesome/free-solid-svg-icons';
 import Underline from '@tiptap/extension-underline';
+import Link from '@tiptap/extension-link';
+import UrlEntryModal from './UrlEntryModal';
 
 export default function TakeNoteBar({
   onCreated,
@@ -32,6 +34,8 @@ export default function TakeNoteBar({
   const [title, setTitle] = useState('');
   const [body, setBody] = useState('');
   const [maximized, setMaximized] = useState(false);
+  const [pendingLinkUrls, setPendingLinkUrls] = useState<string[]>([]);
+  const [showUrlModal, setShowUrlModal] = useState(false);
   const editor = useEditor({
     extensions: [
       StarterKit.configure({
@@ -39,6 +43,7 @@ export default function TakeNoteBar({
       }),
       TextAlign.configure({ types: ['heading', 'paragraph'] }),
       Underline,
+      Link.configure({ openOnClick: true, autolink: true }),
       Extension.create({
         name: 'paragraphEnterFix',
         priority: 1000,
@@ -57,6 +62,14 @@ export default function TakeNoteBar({
       },
     },
   });
+
+  function applyTextLink() {
+    try { setShowUrlModal(true); } catch {}
+  }
+
+  function applyChecklistLink() {
+    try { setShowUrlModal(true); } catch {}
+  }
 
   function shouldFullscreenOnMobile(): boolean {
     try {
@@ -129,8 +142,10 @@ export default function TakeNoteBar({
 
     if (nextMode === 'checklist') {
       setItems((cur) => (cur && cur.length ? cur : [{ content: '' }]));
+      try { setActiveChecklistRowIdx(0); } catch {}
       setTimeout(() => focusItem(0), 30);
     } else {
+      try { setActiveChecklistRowIdx(null); } catch {}
       requestAnimationFrame(() => {
         try { editor?.commands.focus('end'); } catch {}
       });
@@ -181,6 +196,7 @@ export default function TakeNoteBar({
   }, [expanded]);
 
   const [items, setItems] = useState<{ content: string; checked?: boolean }[]>([]);
+  const [activeChecklistRowIdx, setActiveChecklistRowIdx] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
   const draggingIdx = useRef<number | null>(null);
@@ -303,7 +319,7 @@ export default function TakeNoteBar({
     try {
       const hasTitle = !!title.trim();
       const hasBg = !!bg;
-      const hasExtras = !!(imageUrl || (selectedCollaborators && selectedCollaborators.length));
+      const hasExtras = !!(imageUrl || (selectedCollaborators && selectedCollaborators.length) || (pendingLinkUrls && pendingLinkUrls.length));
       if (mode === 'checklist') {
         const anyItem = (items || []).some((it) => !!String(it.content || '').trim() || !!it.checked);
         return hasTitle || hasBg || hasExtras || anyItem;
@@ -322,7 +338,9 @@ export default function TakeNoteBar({
     try { setShowReminderPicker(false); } catch {}
     try { setShowCollaborator(false); } catch {}
     try { setShowImageDialog(false); } catch {}
-    try { setTitle(''); setBody(''); setItems([]); setBg(''); setImageUrl(null); setSelectedCollaborators([]); setPendingReminder(null); } catch {}
+    try { setShowUrlModal(false); } catch {}
+    try { setTitle(''); setBody(''); setItems([]); setActiveChecklistRowIdx(null); setBg(''); setImageUrl(null); setSelectedCollaborators([]); setPendingReminder(null); } catch {}
+    try { setPendingLinkUrls([]); } catch {}
     try { editor?.commands.clearContent(); } catch {}
   }
 
@@ -448,6 +466,18 @@ export default function TakeNoteBar({
       const data = await res.json();
       const noteId = data?.note?.id;
 
+      if (noteId && pendingLinkUrls.length) {
+        for (const url of pendingLinkUrls) {
+          try {
+            await fetch(`/api/notes/${noteId}/link-preview`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', Authorization: token ? `Bearer ${token}` : '' },
+              body: JSON.stringify({ url }),
+            });
+          } catch {}
+        }
+      }
+
       if (noteId && addToCurrentCollection && activeCollectionId != null) {
         try {
           const cres = await fetch(`/api/notes/${noteId}/collections`, {
@@ -503,7 +533,8 @@ export default function TakeNoteBar({
       if (noteId && imageUrl) {
         try { await fetch(`/api/notes/${noteId}/images`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ url: imageUrl }) }); } catch {}
       }
-      setTitle(''); setBody(''); setItems([]); setExpanded(false); setBg(''); setImageUrl(null); setSelectedCollaborators([]); setPendingReminder(null);
+      setTitle(''); setBody(''); setItems([]); setActiveChecklistRowIdx(null); setExpanded(false); setBg(''); setImageUrl(null); setSelectedCollaborators([]); setPendingReminder(null);
+      try { setPendingLinkUrls([]); } catch {}
       try { setAddToCurrentCollection(activeCollectionId != null); } catch {}
       editor?.commands.clearContent();
       onCreated && onCreated();
@@ -638,7 +669,7 @@ export default function TakeNoteBar({
                 <rect x="5" y="17" width="14" height="2" rx="1" />
               </svg>
             </button>
-            {/* Link insertion is available in the full editor only */}
+            <button className="tiny" onClick={applyTextLink} aria-label="Add URL preview" title="Add URL preview"><FontAwesomeIcon icon={faLink} /></button>
             <button className="tiny" onClick={() => setMaximized(m => !m)} aria-label="Toggle maximize" title="Toggle maximize">⤢</button>
             </div>
           </div>
@@ -653,7 +684,7 @@ export default function TakeNoteBar({
                 case 'b': e.preventDefault(); toggleMarkAcrossLine('bold'); break;
                 case 'i': e.preventDefault(); toggleMarkAcrossLine('italic'); break;
                 case 'u': e.preventDefault(); toggleMarkAcrossLine('underline'); break;
-                // 'k' (insert link) is available in the full editor only
+                case 'k': e.preventDefault(); applyTextLink(); break;
                 case 'l': e.preventDefault(); editor.chain().focus().setTextAlign('left').run(); break;
                 case 'r': e.preventDefault(); editor.chain().focus().setTextAlign('right').run(); break;
                 case 'e': e.preventDefault(); editor.chain().focus().setTextAlign('center').run(); break;
@@ -710,6 +741,18 @@ export default function TakeNoteBar({
               onClick={() => { if (skipNextChecklistToolbarClickRef.current) { skipNextChecklistToolbarClickRef.current = false; return; } applyChecklistMarkAcrossLine('underline'); }}
               aria-pressed={isCurrentLineMarked('underline')}
             >U</button>
+            <button
+              className="tiny"
+              type="button"
+              tabIndex={-1}
+              onPointerDownCapture={(e) => { e.preventDefault(); e.stopPropagation(); skipNextChecklistToolbarClickRef.current = true; applyChecklistLink(); }}
+              onPointerUp={(e) => { e.preventDefault(); e.stopPropagation(); }}
+              onMouseDownCapture={(e) => { e.preventDefault(); e.stopPropagation(); }}
+              onMouseUp={(e) => e.preventDefault()}
+              onClick={() => { if (skipNextChecklistToolbarClickRef.current) { skipNextChecklistToolbarClickRef.current = false; return; } applyChecklistLink(); }}
+              aria-label="Add URL preview"
+              title="Add URL preview"
+            ><FontAwesomeIcon icon={faLink} /></button>
             </div>
           </div>
 
@@ -724,6 +767,7 @@ export default function TakeNoteBar({
                   e.preventDefault();
                   e.stopPropagation();
                   setItems([{ content: '' }]);
+                  setActiveChecklistRowIdx(0);
                   // wait for ChecklistItemRT to mount + register
                   setTimeout(() => focusItem(0), 30);
                 }}
@@ -733,7 +777,7 @@ export default function TakeNoteBar({
           {items.map((it, idx) => (
             <div
               key={idx}
-              className="checklist-item"
+              className={`checklist-item${activeChecklistRowIdx === idx ? ' is-active' : ''}`}
               draggable
               onDragStart={(e) => { draggingIdx.current = idx; e.dataTransfer?.setData('text/plain', String(idx)); }}
               onDragOver={(e) => e.preventDefault()}
@@ -765,7 +809,9 @@ export default function TakeNoteBar({
                 <ChecklistItemRT
                   value={it.content}
                   onChange={(html) => updateItem(idx, html)}
+                  onRequestUrlPreview={() => { try { setShowUrlModal(true); } catch {} }}
                   onEnter={() => {
+                    try { setActiveChecklistRowIdx(idx + 1); } catch {}
                     setItems(s => { const copy = [...s]; copy.splice(idx + 1, 0, { content: '' }); return copy; });
                     focusItem(idx + 1);
                   }}
@@ -773,6 +819,7 @@ export default function TakeNoteBar({
                   onArrowDown={() => focusItem(Math.min(items.length - 1, idx + 1))}
                   onBackspaceEmpty={() => {
                     if (idx > 0) {
+                      try { setActiveChecklistRowIdx(idx - 1); } catch {}
                       setItems(s => { const copy = [...s]; copy.splice(idx, 1); return copy; });
                       focusItem(idx - 1);
                     }
@@ -780,6 +827,7 @@ export default function TakeNoteBar({
                   onFocus={(ed: any) => {
                     activeChecklistEditor.current = ed;
                     itemEditorRefs.current[idx] = ed;
+                    try { setActiveChecklistRowIdx(idx); } catch {}
                     setChecklistToolbarTick(t => t + 1);
                   }}
                   placeholder={''}
@@ -796,10 +844,12 @@ export default function TakeNoteBar({
                     if (next.length === 0) {
                       activeChecklistEditor.current = null;
                       itemEditorRefs.current = [];
+                      try { setActiveChecklistRowIdx(null); } catch {}
                       return next;
                     }
                     // focus previous (or first) after the list updates
                     const focusIdx = Math.max(0, Math.min(idx - 1, next.length - 1));
+                    try { setActiveChecklistRowIdx(focusIdx); } catch {}
                     setTimeout(() => focusItem(focusIdx), 30);
                     return next;
                   });
@@ -820,6 +870,38 @@ export default function TakeNoteBar({
           </div>
           <div style={{ flex: 1, fontSize: 13, opacity: 0.9 }}>1 image selected</div>
           <button className="btn" type="button" onClick={() => setImageUrl(null)} style={{ padding: '6px 10px' }}>Remove</button>
+        </div>
+      )}
+
+      <UrlEntryModal
+        open={showUrlModal}
+        title="Add URL preview"
+        onCancel={() => setShowUrlModal(false)}
+        onSubmit={(url) => {
+          setShowUrlModal(false);
+          setPendingLinkUrls((cur) => {
+            const next = Array.isArray(cur) ? cur.slice() : [];
+            if (next.includes(String(url))) return next;
+            next.push(String(url));
+            return next;
+          });
+        }}
+      />
+
+      {pendingLinkUrls.length > 0 && (
+        <div className="note-link-previews" style={{ marginTop: 10 }}>
+          {pendingLinkUrls.map((u) => {
+            const domain = (() => { try { return new URL(u).hostname.replace(/^www\./i, ''); } catch { return ''; } })();
+            return (
+              <div key={u} className="link-preview-row editor-link-preview" style={{ alignItems: 'center' }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{domain || u}</div>
+                  <div style={{ fontSize: 12, opacity: 0.85, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{u}</div>
+                </div>
+                <button className="tiny" type="button" onClick={() => setPendingLinkUrls((cur) => (cur || []).filter((x) => x !== u))} aria-label="Remove URL" title="Remove URL">✕</button>
+              </div>
+            );
+          })}
         </div>
       )}
 

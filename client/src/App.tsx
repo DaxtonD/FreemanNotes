@@ -26,6 +26,8 @@ function AppShell(): JSX.Element {
 	const { user, token } = useAuth();
 	const { canInstall, isInstalled } = usePwaInstall();
 	const [showPwaInstall, setShowPwaInstall] = React.useState(false);
+	const [showRootBackHint, setShowRootBackHint] = React.useState(false);
+	const rootBackHintTimerRef = React.useRef<number | null>(null);
 	const lastPwaNudgeAtRef = React.useRef<number>(0);
 	const [selectedLabelIds, setSelectedLabelIds] = React.useState<number[]>([]);
 	const [selectedCollaboratorId, setSelectedCollaboratorId] = React.useState<number | null>(null);
@@ -42,6 +44,30 @@ function AppShell(): JSX.Element {
 	const backRootArmedRef = React.useRef(false);
 	const lastRootBackAtRef = React.useRef<number>(0);
 	const allowExitOnceRef = React.useRef(false);
+	const sidebarBackIdRef = React.useRef<string>('');
+
+	const flashRootBackHint = React.useCallback(() => {
+		try {
+			setShowRootBackHint(true);
+			if (rootBackHintTimerRef.current != null) {
+				try { window.clearTimeout(rootBackHintTimerRef.current); } catch {}
+				rootBackHintTimerRef.current = null;
+			}
+			rootBackHintTimerRef.current = window.setTimeout(() => {
+				try { setShowRootBackHint(false); } catch {}
+				rootBackHintTimerRef.current = null;
+			}, 1200);
+		} catch {}
+	}, []);
+
+	React.useEffect(() => {
+		return () => {
+			if (rootBackHintTimerRef.current != null) {
+				try { window.clearTimeout(rootBackHintTimerRef.current); } catch {}
+				rootBackHintTimerRef.current = null;
+			}
+		};
+	}, []);
 
 	const clearAllFilters = React.useCallback(() => {
 		setSelectedLabelIds([]);
@@ -172,8 +198,22 @@ function AppShell(): JSX.Element {
 			try {
 				if (!isPhone) return;
 				if (stack.length > 0) {
-					const top = stack.pop();
+					// Important: don't pop the handler off our stack here.
+					// Some overlays use Back for internal navigation (e.g. Preferences section -> root)
+					// and remain open; in that case we must keep the handler registered and restore
+					// a history entry so subsequent Back presses keep working.
+					const top = stack[stack.length - 1];
+					const overlayId = String(top?.id || '');
 					try { top?.onBack?.(); } catch {}
+					window.setTimeout(() => {
+						try {
+							if (!isPhone) return;
+							if (!overlayId) return;
+							const stillRegistered = stack.some(x => String(x?.id || '') === overlayId);
+							if (!stillRegistered) return;
+							history.pushState({ ...(history.state || {}), __freemannotes_overlay: true, __freemannotes_overlay_id: overlayId }, document.title);
+						} catch {}
+					}, 0);
 					return;
 				}
 				// At root with no overlays: don't exit the app; bounce back to the sentinel.
@@ -189,16 +229,16 @@ function AppShell(): JSX.Element {
 					lastRootBackAtRef.current = now;
 					const within = (now - last) <= 800;
 					if (within) {
-						const ok = window.confirm('Exit FreemanNotes?');
-						if (ok) {
-							allowExitOnceRef.current = true;
-							window.setTimeout(() => {
-								try { history.back(); } catch {}
-								try { (window as any).close?.(); } catch {}
-							}, 0);
-							return;
-						}
+						// Native-style: double-back at root exits.
+						// We allow our handler to ignore the next popstate, and then we perform one more
+						// back navigation so we underflow past the base entry.
+						allowExitOnceRef.current = true;
+						window.setTimeout(() => {
+							try { history.back(); } catch {}
+						}, 0);
+						return;
 					}
+					try { flashRootBackHint(); } catch {}
 					window.setTimeout(() => {
 						try { history.go(1); } catch {}
 					}, 0);
@@ -225,6 +265,21 @@ function AppShell(): JSX.Element {
 		return () => window.removeEventListener('keydown', onKeyDown);
 	}, [sidebarDrawerOpen]);
 
+	React.useEffect(() => {
+		if (!isPhone) return;
+		if (!sidebarDrawerOpen) return;
+		try {
+			if (!sidebarBackIdRef.current) sidebarBackIdRef.current = `sidebar-drawer-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+			const id = sidebarBackIdRef.current;
+			const onBack = () => { try { setSidebarDrawerOpen(false); } catch {} };
+			window.dispatchEvent(new CustomEvent('freemannotes:back/register', { detail: { id, onBack } }));
+			return () => {
+				try { window.dispatchEvent(new CustomEvent('freemannotes:back/unregister', { detail: { id } })); } catch {}
+			};
+		} catch {
+			return;
+		}
+	}, [isPhone, sidebarDrawerOpen]);
 	React.useEffect(() => {
 		// If we leave phone layout, ensure the drawer closes.
 		if (!isPhone) setSidebarDrawerOpen(false);
@@ -258,10 +313,6 @@ function AppShell(): JSX.Element {
 			if (!el) return false;
 			try {
 				// If the swipe starts on a note card, we still want to allow opening the drawer.
-				// Only treat *actual* controls/links/editor surfaces as interactive.
-				if (el.closest('.note-card')) {
-					return !!el.closest('input, textarea, select, button, a, [contenteditable="true"]');
-				}
 				return !!el.closest('input, textarea, select, button, a, [contenteditable="true"], .take-note-expanded, .image-dialog, .prefs-dialog');
 			} catch {
 				return false;
@@ -510,6 +561,31 @@ function AppShell(): JSX.Element {
 						setShowPwaInstall(false);
 					}}
 				/>
+			)}
+
+			{isPhone && showRootBackHint && (
+				<div
+					role="status"
+					aria-live="polite"
+					style={{
+						position: 'fixed',
+						left: '50%',
+						transform: 'translateX(-50%)',
+						bottom: 18,
+						padding: '10px 14px',
+						borderRadius: 12,
+						background: 'rgba(0,0,0,0.78)',
+						color: '#fff',
+						fontSize: 14,
+						zIndex: 10050,
+						maxWidth: 'min(92vw, 420px)',
+						textAlign: 'center',
+						backdropFilter: 'blur(6px)',
+						WebkitBackdropFilter: 'blur(6px)',
+					}}
+				>
+					Press back again to exit
+				</div>
 			)}
 		</div>
 	);

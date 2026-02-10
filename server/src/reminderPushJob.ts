@@ -60,7 +60,6 @@ export function startReminderPushJob(prisma: any, opts?: { intervalMs?: number; 
           title: true,
           reminderDueAt: true,
           ownerId: true,
-          collaborators: { select: { userId: true } },
         },
         orderBy: [{ reminderAt: 'asc' }],
         take: maxNotesPerTick,
@@ -68,16 +67,8 @@ export function startReminderPushJob(prisma: any, opts?: { intervalMs?: number; 
 
       if (!dueNotes.length) return;
 
-      // Gather all target userIds.
-      const noteTargets = dueNotes.map((n: any) => {
-        const userIds = new Set<number>();
-        userIds.add(Number(n.ownerId));
-        for (const c of (n.collaborators || [])) {
-          const uid = Number(c.userId);
-          if (Number.isFinite(uid)) userIds.add(uid);
-        }
-        return { note: n, userIds: Array.from(userIds) };
-      });
+      // Reminders are owner-only.
+      const noteTargets = dueNotes.map((n: any) => ({ note: n, userIds: [Number(n.ownerId)] }));
 
       const allUserIds = Array.from(new Set<number>(noteTargets.flatMap(x => x.userIds)));
       const subs = await prisma.pushSubscription.findMany({

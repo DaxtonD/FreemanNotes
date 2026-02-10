@@ -14,9 +14,10 @@ export type ChecklistItemRTProps = {
   placeholder?: string;
   autoFocus?: boolean;
   onBackspaceEmpty?: () => void;
+  onRequestUrlPreview?: () => void;
 };
 
-export default function ChecklistItemRT({ value, onChange, onEnter, onArrowUp, onArrowDown, onFocus, placeholder, autoFocus, onBackspaceEmpty }: ChecklistItemRTProps) {
+export default function ChecklistItemRT({ value, onChange, onEnter, onArrowUp, onArrowDown, onFocus, placeholder, autoFocus, onBackspaceEmpty, onRequestUrlPreview }: ChecklistItemRTProps) {
   const initialText = (value || '').replace(/<[^>]+>/g, '');
   const editor = useEditor({
     extensions: [
@@ -77,9 +78,7 @@ export default function ChecklistItemRT({ value, onChange, onEnter, onArrowUp, o
             }
             case 'k': {
               event.preventDefault();
-              if (!editor) return true;
-              const url = window.prompt('Enter URL:');
-              if (url) editor.chain().focus().extendMarkRange('link').setLink({ href: url }).run();
+              try { onRequestUrlPreview && onRequestUrlPreview(); } catch {}
               return true;
             }
           }

@@ -32,3 +32,5 @@ logs/
 
 # Local capture artifacts
 /drag ghosting.mp4
+/drag-drop-bug.mp4
+/refresh-bug.mp4

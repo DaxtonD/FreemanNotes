@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useAuth } from '../authContext';
 
 export default function SettingsModal({ onClose }: { onClose: () => void }) {
@@ -7,6 +7,37 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
   const [role, setRole] = useState<'user' | 'admin'>('user');
   const [msg, setMsg] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+
+  // Mobile back button: treat this as an overlay.
+  const backIdRef = useRef<string>('');
+  const onCloseRef = useRef<(() => void) | null>(null);
+  onCloseRef.current = onClose;
+  const isPhoneLike = (() => {
+    try {
+      const mq = window.matchMedia;
+      const touchLike = !!(mq && (mq('(pointer: coarse)').matches || mq('(any-pointer: coarse)').matches));
+      const vw = (window.visualViewport && typeof window.visualViewport.width === 'number') ? window.visualViewport.width : window.innerWidth;
+      const vh = (window.visualViewport && typeof window.visualViewport.height === 'number') ? window.visualViewport.height : window.innerHeight;
+      const shortSide = Math.min(vw, vh);
+      return touchLike && shortSide <= 600;
+    } catch { return false; }
+  })();
+
+  useEffect(() => {
+    if (!isPhoneLike) return;
+    try {
+      if (!backIdRef.current) backIdRef.current = `settings-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+      const id = backIdRef.current;
+      const onBack = () => { try { onCloseRef.current?.(); } catch {} };
+      window.dispatchEvent(new CustomEvent('freemannotes:back/register', { detail: { id, onBack } }));
+      return () => {
+        try { window.dispatchEvent(new CustomEvent('freemannotes:back/unregister', { detail: { id } })); } catch {}
+      };
+    } catch {
+      return;
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isPhoneLike]);
 
   async function sendInvite(e?: React.FormEvent) {
     if (e) e.preventDefault();

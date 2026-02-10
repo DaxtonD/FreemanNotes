@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 // Ensure TS recognizes the global defined via Vite
 declare const __APP_VERSION__: string;
 import { useAuth } from '../authContext';
@@ -71,6 +71,34 @@ export default function PreferencesModal({ onClose }: { onClose: () => void }) {
       return Number.parseInt(String(docStyle.getPropertyValue('--image-thumb-size') || '').trim(), 10) || 96;
     } catch { return 96; }
   });
+  const [pendingEditorImageThumbSize, setPendingEditorImageThumbSize] = useState<number>(() => {
+    try {
+      const stored = localStorage.getItem('prefs.editorImageThumbSize');
+      if (stored) return Number(stored);
+      const userVal = auth && (auth.user as any)?.editorImageThumbSize;
+      if (typeof userVal === 'number') return userVal;
+      const docStyle = getComputedStyle(document.documentElement);
+      return Number.parseInt(String(docStyle.getPropertyValue('--editor-image-thumb-size') || '').trim(), 10) || 115;
+    } catch { return 115; }
+  });
+  const [pendingEditorImagesExpandedByDefault, setPendingEditorImagesExpandedByDefault] = useState<boolean>(() => {
+    try {
+      const stored = localStorage.getItem('prefs.editorImagesExpandedByDefault');
+      if (stored !== null) return stored === 'true';
+      const userVal = auth && (auth.user as any)?.editorImagesExpandedByDefault;
+      if (typeof userVal === 'boolean') return userVal;
+      return false;
+    } catch { return false; }
+  });
+  const [pendingDisableNoteCardLinks, setPendingDisableNoteCardLinks] = useState<boolean>(() => {
+    try {
+      const stored = localStorage.getItem('prefs.disableNoteCardLinks');
+      if (stored !== null) return stored === 'true';
+      const userVal = auth && (auth.user as any)?.disableNoteCardLinks;
+      if (typeof userVal === 'boolean') return userVal;
+      return false;
+    } catch { return false; }
+  });
   const [pendingCheckboxBg, setPendingCheckboxBg] = useState<string>(() => {
     try {
       const userVal = auth && (auth.user as any)?.checkboxBg;
@@ -141,6 +169,13 @@ export default function PreferencesModal({ onClose }: { onClose: () => void }) {
 
   const [emptyingTrashNow, setEmptyingTrashNow] = useState(false);
 
+  // Mobile back button: inside Preferences, Back should navigate up a level (section -> top)
+  // and from the top-level Preferences menu it should close Preferences (return to notes).
+  const backIdRef = useRef<string>('');
+  const activeSectionRef = useRef<string | null>(null);
+  const onCloseRef = useRef<(() => void) | null>(null);
+  onCloseRef.current = onClose;
+
   async function emptyTrashNow() {
     const token = (auth as any)?.token;
     if (!token) return;
@@ -174,6 +209,31 @@ export default function PreferencesModal({ onClose }: { onClose: () => void }) {
     } catch { return false; }
   })();
 
+  const [activeSection, setActiveSection] = useState<string | null>(null);
+  activeSectionRef.current = activeSection;
+
+  useEffect(() => {
+    if (!isPhone) return;
+    try {
+      if (!backIdRef.current) backIdRef.current = `prefs-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+      const id = backIdRef.current;
+      const onBack = () => {
+        try {
+          if (activeSectionRef.current != null) setActiveSection(null);
+          else onCloseRef.current?.();
+        } catch {}
+      };
+      window.dispatchEvent(new CustomEvent('freemannotes:back/register', { detail: { id, onBack } }));
+      return () => {
+        try { window.dispatchEvent(new CustomEvent('freemannotes:back/unregister', { detail: { id } })); } catch {}
+      };
+    } catch {
+      return;
+    }
+    // Only register once per mount (avoid pushing extra history entries).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isPhone]);
+
   // when the modal mounts, reflect current saved value into the slider
   useEffect(() => {
     const saved = (() => {
@@ -189,6 +249,18 @@ export default function PreferencesModal({ onClose }: { onClose: () => void }) {
     try {
       const its = localStorage.getItem('prefs.imageThumbSize') ?? ((auth && (auth.user as any)?.imageThumbSize) != null ? String((auth as any).user.imageThumbSize) : null);
       if (its) setPendingImageThumbSize(Number(its));
+    } catch {}
+    try {
+      const its = localStorage.getItem('prefs.editorImageThumbSize') ?? ((auth && (auth.user as any)?.editorImageThumbSize) != null ? String((auth as any).user.editorImageThumbSize) : null);
+      if (its) setPendingEditorImageThumbSize(Number(its));
+    } catch {}
+    try {
+      const v = localStorage.getItem('prefs.editorImagesExpandedByDefault') ?? ((auth && (auth.user as any)?.editorImagesExpandedByDefault) != null ? String((auth as any).user.editorImagesExpandedByDefault) : null);
+      if (v !== null) setPendingEditorImagesExpandedByDefault(v === 'true');
+    } catch {}
+    try {
+      const v = localStorage.getItem('prefs.disableNoteCardLinks') ?? ((auth && (auth.user as any)?.disableNoteCardLinks) != null ? String((auth as any).user.disableNoteCardLinks) : null);
+      if (v !== null) setPendingDisableNoteCardLinks(v === 'true');
     } catch {}
     // auto-fit removed
     try {
@@ -218,6 +290,17 @@ export default function PreferencesModal({ onClose }: { onClose: () => void }) {
     } catch {}
   }, []);
 
+  // Mobile: rearrange drag is disabled; migrate to swap.
+  useEffect(() => {
+    try {
+      if (!isPhone) return;
+      if (pendingDragBehavior !== 'rearrange') return;
+      setPendingDragBehavior('swap');
+      try { localStorage.setItem('prefs.dragBehavior', 'swap'); } catch {}
+      try { (auth as any)?.updateMe?.({ dragBehavior: 'swap' }); } catch {}
+    } catch {}
+  }, [isPhone, pendingDragBehavior]);
+
   async function onSave() {
     document.documentElement.style.setProperty('--checklist-gap', `${pending}px`);
     document.documentElement.style.setProperty('--checklist-checkbox-size', `${pendingCheckboxSize}px`);
@@ -228,6 +311,7 @@ export default function PreferencesModal({ onClose }: { onClose: () => void }) {
       document.documentElement.style.setProperty('--note-card-width', `${pendingNoteWidth}px`);
     }
     document.documentElement.style.setProperty('--image-thumb-size', `${pendingImageThumbSize}px`);
+    document.documentElement.style.setProperty('--editor-image-thumb-size', `${pendingEditorImageThumbSize}px`);
     document.documentElement.style.setProperty('--link-color-dark', pendingLinkColorDark);
     document.documentElement.style.setProperty('--link-color-light', pendingLinkColorLight);
     // checkbox color customization removed — theme controls visuals
@@ -239,6 +323,9 @@ export default function PreferencesModal({ onClose }: { onClose: () => void }) {
       try { localStorage.setItem('prefs.noteWidth', String(pendingNoteWidth)); } catch {}
     }
     try { localStorage.setItem('prefs.imageThumbSize', String(pendingImageThumbSize)); } catch {}
+    try { localStorage.setItem('prefs.editorImageThumbSize', String(pendingEditorImageThumbSize)); } catch {}
+    try { localStorage.setItem('prefs.editorImagesExpandedByDefault', String(pendingEditorImagesExpandedByDefault)); } catch {}
+    try { localStorage.setItem('prefs.disableNoteCardLinks', String(pendingDisableNoteCardLinks)); } catch {}
     try { localStorage.setItem('prefs.fontFamily', pendingFont); } catch {}
     try { localStorage.setItem('prefs.linkColorDark', pendingLinkColorDark); } catch {}
     try { localStorage.setItem('prefs.linkColorLight', pendingLinkColorLight); } catch {}
@@ -265,6 +352,9 @@ export default function PreferencesModal({ onClose }: { onClose: () => void }) {
         noteLineSpacing: pendingNoteLineSpacing,
         chipDisplayMode: pendingChipDisplayMode,
         imageThumbSize: pendingImageThumbSize,
+        editorImageThumbSize: pendingEditorImageThumbSize,
+        editorImagesExpandedByDefault: pendingEditorImagesExpandedByDefault,
+        disableNoteCardLinks: pendingDisableNoteCardLinks,
         trashAutoEmptyDays: pendingTrashAutoEmptyDays,
         linkColorDark: pendingLinkColorDark,
         linkColorLight: pendingLinkColorLight,
@@ -295,7 +385,7 @@ export default function PreferencesModal({ onClose }: { onClose: () => void }) {
   const [showUserMgmt, setShowUserMgmt] = useState(false);
   const [photoPreviewUrl, setPhotoPreviewUrl] = useState<string | null>(null);
   const [photoUploading, setPhotoUploading] = useState(false);
-  const [activeSection, setActiveSection] = useState<string | null>(null);
+  // activeSection declared above so Back handler can reference it.
   const [pushStatus, setPushStatus] = useState<PushClientStatus | null>(null);
   const [pushBusy, setPushBusy] = useState(false);
   const [pushMsg, setPushMsg] = useState<string | null>(null);
@@ -722,6 +812,25 @@ export default function PreferencesModal({ onClose }: { onClose: () => void }) {
                 </div>
                 <div style={{ height: 10 }} />
                 <div style={{ display: 'flex', gap: 12, alignItems: 'center', justifyContent: 'flex-start' }}>
+                  <label style={{ color: 'var(--muted)', minWidth: 120 }}>Editor thumbnails</label>
+                  <input aria-label="editor thumbnail size" type="range" min={48} max={240} step={8} value={pendingEditorImageThumbSize} onChange={(e) => setPendingEditorImageThumbSize(Number(e.target.value))} />
+                  <div style={{ width: 64, textAlign: 'left' }}>{pendingEditorImageThumbSize}px</div>
+                </div>
+                <div style={{ height: 10 }} />
+                <div style={{ display: 'flex', gap: 12, alignItems: 'center', justifyContent: 'flex-start', flexWrap: 'wrap' }}>
+                  <label style={{ color: 'var(--muted)', minWidth: 120 }}>Editor images</label>
+                  <label style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+                    <input
+                      aria-label="editor images expanded by default"
+                      type="checkbox"
+                      checked={pendingEditorImagesExpandedByDefault}
+                      onChange={(e) => setPendingEditorImagesExpandedByDefault(e.target.checked)}
+                    />
+                    <span>Expanded by default</span>
+                  </label>
+                </div>
+                <div style={{ height: 10 }} />
+                <div style={{ display: 'flex', gap: 12, alignItems: 'center', justifyContent: 'flex-start' }}>
                   <label style={{ color: 'var(--muted)', minWidth: 120 }}>App font</label>
                   <select value={pendingFont} onChange={(e) => setPendingFont(e.target.value)}>
                     <optgroup label="Recommended">
@@ -797,6 +906,22 @@ export default function PreferencesModal({ onClose }: { onClose: () => void }) {
                   <span style={{ color: 'var(--muted)', fontSize: 13 }}>Deletes everything currently in Trash.</span>
                 </div>
               </div>
+              <div style={{ marginBottom: 16 }}>
+                <h5 style={{ margin: 0, color: 'var(--muted)' }}>Note cards</h5>
+                <div style={{ display: 'flex', gap: 12, alignItems: 'center', justifyContent: 'flex-start', flexWrap: 'wrap' }}>
+                  <label style={{ color: 'var(--muted)', minWidth: 160 }}>Links</label>
+                  <label style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+                    <input
+                      aria-label="disable note card link clicks"
+                      type="checkbox"
+                      checked={pendingDisableNoteCardLinks}
+                      onChange={(e) => setPendingDisableNoteCardLinks(e.target.checked)}
+                    />
+                    <span>Disable link clicks in note previews</span>
+                  </label>
+                  <span style={{ color: 'var(--muted)', fontSize: 13 }}>Per-device setting (this device).</span>
+                </div>
+              </div>
               <div style={{ marginTop: 16, display: 'flex', gap: 8, justifyContent: 'flex-start' }}>
                 <button className="btn" type="button" onClick={() => setActiveSection(null)}>Back</button>
                 <button className="btn" type="button" onClick={onSave}>Save</button>
@@ -837,9 +962,18 @@ export default function PreferencesModal({ onClose }: { onClose: () => void }) {
                 <label style={{ color: 'var(--muted)', minWidth: 120 }}>Behavior</label>
                 <label style={{ color: 'var(--muted)' }}>Swap</label>
                 <input aria-label="drag swap" type="radio" name="dragBehavior" checked={pendingDragBehavior === 'swap'} onChange={() => setPendingDragBehavior('swap')} />
-                <label style={{ color: 'var(--muted)' }}>Rearrange</label>
-                <input aria-label="drag rearrange" type="radio" name="dragBehavior" checked={pendingDragBehavior === 'rearrange'} onChange={() => setPendingDragBehavior('rearrange')} />
+                {!isPhone && (
+                  <>
+                    <label style={{ color: 'var(--muted)' }}>Rearrange</label>
+                    <input aria-label="drag rearrange" type="radio" name="dragBehavior" checked={pendingDragBehavior === 'rearrange'} onChange={() => setPendingDragBehavior('rearrange')} />
+                  </>
+                )}
               </div>
+              {isPhone && (
+                <div style={{ marginTop: 6, color: 'var(--muted)', fontSize: 13 }}>
+                  Rearrange drag is disabled on mobile.
+                </div>
+              )}
               <div style={{ height: 10 }} />
               <div style={{ display: 'flex', gap: 12, alignItems: 'center', justifyContent: 'flex-start' }}>
                 <label style={{ color: 'var(--muted)', minWidth: 120 }}>Speed</label>
