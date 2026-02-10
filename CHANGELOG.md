@@ -6,6 +6,10 @@ Adheres to Semantic Versioning (MAJOR.MINOR.PATCH).
 
 ## [0.6.0] - 2026-02-10
 
+### Added
+- OCR pipeline for note images (PaddleOCR runner + preprocessing) with persisted OCR text/metadata on `NoteImage`.
+- Async server-side OCR queue with SHA-256 dedupe across identical images.
+
 ### Fixed
 - Enforced checklist empty-item pruning across create + edit editors.
 - Notes/checklists cleared to an empty state are discarded instead of being saved.
