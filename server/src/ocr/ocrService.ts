@@ -5,6 +5,7 @@ import { preprocessForOcr } from './imagePreprocess';
 import { runPaddleOcrOnPng } from './paddleRunner';
 import { normalizeOcrLines } from './textNormalize';
 import { resolveImageBuffer } from './imageInput';
+import { ocrLog } from './ocrLog';
 
 export function sha256Hex(buf: Buffer): string {
   return crypto.createHash('sha256').update(buf).digest('hex');
@@ -21,7 +22,9 @@ export async function extractOcrFromImage(input: ImageInput, opts?: { lang?: str
 
   let preprocessed: Buffer;
   try {
+    const t0 = Date.now();
     preprocessed = await preprocessForOcr(original);
+    ocrLog('debug', 'preprocess ok', { inBytes: original.length, outBytes: preprocessed.length, ms: Date.now() - t0 });
   } catch (e) {
     return { ok: false, code: 'INVALID_IMAGE', message: 'Failed to preprocess image for OCR.', cause: String(e) };
   }

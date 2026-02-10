@@ -5,6 +5,7 @@ import * as path from 'path';
 import crypto from 'crypto';
 
 import type { OcrFailure, OcrStructuredResult } from './types';
+import { ocrLog, tailString } from './ocrLog';
 
 const DEFAULT_LANG = 'en';
 const PYTHON_CANDIDATES = [
@@ -81,24 +82,36 @@ export async function runPaddleOcrOnPng(preprocessedPng: Buffer, opts?: { lang?:
   const lang = (opts?.lang || DEFAULT_LANG).trim() || DEFAULT_LANG;
   const scriptPath = path.resolve(process.cwd(), 'scripts', 'paddle_ocr.py');
 
+  ocrLog('debug', 'runner start', {
+    lang,
+    scriptPath,
+    pythonCandidates: PYTHON_CANDIDATES,
+    pythonBinEnv: process.env.PYTHON_BIN || null,
+    bytes: preprocessedPng.length,
+  });
+
   const tmpImage = await writeTempPng(preprocessedPng);
   const start = Date.now();
   try {
     for (const py of PYTHON_CANDIDATES) {
       const run = await runWithPython(py, scriptPath, tmpImage, lang);
       if (!run.ok) {
+        ocrLog('debug', 'spawn failed', { python: py, err: tailString((run as any).spawnErr, 800) });
         continue;
       }
 
       if (run.code !== 0) {
         if (isLikelyMissingDeps(run.err)) {
+          ocrLog('warn', 'deps missing', { python: py, exit: run.code, stderr: tailString(run.err, 1200) });
           return err('PYTHON_DEPS_MISSING', 'Python is available but PaddleOCR dependencies are missing.', run.err);
         }
         // If this looks like a missing Python binary, try the next candidate.
         if (isPythonNotFound(run.err, run.code)) {
+          ocrLog('debug', 'python not found candidate', { python: py, exit: run.code, stderr: tailString(run.err, 500) });
           continue;
         }
         // If the script ran but failed for a real engine reason, don't keep trying other python bins.
+        ocrLog('warn', 'runner nonzero exit', { python: py, exit: run.code, stderr: tailString(run.err, 1200) });
         return err('ENGINE_FAILED', `PaddleOCR runner failed (exit ${run.code}).`, run.err);
       }
 
@@ -106,6 +119,7 @@ export async function runPaddleOcrOnPng(preprocessedPng: Buffer, opts?: { lang?:
       try {
         parsed = JSON.parse(run.out || '{}');
       } catch (e) {
+        ocrLog('warn', 'runner invalid JSON', { python: py, err: tailString(e, 800), stdout: tailString(run.out, 800), stderr: tailString(run.err, 800) });
         return err('ENGINE_FAILED', 'PaddleOCR runner returned invalid JSON.', `${String(e)}; stderr=${run.err}`);
       }
 
@@ -113,6 +127,15 @@ export async function runPaddleOcrOnPng(preprocessedPng: Buffer, opts?: { lang?:
       const lines = Array.isArray(parsed?.lines) ? parsed.lines : [];
       const blocks = Array.isArray(parsed?.blocks) ? parsed.blocks : [];
       const avgConfidence = (typeof parsed?.avgConfidence === 'number') ? parsed.avgConfidence : undefined;
+
+      ocrLog('debug', 'runner ok', {
+        python: py,
+        durationMs: (typeof parsed?.durationMs === 'number') ? parsed.durationMs : durationMs,
+        avgConfidence,
+        lines: Array.isArray(lines) ? lines.length : undefined,
+        blocks: Array.isArray(blocks) ? blocks.length : undefined,
+        stderrLen: String(run.err || '').length,
+      });
 
       return {
         engine: 'paddleocr',

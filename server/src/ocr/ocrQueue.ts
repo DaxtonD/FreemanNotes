@@ -1,6 +1,7 @@
 import prisma from '../prismaClient';
 import { extractOcrFromImage, sha256Hex } from './ocrService';
 import { notifyUser } from '../events';
+import { ocrLog, summarizeOcrInputUrl, tailString } from './ocrLog';
 
 type Job = { noteImageId: number };
 
@@ -8,23 +9,11 @@ const queue: Job[] = [];
 const enqueued = new Set<number>();
 let running = false;
 
-function log(msg: string, extra?: any) {
-  try {
-    // eslint-disable-next-line no-console
-    console.info(`[OCR] ${msg}`, extra ?? '');
-  } catch {}
-}
-
-function warn(msg: string, extra?: any) {
-  try {
-    // eslint-disable-next-line no-console
-    console.warn(`[OCR] ${msg}`, extra ?? '');
-  } catch {}
-}
-
 async function processOne(job: Job): Promise<void> {
   const id = Number(job.noteImageId);
   if (!Number.isFinite(id)) return;
+
+  const tJobStart = Date.now();
 
   const img = await (prisma as any).noteImage.findUnique({ where: { id } });
   if (!img) return;
@@ -37,6 +26,8 @@ async function processOne(job: Job): Promise<void> {
   } catch {}
 
   const url = String(img.url || '');
+  const urlSummary = summarizeOcrInputUrl(url);
+  ocrLog('info', 'job start', { noteImageId: id, noteId, url: urlSummary.summary, status: (img as any).ocrStatus });
 
   // Mark running
   try {
@@ -48,12 +39,13 @@ async function processOne(job: Job): Promise<void> {
     const input = { kind: 'url' as const, url };
     const resolved = await (await import('./imageInput')).resolveImageBuffer(input);
     if (resolved.ok !== true) {
-      warn(`resolve failed for image ${id}: ${resolved.code} ${resolved.message}`);
+      ocrLog('warn', 'resolve failed', { noteImageId: id, code: resolved.code, message: resolved.message, url: urlSummary.summary });
       await (prisma as any).noteImage.update({ where: { id }, data: { ocrStatus: 'error', ocrUpdatedAt: new Date() } });
       return;
     }
 
     const hash = sha256Hex(resolved.buffer);
+    ocrLog('debug', 'resolved bytes', { noteImageId: id, bytes: resolved.buffer.length, sha256: hash.slice(0, 16), url: urlSummary.summary });
 
     // Reuse any existing OCR result by hash.
     try {
@@ -86,7 +78,7 @@ async function processOne(job: Job): Promise<void> {
             ocrUpdatedAt: new Date(),
           },
         });
-        log(`reused OCR for image ${id}`);
+        ocrLog('info', 'reused OCR by hash', { noteImageId: id, sha256: hash.slice(0, 16) });
         return;
       }
     } catch {}
@@ -94,7 +86,7 @@ async function processOne(job: Job): Promise<void> {
     // Fresh OCR
     const outcome = await extractOcrFromImage({ kind: 'buffer', buffer: resolved.buffer }, { lang: 'en' });
     if (outcome.ok !== true) {
-      warn(`failed for image ${id}: ${outcome.code} ${outcome.message}`);
+      ocrLog('warn', 'engine failed', { noteImageId: id, code: outcome.code, message: outcome.message, cause: tailString(outcome.cause, 800) });
       await (prisma as any).noteImage.update({
         where: { id },
         data: {
@@ -122,7 +114,15 @@ async function processOne(job: Job): Promise<void> {
       },
     });
 
-    log(`done image ${id} avgConf=${String(structured.avgConfidence ?? '')}`);
+    ocrLog('info', 'job done', {
+      noteImageId: id,
+      sha256: hash.slice(0, 16),
+      bytes: resolved.buffer.length,
+      engineMs: structured.durationMs,
+      avgConfidence: structured.avgConfidence,
+      lines: Array.isArray(structured.lines) ? structured.lines.length : undefined,
+      totalMs: Date.now() - tJobStart,
+    });
 
     // Wake up clients so global search picks up OCR text.
     try {
@@ -139,7 +139,7 @@ async function processOne(job: Job): Promise<void> {
       }
     } catch {}
   } catch (e) {
-    warn(`unexpected error for image ${id}`, e);
+    ocrLog('error', 'unexpected error', { noteImageId: id, err: tailString(e, 1200), totalMs: Date.now() - tJobStart });
     try {
       await (prisma as any).noteImage.update({ where: { id }, data: { ocrStatus: 'error', ocrUpdatedAt: new Date() } });
     } catch {}
@@ -166,6 +166,7 @@ export function enqueueNoteImageOcr(noteImageId: number): void {
   if (enqueued.has(id)) return;
   enqueued.add(id);
   queue.push({ noteImageId: id });
+  ocrLog('debug', 'enqueued', { noteImageId: id, queueLen: queue.length });
   // Fire-and-forget, never throw to request handlers.
   void drain();
 }
