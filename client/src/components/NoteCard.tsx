@@ -369,11 +369,20 @@ export default function NoteCard({
 
   const [previewMenu, setPreviewMenu] = useState<{ x: number; y: number; previewId: number } | null>(null);
   const longPressTimerRef = useRef<number | null>(null);
+  const bodyLongPressTimerRef = useRef<number | null>(null);
+  const bodyLongPressStartRef = useRef<{ x: number; y: number } | null>(null);
+  const suppressNextBodyClickRef = useRef(false);
   const [previewMenuIsSheet, setPreviewMenuIsSheet] = useState(false);
   const [urlModal, setUrlModal] = useState<{ previewId: number; initialUrl: string } | null>(null);
   function clearLongPress() {
     if (longPressTimerRef.current) window.clearTimeout(longPressTimerRef.current);
     longPressTimerRef.current = null;
+  }
+
+  function clearBodyLongPress() {
+    if (bodyLongPressTimerRef.current != null) window.clearTimeout(bodyLongPressTimerRef.current);
+    bodyLongPressTimerRef.current = null;
+    bodyLongPressStartRef.current = null;
   }
 
   React.useEffect(() => {
@@ -1378,8 +1387,48 @@ export default function NoteCard({
       <div
         className="note-body"
         ref={bodyRef}
+        onPointerDown={(e) => {
+          // Mobile/PWA: long-press the body to open the More menu.
+          // (Not on title; and ignore interactive targets like checkboxes/links.)
+          try {
+            if (showMore) return;
+            const pt = String((e as any).pointerType || '');
+            const touchLike = pt === 'touch' || isCoarsePointer;
+            if (!touchLike) return;
+            const target = (e.target as HTMLElement | null) || null;
+            if (isInteractiveTarget(target)) return;
+
+            clearBodyLongPress();
+            bodyLongPressStartRef.current = { x: e.clientX, y: e.clientY };
+            const x = e.clientX;
+            const y = e.clientY;
+            bodyLongPressTimerRef.current = window.setTimeout(() => {
+              clearBodyLongPress();
+              suppressNextBodyClickRef.current = true;
+              try { setMoreAnchorPoint({ x, y }); } catch {}
+              try { setShowMore(true); } catch {}
+            }, 520);
+          } catch {}
+        }}
+        onPointerUp={() => { clearBodyLongPress(); }}
+        onPointerCancel={() => { clearBodyLongPress(); }}
+        onPointerMove={(e) => {
+          try {
+            const start = bodyLongPressStartRef.current;
+            if (!start) return;
+            const dx = Math.abs((e.clientX || 0) - start.x);
+            const dy = Math.abs((e.clientY || 0) - start.y);
+            if (dx > 10 || dy > 10) clearBodyLongPress();
+          } catch {}
+        }}
         onClickCapture={(e) => {
           try {
+            if (suppressNextBodyClickRef.current) {
+              suppressNextBodyClickRef.current = false;
+              e.preventDefault();
+              e.stopPropagation();
+              return;
+            }
             if (!disableNoteCardLinkClicksNow) return;
             const target = e.target as HTMLElement | null;
             const a = target && (target as any).closest ? (target as any).closest('a') as HTMLAnchorElement | null : null;
@@ -1391,7 +1440,15 @@ export default function NoteCard({
             openEditor();
           } catch {}
         }}
-        onClick={() => { openEditor(); }}
+        onClick={() => {
+          try {
+            if (suppressNextBodyClickRef.current) {
+              suppressNextBodyClickRef.current = false;
+              return;
+            }
+          } catch {}
+          openEditor();
+        }}
       >
         {noteItems && noteItems.length > 0 ? (
           <div>

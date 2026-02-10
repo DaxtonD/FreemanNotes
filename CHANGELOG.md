@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 Adheres to Semantic Versioning (MAJOR.MINOR.PATCH).
 
+## [Unreleased]
+
+### Added
+- Mobile/PWA: long-press on a note card body opens the More menu.
+
 ## [0.6.1] - 2026-02-10
 
 ### Fixed
