@@ -35,9 +35,21 @@ COPY --from=builder /app/client-dist ./dist/client-dist
 COPY server/scripts ./server/scripts
 RUN chmod +x server/scripts/docker-entrypoint.sh
 
-# Install OpenSSL (for Prisma) and Python/PaddleOCR in a venv
+# Install OpenSSL (for Prisma) and Python/PaddleOCR in a venv.
+# Native runtime libs (Debian):
+# - libgomp1: OpenMP runtime (PaddlePaddle CPU)
+# - libglib2.0-0: required by OpenCV wheels
+# - libgl1 + libsm6 + libxext6 + libxrender1 + libxcb1: common OpenCV runtime deps (even for headless builds)
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends python3 python3-venv python3-pip openssl libgomp1 libxcb1 && \
+    apt-get install -y --no-install-recommends \
+        python3 python3-venv python3-pip \
+        openssl ca-certificates \
+        libgomp1 \
+        libglib2.0-0 \
+        libgl1 \
+        libsm6 libxext6 libxrender1 \
+        libxcb1 \
+    && \
     python3 -m venv /opt/ocr-venv && \
     /opt/ocr-venv/bin/pip install --no-cache-dir --upgrade pip wheel && \
     /opt/ocr-venv/bin/pip install --no-cache-dir paddlepaddle==2.6.2 && \
