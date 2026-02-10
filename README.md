@@ -22,6 +22,34 @@ Modern, fast notes app with a minimalist UI, responsive grid, and collaboration-
 - **More Menu**: Delete, Add Label, Uncheck All, Check All — anchored at card bottom-right.
 - **Invites**: Admins can invite by email; each invite carries a desired role; first account is auto-admin.
 
+## OCR (Image Text → Search)
+
+FreemanNotes can extract readable text from note images **server-side** using **PaddleOCR**, then include that text in the existing global search bar.
+
+### How it works
+
+- When an image is added to a note, the server returns immediately (no UI blocking).
+- A background OCR job runs automatically:
+  - Decodes the image bytes (supports data URLs, `/uploads/...`, and http/https URLs).
+  - Preprocesses for accuracy (auto-orient, flatten alpha → white, contrast normalize, downscale large images).
+  - Runs PaddleOCR with angle classification (handles rotated text; best-effort deskew).
+  - Stores:
+    - `ocrText` (raw extracted text)
+    - `ocrSearchText` (normalized text optimized for indexing)
+    - `ocrDataJson` (structured result: blocks/lines/boxes/confidence)
+    - `ocrHash` (sha256 of image bytes to avoid re-OCR)
+- When OCR completes, clients are notified via `note-images-changed`, so search results update automatically.
+
+### Installation (minimal)
+
+- Docker (recommended): OCR works out of the box because the container image includes Python + PaddleOCR.
+- Local development: OCR requires Python 3 and PaddleOCR deps. If Python (or deps) are missing, OCR fails safely and the app continues running.
+
+### Extending language support
+
+- OCR defaults to English (`lang="en"`).
+- The OCR service is designed to accept a `lang` parameter later (PaddleOCR supports many languages).
+
 ## Planned
 
 - **Labels UI**: Inline chips and a small labels editor popover.
@@ -180,6 +208,10 @@ The included `docker-compose.yml` has an optional MySQL service behind a profile
 - `PATCH /api/notes/:noteId/items/:itemId` — Update checklist item.
 - `PUT /api/notes/:id/items` — Replace/sync checklist items.
 - `POST /api/notes/:id/labels` — Add/create label and link to note.
+- `POST /api/notes/:id/images` — Add image to note.
+- `GET /api/notes/:id/images` — List images for a note.
+- `DELETE /api/notes/:id/images/:imageId` — Delete an image from a note.
+- `POST /api/notes/:id/images/:imageId/ocr` — Trigger OCR for an image (async).
 
 ## Troubleshooting
 

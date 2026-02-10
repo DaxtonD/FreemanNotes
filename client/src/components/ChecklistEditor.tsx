@@ -1244,8 +1244,8 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
 
   function handleClose() {
     try { setUrlModal(null); } catch {}
+    try { pruneEmptyChecklistItemsFromYjs(); } catch {}
     try {
-      try { pruneEmptyChecklistItemsFromYjs(); } catch {}
       const yarr = yarrayRef.current;
       const arrRaw = yarr
         ? yarr.toArray().map((m, idx) => ({
@@ -1259,6 +1259,40 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
 
       const arr = (arrRaw || []).filter((it: any) => !!stripHtmlToText(String(it?.content || '')));
       const normalized = arr.map((it: any, idx: number) => ({ ...it, ord: idx }));
+      const isEmpty = !String(title || '').trim() && normalized.length === 0;
+      if (isEmpty && (dirtyRef.current || ((note.title || '') !== (title || '')))) {
+        // Discard empty checklist notes instead of saving.
+        try { fetch(`/api/notes/${note.id}`, { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } }); } catch {}
+        onClose();
+        return;
+      }
+
+      // Ensure pruning is persisted immediately on Close (avoid losing it to debounce/unmount).
+      if (dirtyRef.current || ((note.title || '') !== (title || ''))) {
+        try {
+          (async () => {
+            try {
+              if ((note.title || '') !== (title || '')) {
+                await fetch(`/api/notes/${note.id}`, {
+                  method: 'PATCH',
+                  headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+                  body: JSON.stringify({ title: title || '' }),
+                });
+              }
+              const payloadItems = (normalized as any[]).map((it: any, i: number) => {
+                const payload: any = { content: String(it?.content || ''), checked: !!it?.checked, ord: i, indent: Number(it?.indent || 0) };
+                if (typeof it?.id === 'number') payload.id = it.id;
+                return payload;
+              });
+              await fetch(`/api/notes/${note.id}/items`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+                body: JSON.stringify({ items: payloadItems, replaceMissing: true }),
+              });
+            } catch {}
+          })();
+        } catch {}
+      }
       onSaved && onSaved({ items: (normalized as any), title });
     } catch {}
     onClose();

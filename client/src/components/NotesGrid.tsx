@@ -2025,6 +2025,8 @@ export default function NotesGrid({
       if (String(n.body || '').toLowerCase().includes(q)) return true;
       const items = Array.isArray(n.items) ? n.items : [];
       if (items.some((it: any) => String(it.content || '').toLowerCase().includes(q))) return true;
+      const images = Array.isArray((n as any).images) ? (n as any).images : [];
+      if (images.some((img: any) => String(img?.ocrSearchText || img?.ocrText || '').toLowerCase().includes(q))) return true;
       const labels = Array.isArray(n.noteLabels) ? n.noteLabels : [];
       if (labels.some((nl: any) => String(nl.label?.name || '').toLowerCase().includes(q))) return true;
       return false;

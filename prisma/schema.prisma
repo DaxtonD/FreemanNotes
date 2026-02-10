@@ -254,11 +254,26 @@ model NoteImage {
   id        Int      @id @default(autoincrement())
   noteId    Int
   url       String   @db.LongText
+  // OCR: raw extracted text
   ocrText   String?  @db.LongText
+  // OCR: normalized text optimized for search indexing
+  ocrSearchText String? @db.LongText
+  // OCR: structured JSON output (blocks/lines/boxes/confidence)
+  ocrDataJson String? @db.LongText
+  // OCR: sha256 hash of the source image bytes (used to avoid re-OCR)
+  ocrHash   String?  @db.Char(64)
+  // OCR: best-effort average confidence (0..1)
+  ocrAvgConfidence Float?
+  // OCR: language code used by PaddleOCR (default: "en")
+  ocrLang   String?  @db.VarChar(16)
+  // OCR: status string (e.g. pending|running|done|error|skipped)
+  ocrStatus String?  @default("pending")
+  ocrUpdatedAt DateTime?
   createdAt DateTime @default(now())
   note      Note     @relation(fields: [noteId], references: [id])
 
   @@index([noteId], map: "NoteImage_noteId_fkey")
+  @@index([ocrHash])
 }
 
 model Label {

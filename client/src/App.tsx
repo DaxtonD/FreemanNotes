@@ -300,7 +300,7 @@ function AppShell(): JSX.Element {
 		// Open zone: allow edge-swipe anywhere near the left side.
 		// (Some browsers reserve the extreme edge for Back; if so, the user can start slightly in.)
 		const OPEN_ZONE_MAX_X = 140;
-		const NOTE_CARD_OPEN_EDGE_PX = 24; // if gesture starts on a note card, only allow open from extreme-left edge
+		const NOTE_CARD_OPEN_EDGE_PX = 64; // if gesture starts on a note card, only allow open from left edge region
 		const OPEN_DX = 28;
 		const CLOSE_DX = 34;
 		const MAX_DY = 80;
@@ -312,8 +312,10 @@ function AppShell(): JSX.Element {
 			const el = t as HTMLElement | null;
 			if (!el) return false;
 			try {
-				// If the swipe starts on a note card, we still want to allow opening the drawer.
-				return !!el.closest('input, textarea, select, button, a, [contenteditable="true"], .take-note-expanded, .image-dialog, .prefs-dialog');
+				// Never hijack swipes that start inside editors/modals or text inputs.
+				// Do NOT treat note cards (often rendered as a button/link) as interactive here,
+				// otherwise the drawer can't be opened by swiping over cards in PWA.
+				return !!el.closest('input, textarea, select, [contenteditable="true"], .take-note-expanded, .image-dialog, .prefs-dialog');
 			} catch {
 				return false;
 			}
@@ -389,7 +391,8 @@ function AppShell(): JSX.Element {
 
 		function onPointerDown(e: PointerEvent) {
 			try {
-				if (e.pointerType !== 'touch') return;
+				// Some PWA environments report finger input as non-touch pointerType.
+				if (e.pointerType && e.pointerType !== 'touch') return;
 				if (pointerId != null) return;
 				if (isInteractiveTarget(e.target)) return;
 

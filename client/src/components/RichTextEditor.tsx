@@ -514,6 +514,14 @@ export default function RichTextEditor({ note, onClose, onSaved, noteBg, onImage
 
   function handleClose() {
     try {
+      const txt = String(editor?.getText?.() || '').trim();
+      const isEmpty = !String(title || '').trim() && !txt;
+      if (isEmpty && (dirtyRef.current || ((note.title || '') !== (title || '')))) {
+        // Discard empty notes instead of saving.
+        try { fetch(`/api/notes/${note.id}`, { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } }); } catch {}
+        onClose();
+        return;
+      }
       const bodySnapshot = (() => { try { return JSON.stringify(editor?.getJSON() || {}); } catch { return note.body || ''; } })();
       onSaved && onSaved({ title, body: bodySnapshot });
     } catch {}

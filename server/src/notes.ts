@@ -5,6 +5,7 @@ import * as Y from "yjs";
 import { notifyUser } from "./events";
 import { scrapeLinkPreview } from "./linkPreview";
 import { createHash } from "crypto";
+import { enqueueNoteImageOcr } from "./ocr/ocrQueue";
 
 const router = Router();
 
@@ -241,13 +242,19 @@ router.post('/api/notes', async (req: Request, res: Response) => {
       const minOrd = await prisma.note.findFirst({ where: { ownerId: user.id }, orderBy: { ord: 'asc' }, select: { ord: true } });
       ord = ((minOrd?.ord ?? 0) - 1);
     } catch {}
-    const data: any = { title: title || null, body: body || null, type: type || 'TEXT', ownerId: user.id, ord };
+    const titleText = (typeof title === 'string') ? title.trim() : String(title || '').trim();
+    const bodyText = (typeof body === 'string') ? body.trim() : '';
+    const data: any = { title: (titleText ? titleText : null), body: (bodyText ? bodyText : null), type: type || 'TEXT', ownerId: user.id, ord };
     if (typeof color !== 'undefined') data.color = color || null;
     if (reminderDueAt) {
       data.reminderDueAt = reminderDueAt;
       data.reminderOffsetMinutes = reminderOffsetMinutes;
       data.reminderAt = computeReminderAt(reminderDueAt, reminderOffsetMinutes);
     }
+
+    // Enforce: do not create empty notes/checklists.
+    // (Empty checklist items are already filtered below.)
+    let filteredItemsCount = 0;
     if (Array.isArray(items) && items.length > 0) {
       const filtered = items
         .map((it: any) => ({
@@ -257,9 +264,14 @@ router.post('/api/notes', async (req: Request, res: Response) => {
           indent: (typeof it?.indent === 'number' ? Number(it.indent) : 0),
         }))
         .filter((it: any) => stripHtmlToText(it.content).length > 0);
+      filteredItemsCount = filtered.length;
       if (filtered.length > 0) {
         data.items = { create: filtered.map((it: any, idx: number) => ({ content: it.content, checked: !!it.checked, ord: (typeof it.ord === 'number' ? it.ord : idx), indent: (typeof it.indent === 'number' ? it.indent : 0) })) };
       }
+    }
+
+    if (!titleText && !bodyText && filteredItemsCount === 0) {
+      return res.status(400).json({ error: 'empty note' });
     }
     const note = await prisma.note.create({ data, include: { items: true, collaborators: true, images: true, noteLabels: true } });
     // sort items by ord before returning
@@ -286,14 +298,41 @@ router.post('/api/notes/:id/images', async (req: Request, res: Response) => {
       const collab = await prisma.collaborator.findFirst({ where: { noteId: id, userId: user.id } });
       if (!collab) return res.status(403).json({ error: 'forbidden' });
     }
-    const img = await prisma.noteImage.create({ data: { noteId: id, url } });
-    // OCR functionality removed — return created image immediately
+    const img = await prisma.noteImage.create({ data: { noteId: id, url, ocrStatus: 'pending' } as any });
+    // OCR runs asynchronously (never block this request).
+    try { enqueueNoteImageOcr(Number((img as any).id)); } catch {}
     try {
       const collabs = await prisma.collaborator.findMany({ where: { noteId: id }, select: { userId: true } });
       const participantIds = Array.from(new Set<number>([note.ownerId, ...collabs.map(c => Number(c.userId)).filter((n) => Number.isFinite(n))]));
       for (const uid of participantIds) notifyUser(uid, 'note-images-changed', { noteId: id });
     } catch {}
     res.status(201).json({ image: img });
+  } catch (err) {
+    res.status(500).json({ error: String(err) });
+  }
+});
+
+// Trigger OCR for a specific image (owner or collaborators)
+router.post('/api/notes/:id/images/:imageId/ocr', async (req: Request, res: Response) => {
+  const user = await getUserFromToken(req);
+  if (!user) return res.status(401).json({ error: 'unauthenticated' });
+  const id = Number(req.params.id);
+  const imageId = Number(req.params.imageId);
+  if (!Number.isInteger(id) || !Number.isInteger(imageId)) return res.status(400).json({ error: 'invalid id' });
+  try {
+    const note = await prisma.note.findUnique({ where: { id } });
+    if (!note) return res.status(404).json({ error: 'not found' });
+    if (note.ownerId !== user.id) {
+      const collab = await prisma.collaborator.findFirst({ where: { noteId: id, userId: user.id } });
+      if (!collab) return res.status(403).json({ error: 'forbidden' });
+    }
+    const img = await prisma.noteImage.findUnique({ where: { id: imageId } });
+    if (!img || (img as any).noteId !== id) return res.status(404).json({ error: 'image not found' });
+    try {
+      await (prisma as any).noteImage.update({ where: { id: imageId }, data: { ocrStatus: 'pending' } });
+    } catch {}
+    try { enqueueNoteImageOcr(imageId); } catch {}
+    res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: String(err) });
   }
@@ -815,6 +854,26 @@ router.patch('/api/notes/:noteId/items/:itemId', async (req: Request, res: Respo
       const collab = await prisma.collaborator.findFirst({ where: { noteId, userId: user.id } });
       if (!collab) return res.status(403).json({ error: 'forbidden' });
     }
+    const existing = await prisma.noteItem.findUnique({ where: { id: itemId } });
+    if (!existing || Number((existing as any).noteId) !== noteId) return res.status(404).json({ error: 'item not found' });
+
+    // If content is being cleared, delete the item instead of saving an empty row.
+    if ('content' in req.body && stripHtmlToText(String(data.content || '')).length === 0) {
+      await prisma.noteItem.delete({ where: { id: itemId } });
+      try {
+        const updated = await prisma.note.findUnique({ where: { id: noteId }, include: { items: true } });
+        const ordered = (updated?.items || []).slice().sort((a, b) => (a.ord || 0) - (b.ord || 0));
+        const participantIds = await getParticipantIdsForNote(noteId, note);
+        for (const uid of (participantIds.length ? participantIds : [note.ownerId])) {
+          notifyUser(uid, 'note-items-changed', {
+            noteId,
+            items: ordered.map((it) => ({ id: it.id, content: it.content, checked: !!it.checked, indent: it.indent || 0, ord: it.ord || 0 })),
+          });
+        }
+      } catch {}
+      return res.json({ ok: true, deleted: true });
+    }
+
     const item = await prisma.noteItem.update({ where: { id: itemId }, data });
 
     // Realtime: sync checklist items across other sessions and collaborators.

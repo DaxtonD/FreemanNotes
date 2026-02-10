@@ -205,18 +205,36 @@ export default function MobileCreateModal({
 
   function hasContentToSave(): boolean {
     try {
-      const hasTitle = !!title.trim();
-      const hasBg = !!bg;
-      const hasExtras = !!(imageUrl || (selectedCollaborators && selectedCollaborators.length) || (pendingLinkUrls && pendingLinkUrls.length));
       if (mode === 'checklist') {
-        const anyItem = (items || []).some((it) => !!String(it.content || '').trim() || !!it.checked);
-        return hasTitle || hasBg || hasExtras || anyItem;
+        const hasTitle = !!title.trim();
+        const anyItem = getNonEmptyChecklistItems().length > 0;
+        return hasTitle || anyItem;
       }
+
+      const hasTitle = !!title.trim();
       const hasText = !!((editor?.getText() || '').trim());
-      return hasTitle || hasBg || hasExtras || hasText;
+      return hasTitle || hasText;
     } catch {
       return false;
     }
+  }
+
+  function stripHtmlToText(html: string): string {
+    const raw = String(html || '');
+    if (!raw) return '';
+    if (raw.indexOf('<') === -1 && raw.indexOf('&') === -1) return raw.replace(/\u00a0/g, ' ').trim();
+    try {
+      const doc = new DOMParser().parseFromString(raw, 'text/html');
+      return String(doc.body?.textContent || '').replace(/\u00a0/g, ' ').trim();
+    } catch {
+      return raw.replace(/<[^>]*>/g, '').replace(/&nbsp;/gi, ' ').replace(/\u00a0/g, ' ').trim();
+    }
+  }
+
+  function getNonEmptyChecklistItems() {
+    return (items || [])
+      .map((it) => ({ uid: String((it as any)?.uid || ''), content: String((it as any)?.content || ''), checked: !!(it as any)?.checked, indent: Number((it as any)?.indent || 0) }))
+      .filter((it) => stripHtmlToText(it.content).length > 0);
   }
 
   async function save() {
@@ -225,9 +243,28 @@ export default function MobileCreateModal({
     try {
       if (!token) throw new Error('Not authenticated');
 
+      // Discard empty notes/checklists (Google Keep-style).
+      if (mode === 'checklist') {
+        const filtered = getNonEmptyChecklistItems();
+        if (!title.trim() && filtered.length === 0) {
+          discard();
+          return;
+        }
+      } else {
+        const hasTitle = !!title.trim();
+        const hasText = !!((editor?.getText() || '').trim());
+        if (!hasTitle && !hasText) {
+          discard();
+          return;
+        }
+      }
+
       const bodyJson = mode === 'text' ? (editor?.getJSON() || {}) : {};
       const payload: any = { title, body: null, type: mode === 'checklist' ? 'CHECKLIST' : 'TEXT', color: bg || null };
-      if (mode === 'checklist') payload.items = items.map((it, i) => ({ content: it.content, checked: !!it.checked, indent: typeof it.indent === 'number' ? it.indent : 0, ord: i }));
+      if (mode === 'checklist') {
+        const filtered = getNonEmptyChecklistItems();
+        payload.items = filtered.map((it, i) => ({ content: it.content, checked: !!it.checked, indent: typeof it.indent === 'number' ? it.indent : 0, ord: i }));
+      }
       if (pendingReminder && pendingReminder.dueAtIso) {
         payload.reminderDueAt = pendingReminder.dueAtIso;
         payload.reminderOffsetMinutes = pendingReminder.offsetMinutes;

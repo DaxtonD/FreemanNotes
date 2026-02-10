@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 Adheres to Semantic Versioning (MAJOR.MINOR.PATCH).
 
+## [0.6.0] - 2026-02-10
+
+### Fixed
+- Enforced checklist empty-item pruning across create + edit editors.
+- Notes/checklists cleared to an empty state are discarded instead of being saved.
+- PWA swipe-right gesture now reliably opens the sidebar.
+- Dev startup no longer errors due to missing database-url helper script.
+
 ## [0.5.2] - 2026-02-10
 
 ### Added
