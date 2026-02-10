@@ -37,7 +37,7 @@ RUN chmod +x server/scripts/docker-entrypoint.sh
 
 # Install OpenSSL (for Prisma) and Python/PaddleOCR in a venv
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends python3 python3-venv python3-pip openssl && \
+    apt-get install -y --no-install-recommends python3 python3-venv python3-pip openssl libgomp1 && \
     python3 -m venv /opt/ocr-venv && \
     /opt/ocr-venv/bin/pip install --no-cache-dir --upgrade pip wheel && \
     /opt/ocr-venv/bin/pip install --no-cache-dir paddlepaddle==2.6.2 && \
