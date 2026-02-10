@@ -7,6 +7,7 @@ import fs from 'fs';
 import path from 'path';
 import sharp from 'sharp';
 import { notifyUser } from './events';
+import { getUsersUploadsDir } from './uploads';
 
 const router = Router();
 
@@ -433,8 +434,7 @@ router.post('/api/auth/me/photo', async (req: Request, res: Response) => {
       .jpeg({ quality: 80 })
       .toBuffer();
     // Ensure uploads directory exists
-    const uploadsDir = path.resolve(__dirname, '..', '..', 'uploads');
-    const usersDir = path.join(uploadsDir, 'users');
+    const usersDir = getUsersUploadsDir();
     try { fs.mkdirSync(usersDir, { recursive: true }); } catch {}
     const filename = `${user.id}.jpg`;
     const filePath = path.join(usersDir, filename);

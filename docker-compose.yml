@@ -27,6 +27,9 @@ services:
       - .env
     environment:
       - OCR_SERVICE_URL=http://ocr:8080/ocr
+      - UPLOADS_DIR=/app/uploads
+    volumes:
+      - uploads_data:/app/uploads
     depends_on:
       - ocr
   ocr:
@@ -44,3 +47,4 @@ services:
 
 volumes:
   mysql_data:
+  uploads_data:

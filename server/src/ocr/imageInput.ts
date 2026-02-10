@@ -2,6 +2,7 @@ import * as fs from 'fs/promises';
 import * as path from 'path';
 
 import type { ImageInput, OcrFailure } from './types';
+import { getUploadsDir } from '../uploads';
 
 function err(code: OcrFailure['code'], message: string, cause?: unknown): OcrFailure {
   return { ok: false, code, message, cause: cause ? String(cause) : undefined };
@@ -48,7 +49,7 @@ export async function resolveImageBuffer(input: ImageInput): Promise<{ ok: true;
 
       if (url.startsWith('/uploads/')) {
         // Map app-public uploads path to local filesystem in this server.
-        const uploadsDir = path.resolve(process.cwd(), 'uploads');
+        const uploadsDir = getUploadsDir();
         const rel = url.replace(/^\/uploads\//, '');
         const filePath = path.join(uploadsDir, rel.split('?')[0]);
         const buf = await fs.readFile(filePath);

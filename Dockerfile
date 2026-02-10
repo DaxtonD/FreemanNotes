@@ -15,6 +15,9 @@ FROM node:20-bookworm-slim AS runner
 WORKDIR /app
 ENV NODE_ENV=production
 
+# Persistent uploads (avatars, etc.). In docker-compose this is backed by a named volume.
+RUN mkdir -p /app/uploads/users
+
 # Copy package manifests, scripts, and prisma schema first
 COPY --from=builder /app/package.json ./package.json
 COPY --from=builder /app/package-lock.json ./package-lock.json

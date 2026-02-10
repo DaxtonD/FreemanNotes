@@ -150,6 +150,22 @@ Or with Compose:
 docker compose up --build
 ```
 
+### Persisting uploads (avatars, etc.)
+
+User-uploaded files are served under `/uploads` (e.g. avatars at `/uploads/users/{id}.jpg`). In Docker, you should persist this directory using a volume; otherwise files will be lost when the container is replaced.
+
+- **UPLOADS_DIR**: Filesystem path where the server reads/writes uploads.
+  - Default: `./uploads` (relative to the server working directory)
+  - Compose default: `/app/uploads` (with a named volume mounted)
+
+Compose already includes an `uploads_data` named volume for the app service. When updating, avoid `docker compose down -v` unless you intentionally want to delete uploads.
+
+If you run via `docker run`, mount a volume and set `UPLOADS_DIR`:
+
+```
+docker run -p 4000:4000 --env-file .env -e UPLOADS_DIR=/app/uploads -v freemannotes_uploads:/app/uploads freemannotes:latest
+```
+
 ## Keeping Test/Prod Data When Updating
 
 Pulling a new app image should **not** reset your database as long as your database storage is persistent.

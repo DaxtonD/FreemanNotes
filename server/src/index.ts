@@ -1,5 +1,6 @@
 import express from "express";
 import path from "path";
+import fs from 'fs';
 import dotenv from "dotenv";
 import { ensureDatabaseReady } from "./dbSetup";
 import http from "http";
@@ -8,6 +9,7 @@ import jwt from "jsonwebtoken";
 import { registerConnection, removeConnection } from "./events";
 import { startTrashCleanupJob } from './trashCleanup';
 import { startReminderPushJob } from './reminderPushJob';
+import { getUploadsDir } from './uploads';
 // y-websocket util sets up Yjs collaboration rooms over WebSocket
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore
@@ -38,7 +40,8 @@ const imgLimitMb = (() => {
 app.use(express.json({ limit: `${imgLimitMb}mb` }));
 // Serve uploaded files (e.g., user photos)
 try {
-  const uploadsDir = path.resolve(__dirname, "..", "..", "uploads");
+  const uploadsDir = getUploadsDir();
+  try { fs.mkdirSync(uploadsDir, { recursive: true }); } catch {}
   app.use('/uploads', express.static(uploadsDir));
 } catch {}
 

@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 Adheres to Semantic Versioning (MAJOR.MINOR.PATCH).
 
+## [0.6.1] - 2026-02-10
+
+### Fixed
+- User profile photos/avatars now persist across container updates (uploads directory configurable via `UPLOADS_DIR`; Docker Compose mounts a persistent uploads volume).
+
 ## [0.6.0] - 2026-02-10
 
 ### Added
