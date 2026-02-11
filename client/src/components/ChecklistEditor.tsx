@@ -38,6 +38,7 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
     };
   }) {
   const { token, user } = useAuth();
+  const dialogRef = useRef<HTMLDivElement | null>(null);
   const ownerId = (typeof (note as any).owner?.id === 'number' ? Number((note as any).owner.id) : (typeof (note as any).ownerId === 'number' ? Number((note as any).ownerId) : undefined));
   const currentUserId = (user && (user as any).id) ? Number((user as any).id) : undefined;
   const isOwner = !!(ownerId && currentUserId && ownerId === currentUserId);
@@ -567,6 +568,10 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
     }
     return {
       ...base,
+      // Fine pointer (desktop): make hover/reorder feel more responsive.
+      // 0.7 overlap was too strict and often failed to trigger neighbor shift.
+      ghostOverlapUpPct: 0.45,
+      ghostOverlapDownPct: 0.55,
       hoverClearMs: 80,
       directionLockPx: 6,
     } as const;
@@ -1098,9 +1103,25 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
     dragStartRef.current = null; dragDirectionRef.current = null; nestedPendingRef.current = { parentId: null, makeNested: false };
     // reset any dynamic shift applied during vertical drag
     try {
-      const dialog = document.querySelector('.image-dialog') as HTMLElement | null;
-      if (dialog) dialog.style.removeProperty('--checklist-item-shift');
+      const root = dialogRef.current as HTMLElement | null;
+      if (root) {
+        root.style.removeProperty('--checklist-item-shift');
+        root.classList.remove('is-dragging');
+      }
     } catch (err) { }
+
+    // After a drag, clear focus + selection so no row stays highlighted.
+    try { setActiveRowKey(null); } catch {}
+    try { setAutoFocusIndex(null); } catch {}
+    try {
+      const ed: any = getCurrentChecklistEditor();
+      if (ed?.commands?.blur) ed.commands.blur();
+      else if (ed?.view?.dom) (ed.view.dom as HTMLElement).blur();
+    } catch {}
+    try { (document.activeElement as HTMLElement | null)?.blur(); } catch {}
+    try { document.getSelection()?.removeAllRanges(); } catch {}
+    try { activeChecklistEditor.current = null; } catch {}
+    try { setToolbarTick((t) => t + 1); } catch {}
   }
 
   async function save() {
@@ -1357,7 +1378,7 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
 
   const dialog = (
     <div className="image-dialog-backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget) { handleClose(); } }}>
-      <div className="image-dialog checklist-editor editor-dialog" role="dialog" aria-modal style={{ width: 'min(1000px, 86vw)', ...dialogStyle }}>
+      <div ref={dialogRef} className="image-dialog checklist-editor editor-dialog" role="dialog" aria-modal style={{ width: 'min(1000px, 86vw)', ...dialogStyle }}>
         <div className="dialog-header">
           <strong>Edit checklist</strong>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
@@ -1424,7 +1445,11 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
                 onPointerUp={(e) => { e.preventDefault(); e.stopPropagation(); }}
                 onMouseDownCapture={(e) => { e.preventDefault(); e.stopPropagation(); }}
                 onMouseUp={(e) => e.preventDefault()}
-                onClick={() => { if (skipNextToolbarClickRef.current) { skipNextToolbarClickRef.current = false; return; } applyChecklistLink(); }}
+                onClick={(e) => {
+                  try { e.preventDefault(); e.stopPropagation(); } catch {}
+                  if (skipNextToolbarClickRef.current) { skipNextToolbarClickRef.current = false; return; }
+                  applyChecklistLink();
+                }}
                 aria-label="Add URL preview"
                 title="Add URL preview"
               >
@@ -1589,7 +1614,8 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
                             if (dragDirectionRef.current === 'vertical') {
                               // create ghost once
                               if (!ghostRef.current) {
-                                const nodes = Array.from(document.querySelectorAll('.image-dialog .checklist-item:not(.completed)')) as HTMLElement[];
+                                const root = dialogRef.current as HTMLElement | null;
+                                const nodes = Array.from((root ? root.querySelectorAll('.checklist-item:not(.completed)') : document.querySelectorAll('.image-dialog .checklist-item:not(.completed)'))) as HTMLElement[];
                                 const srcRealIdx = p.idx ?? -1;
                                 const currentList = previewItems ?? items;
                                 const srcDomIdx = realToDomIndexUnchecked(srcRealIdx, currentList);
@@ -1608,7 +1634,8 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
                                   ghost.style.opacity = '0.98';
                                   ghost.classList.add('checklist-ghost');
                                   document.body.appendChild(ghost);
-                                  ghostRef.current = ghost as HTMLDivElement;
+                                  ghostRef.current = ghost as any;
+
                                   // mark source hidden
                                   try { srcEl.classList.add('drag-source'); } catch (err) {}
                                   setDragging(srcRealIdx);
@@ -1617,8 +1644,11 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
                                   sourceLeftRef.current = rect.left;
                                   // set shift distance so neighbors occupy the dragged item's full height
                                   try {
-                                    const dialog = document.querySelector('.image-dialog') as HTMLElement | null;
-                                    if (dialog) dialog.style.setProperty('--checklist-item-shift', `${Math.round(rect.height)}px`);
+                                    const root2 = dialogRef.current as HTMLElement | null;
+                                    if (root2) {
+                                      root2.style.setProperty('--checklist-item-shift', `${Math.round(rect.height)}px`);
+                                      root2.classList.add('is-dragging');
+                                    }
                                   } catch (err) { }
                                 }
                               }
@@ -1629,20 +1659,23 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
                                 startChecklistAutoScroll();
                               }
                               // compute hover index using ghost overlap to avoid jitter
-                              const nodes = Array.from(document.querySelectorAll('.image-dialog .checklist-item:not(.completed)')) as HTMLElement[];
+                              const root = dialogRef.current as HTMLElement | null;
+                              const nodes = Array.from((root ? root.querySelectorAll('.checklist-item:not(.completed)') : document.querySelectorAll('.image-dialog .checklist-item:not(.completed)'))) as HTMLElement[];
                               if (nodes.length) {
                                 let chosenDomIdx: number | null = null;
+                                let bestFrac = 0;
                                 const ghostRect = ghostRef.current ? ghostRef.current.getBoundingClientRect() : { top: e.clientY - 10, bottom: e.clientY + 10 };
                                 const movingDown = e.clientY > (lastPointerYRef.current || e.clientY);
                                 lastPointerYRef.current = e.clientY;
-                                const overlapThreshold = (typeof DRAG.ghostOverlapUpPct === 'number' && typeof DRAG.ghostOverlapDownPct === 'number')
-                                  ? (movingDown ? DRAG.ghostOverlapDownPct : DRAG.ghostOverlapUpPct)
-                                  : DRAG.ghostOverlapPct;
+                                const overlapThreshold = movingDown ? DRAG.ghostOverlapDownPct : DRAG.ghostOverlapUpPct;
                                 for (let i = 0; i < nodes.length; i++) {
                                   const r = nodes[i].getBoundingClientRect();
                                   const overlap = Math.max(0, Math.min(ghostRect.bottom, r.bottom) - Math.max(ghostRect.top, r.top));
                                   const frac = overlap / (r.height || 1);
-                                  if (frac >= overlapThreshold) { chosenDomIdx = i; break; }
+                                  if (frac >= overlapThreshold && frac >= bestFrac) {
+                                    bestFrac = frac;
+                                    chosenDomIdx = i;
+                                  }
                                 }
                                 const currentList = previewItems ?? items;
                                 if (chosenDomIdx != null) {

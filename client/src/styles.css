@@ -17,6 +17,16 @@
   --checklist-drag-handle-width: 32px;
   --checklist-drag-handle-height: var(--checklist-checkbox-size);
   --checklist-text-size:14px;
+  /* Split appearance prefs (card vs editor). Defaults fall back to legacy vars. */
+  --card-title-size: 20px;
+  --card-checklist-gap: var(--checklist-gap);
+  --card-checklist-checkbox-size: var(--checklist-checkbox-size);
+  --card-checklist-text-size: var(--checklist-text-size);
+  --card-note-line-height: var(--note-line-height, 1.38);
+  --editor-checklist-gap: var(--checklist-gap);
+  --editor-checklist-checkbox-size: var(--checklist-checkbox-size);
+  --editor-checklist-text-size: var(--checklist-text-size);
+  --editor-note-line-height: var(--note-line-height, 1.38);
   --checkbox-bg: var(--card);
   --checkbox-border-default: #ffffff;
   --checkbox-border: var(--checkbox-border-default);
@@ -70,6 +80,9 @@
 }
 *{box-sizing:border-box}
 html,body,#root{height:100%;margin:0;font-family:var(--app-font-family)}
+
+/* Preferences sliders: replace purple with orange */
+.prefs-dialog input[type="range"]{ accent-color: rgb(255,96,1); }
 
 body{
   background:var(--bg);
@@ -900,10 +913,15 @@ html.is-editor-modal-open .mobile-add-note{
   box-shadow: 0 10px 30px rgba(0,0,0,0.5);
   border-radius: 8px;
   background: var(--card);
-  transform: translateZ(0);
+  transform: translateZ(0) scale(1.012);
+  transition: transform 120ms cubic-bezier(.22,.95,.3,1);
   pointer-events: none;
   opacity: 0.98;
 }
+
+/* Provide a fallback so neighbor-shift still animates even if JS can't measure height. */
+.image-dialog{ --checklist-item-shift: 44px; }
+.image-dialog.is-dragging .checklist-item{ will-change: transform; }
 
 /* Slightly smaller checkmark stroke inside the full editor so it doesn't appear oversized */
 .image-dialog .checkbox-visual svg path,
@@ -922,6 +940,11 @@ html.is-editor-modal-open .mobile-add-note{
 .note-card{
   display:flex;
   flex-direction:column;
+  /* Card-scoped appearance values (keeps editor independent). */
+  --checklist-gap: var(--card-checklist-gap);
+  --checklist-checkbox-size: var(--card-checklist-checkbox-size);
+  --checklist-text-size: var(--card-checklist-text-size);
+  --note-line-height: var(--card-note-line-height);
   /* fill the grid cell width; keep height/content independent to avoid overlap */
   width: 100%;
   position: relative;
@@ -936,10 +959,12 @@ html.is-editor-modal-open .mobile-add-note{
   transition: transform 300ms cubic-bezier(.2,.9,.2,1), opacity 260ms ease;
   will-change: transform, opacity;
 }
+.note-card.is-meta-expanded{ z-index: 10050; }
+.notes-grid > div:has(.note-card.is-meta-expanded){ position: relative; z-index: 10050; }
 .notes-grid > div { display: block; width: 100%; margin: 0; transition: transform 300ms cubic-bezier(.2,.9,.2,1); will-change: transform; }
 .note-title{
   font-weight: 750;
-  font-size: 1.18em;
+  font-size: var(--card-title-size, 1.18em);
   letter-spacing: 0.1px;
   color: inherit;
   overflow: hidden;
@@ -971,6 +996,15 @@ html.is-editor-modal-open .mobile-add-note{
   flex: 1 1 auto;
   position: relative;
   max-height: var(--note-card-max-height);
+}
+
+/* Editor-scoped appearance values */
+.editor-dialog,
+.take-note-expanded{
+  --checklist-gap: var(--editor-checklist-gap);
+  --checklist-checkbox-size: var(--editor-checklist-checkbox-size);
+  --checklist-text-size: var(--editor-checklist-text-size);
+  --note-line-height: var(--editor-note-line-height);
 }
 
 /* Subtle "more" indicator when the preview is clipped.
@@ -1160,6 +1194,7 @@ button.chip:focus{outline:2px solid rgba(255,255,255,0.18);outline-offset:2px;}
 .note-meta{
   margin: 6px 0 10px;
   font-size: 12px;
+  position: relative;
 }
 .note-card.has-checklist .note-meta{
   margin-bottom: 16px;
@@ -1193,16 +1228,55 @@ button.chip:focus{outline:2px solid rgba(255,255,255,0.18);outline-offset:2px;}
   white-space: nowrap;
 }
 .note-meta-panel{
+  position: absolute;
+  left: 0;
+  top: calc(100% + 6px);
+  z-index: 10040;
+  min-width: min(320px, 92%);
+  max-width: 100%;
+
+  background: rgba(18,18,18,0.92);
+  color: rgba(255,255,255,0.96) !important;
+  border: 1px solid rgba(255,255,255,0.10);
+  box-shadow: 0 16px 40px rgba(0,0,0,0.55);
+  border-radius: 12px;
+  padding: 10px;
+
   overflow: hidden;
-  max-height: 0;
+  height: 0;
   opacity: 0;
   transform: translateY(-3px);
   pointer-events: none;
-  transition: opacity 140ms ease, transform 140ms ease, max-height 180ms ease;
+  transition: opacity 35ms ease, transform 35ms ease, height 40ms cubic-bezier(.22,.95,.3,1);
+}
+:root:not([data-theme="light"]) .note-meta-panel .chip,
+:root:not([data-theme="light"]) .note-meta-panel .chip *{
+  color: rgba(255,255,255,0.96) !important;
+  -webkit-text-fill-color: rgba(255,255,255,0.96) !important;
+}
+:root[data-theme="light"] .note-meta-panel .chip,
+:root[data-theme="light"] .note-meta-panel .chip *{
+  color: rgba(0,0,0,0.92) !important;
+  -webkit-text-fill-color: rgba(0,0,0,0.92) !important;
+}
+.note-meta-panel::before{
+  /* Hover bridge: prevents the panel from closing while moving the mouse
+     from the chip bar down into the overlay (fills the gap above the panel). */
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: -12px;
+  height: 14px;
+  background: transparent;
+}
+:root[data-theme="light"] .note-meta-panel{
+  background: rgba(255,255,255,0.94);
+  color: rgba(0,0,0,0.92) !important;
+  border-color: rgba(0,0,0,0.14);
+  box-shadow: 0 14px 34px rgba(0,0,0,0.16);
 }
 .note-meta-panel.is-open{
-  margin-top: 6px;
-  max-height: 320px;
   opacity: 1;
   transform: translateY(0);
   pointer-events: auto;
@@ -1233,6 +1307,63 @@ button.chip:focus{outline:2px solid rgba(255,255,255,0.18);outline-offset:2px;}
   overflow: visible;
   padding: 4px 0 0;
   margin-top: 0;
+}
+
+/* Overlay layout: make expanded meta items a vertical list. */
+.note-meta-panel .label-chips,
+.note-meta-panel .collab-chips,
+.note-meta-panel .note-collections-list{
+  display: flex;
+  flex-direction: column;
+  flex-wrap: nowrap;
+  align-items: stretch;
+  gap: 8px;
+  max-height: 320px;
+  overflow: auto;
+  padding: 0;
+}
+.note-meta-panel .note-meta-item{ width: 100%; }
+.note-meta-panel .note-meta-item > .chip{
+  justify-content: flex-start;
+  text-align: left;
+  width: 100%;
+  padding: 7px 9px;
+  font-size: 11px;
+  line-height: 1.15;
+  border-radius: 12px;
+  /* Must be fully opaque (requested). */
+  background: #2a2a2a !important;
+  color: rgba(255,255,255,0.96) !important;
+  border: 1px solid rgba(255,255,255,0.10);
+}
+:root[data-theme="light"] .note-meta-panel .note-meta-item > .chip{
+  background: #ffffff !important;
+  border-color: rgba(0,0,0,0.10);
+  color: rgba(0,0,0,0.92) !important;
+}
+.note-meta-panel .note-collection-chip{
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Pop-in animation for overlay items (sequenced by JS-driven visible-count) */
+@keyframes noteMetaItemIn{
+  from{ opacity: 0; transform: translateY(-6px) scale(0.965); }
+  to{ opacity: 1; transform: translateY(0) scale(1); }
+}
+.note-meta-panel.is-open .note-meta-item{
+  opacity: 0;
+  transform: translateY(-6px) scale(0.965);
+  transform-origin: 0% 0%;
+}
+.note-meta-panel.is-open .note-meta-item.is-visible{
+  animation: noteMetaItemIn 55ms cubic-bezier(.22,.95,.3,1) both;
+}
+
+@media (prefers-reduced-motion: reduce){
+  .note-meta-panel{ transition: none; }
+  .note-meta-panel.is-open .note-meta-item.is-visible{ animation: none; opacity: 1; transform: none; }
 }
 
 /* Per-note collections dropdown sits under labels and can expand without moving them. */
@@ -1288,6 +1419,15 @@ button.chip:focus{outline:2px solid rgba(255,255,255,0.18);outline-offset:2px;}
 .note-image img{display:block;-webkit-touch-callout:none;-webkit-user-select:none;user-select:none;-webkit-user-drag:none;touch-action:manipulation}
 
 /* Note card image thumbnails */
+.note-card .note-images-toggle{
+  margin-top:10px;
+  display:flex;
+  flex-wrap:wrap;
+  gap:6px;
+  max-width: 100%;
+}
+.chip.chip--images{ max-width: 100%; }
+
 .note-card .note-images{
   margin-top:10px;
   display:flex;

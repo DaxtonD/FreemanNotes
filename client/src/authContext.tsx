@@ -66,6 +66,56 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         document.documentElement.style.setProperty('--note-line-height', String((user as any).noteLineSpacing));
         localStorage.setItem('prefs.noteLineSpacing', String((user as any).noteLineSpacing));
       }
+
+      // Split appearance prefs (card vs editor). If present, prefer these over legacy shared values.
+      try {
+        if (typeof (user as any).cardTitleSize === 'number') {
+          document.documentElement.style.setProperty('--card-title-size', String((user as any).cardTitleSize) + 'px');
+          localStorage.setItem('prefs.cardTitleSize', String((user as any).cardTitleSize));
+        }
+        if (typeof (user as any).cardChecklistSpacing === 'number') {
+          document.documentElement.style.setProperty('--card-checklist-gap', String((user as any).cardChecklistSpacing) + 'px');
+          localStorage.setItem('prefs.cardChecklistSpacing', String((user as any).cardChecklistSpacing));
+          // legacy fallback
+          document.documentElement.style.setProperty('--checklist-gap', String((user as any).cardChecklistSpacing) + 'px');
+          localStorage.setItem('prefs.checklistSpacing', String((user as any).cardChecklistSpacing));
+        }
+        if (typeof (user as any).cardCheckboxSize === 'number') {
+          document.documentElement.style.setProperty('--card-checklist-checkbox-size', String((user as any).cardCheckboxSize) + 'px');
+          localStorage.setItem('prefs.cardCheckboxSize', String((user as any).cardCheckboxSize));
+          document.documentElement.style.setProperty('--checklist-checkbox-size', String((user as any).cardCheckboxSize) + 'px');
+          localStorage.setItem('prefs.checkboxSize', String((user as any).cardCheckboxSize));
+        }
+        if (typeof (user as any).cardChecklistTextSize === 'number') {
+          document.documentElement.style.setProperty('--card-checklist-text-size', String((user as any).cardChecklistTextSize) + 'px');
+          localStorage.setItem('prefs.cardChecklistTextSize', String((user as any).cardChecklistTextSize));
+          document.documentElement.style.setProperty('--checklist-text-size', String((user as any).cardChecklistTextSize) + 'px');
+          localStorage.setItem('prefs.checklistTextSize', String((user as any).cardChecklistTextSize));
+        }
+        if (typeof (user as any).cardNoteLineSpacing === 'number') {
+          document.documentElement.style.setProperty('--card-note-line-height', String((user as any).cardNoteLineSpacing));
+          localStorage.setItem('prefs.cardNoteLineSpacing', String((user as any).cardNoteLineSpacing));
+          document.documentElement.style.setProperty('--note-line-height', String((user as any).cardNoteLineSpacing));
+          localStorage.setItem('prefs.noteLineSpacing', String((user as any).cardNoteLineSpacing));
+        }
+
+        if (typeof (user as any).editorChecklistSpacing === 'number') {
+          document.documentElement.style.setProperty('--editor-checklist-gap', String((user as any).editorChecklistSpacing) + 'px');
+          localStorage.setItem('prefs.editorChecklistSpacing', String((user as any).editorChecklistSpacing));
+        }
+        if (typeof (user as any).editorCheckboxSize === 'number') {
+          document.documentElement.style.setProperty('--editor-checklist-checkbox-size', String((user as any).editorCheckboxSize) + 'px');
+          localStorage.setItem('prefs.editorCheckboxSize', String((user as any).editorCheckboxSize));
+        }
+        if (typeof (user as any).editorChecklistTextSize === 'number') {
+          document.documentElement.style.setProperty('--editor-checklist-text-size', String((user as any).editorChecklistTextSize) + 'px');
+          localStorage.setItem('prefs.editorChecklistTextSize', String((user as any).editorChecklistTextSize));
+        }
+        if (typeof (user as any).editorNoteLineSpacing === 'number') {
+          document.documentElement.style.setProperty('--editor-note-line-height', String((user as any).editorNoteLineSpacing));
+          localStorage.setItem('prefs.editorNoteLineSpacing', String((user as any).editorNoteLineSpacing));
+        }
+      } catch {}
       if (typeof (user as any).imageThumbSize === 'number') {
         document.documentElement.style.setProperty('--image-thumb-size', String((user as any).imageThumbSize) + 'px');
         localStorage.setItem('prefs.imageThumbSize', String((user as any).imageThumbSize));

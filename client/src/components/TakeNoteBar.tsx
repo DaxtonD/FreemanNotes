@@ -29,6 +29,13 @@ export default function TakeNoteBar({
   activeCollection?: { id: number; path: string } | null;
 }): JSX.Element {
   const { token, user } = useAuth();
+
+  const CHECKLIST_DRAG = {
+    directionLockPx: 7,
+    indentPx: 34,
+    maxIndent: 8,
+  } as const;
+
   const [expanded, setExpanded] = useState(false);
   const [mode, setMode] = useState<'text' | 'checklist'>('text');
   const [title, setTitle] = useState('');
@@ -64,10 +71,12 @@ export default function TakeNoteBar({
   });
 
   function applyTextLink() {
+    try { ignoreNextDocClickRef.current = true; } catch {}
     try { setShowUrlModal(true); } catch {}
   }
 
   function applyChecklistLink() {
+    try { ignoreNextDocClickRef.current = true; } catch {}
     try { setShowUrlModal(true); } catch {}
   }
 
@@ -141,7 +150,7 @@ export default function TakeNoteBar({
     setMaximized(shouldFullscreenOnMobile());
 
     if (nextMode === 'checklist') {
-      setItems((cur) => (cur && cur.length ? cur : [{ content: '' }]));
+      setItems((cur) => (cur && cur.length ? cur : [{ content: '', indent: 0 }]));
       try { setActiveChecklistRowIdx(0); } catch {}
       setTimeout(() => focusItem(0), 30);
     } else {
@@ -195,11 +204,24 @@ export default function TakeNoteBar({
     };
   }, [expanded]);
 
-  const [items, setItems] = useState<{ content: string; checked?: boolean }[]>([]);
+  const [items, setItems] = useState<{ content: string; checked?: boolean; indent?: number }[]>([]);
   const [activeChecklistRowIdx, setActiveChecklistRowIdx] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
   const draggingIdx = useRef<number | null>(null);
+  const [checklistDragging, setChecklistDragging] = useState<number | null>(null);
+  const [checklistHoverIndex, setChecklistHoverIndex] = useState<number | null>(null);
+  const checklistGhostRef = useRef<HTMLDivElement | null>(null);
+  const checklistDocDragOverRef = useRef<((e: DragEvent) => void) | null>(null);
+  const checklistDragOffsetRef = useRef<{ x: number; y: number } | null>(null);
+  const checklistDragStartRef = useRef<{ x: number; y: number } | null>(null);
+  const checklistDragDirectionRef = useRef<'horizontal' | 'vertical' | null>(null);
+  const checklistSourceLeftRef = useRef<number>(0);
+  const checklistSourceTopRef = useRef<number>(0);
+  const checklistLastDragYRef = useRef<number>(0);
+  const checklistRafRef = useRef<number | null>(null);
+  const checklistClearHoverTimeoutRef = useRef<number | null>(null);
+  const transparentDragImgRef = useRef<HTMLImageElement | null>(null);
   const activeChecklistEditor = useRef<any | null>(null);
   const itemEditorRefs = useRef<Array<any | null>>([]);
   const [, setChecklistToolbarTick] = useState(0);
@@ -229,6 +251,16 @@ export default function TakeNoteBar({
     };
   }, [showPalette, showReminderPicker, showCollaborator, showImageDialog]);
 
+  useEffect(() => {
+    // Used to hide the browser-native drag image so only our custom ghost is visible.
+    try {
+      if (transparentDragImgRef.current) return;
+      const img = new Image();
+      img.src = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==';
+      transparentDragImgRef.current = img;
+    } catch {}
+  }, []);
+
   function getCurrentChecklistEditor(): any | null {
     let ed = activeChecklistEditor.current as any;
     if (ed && (ed as any).isFocused) return ed;
@@ -252,6 +284,35 @@ export default function TakeNoteBar({
       if (focused) ed = focused;
     }
     return ed || null;
+  }
+
+  function cleanupChecklistDrag() {
+    try { if (checklistGhostRef.current) { checklistGhostRef.current.remove(); checklistGhostRef.current = null; } } catch {}
+    try { if (checklistDocDragOverRef.current) { document.removeEventListener('dragover', checklistDocDragOverRef.current as any); checklistDocDragOverRef.current = null; } } catch {}
+    try { document.querySelectorAll('.checklist-item.drag-source').forEach(el => el.classList.remove('drag-source')); } catch {}
+    try { if (checklistRafRef.current) { cancelAnimationFrame(checklistRafRef.current); checklistRafRef.current = null; } } catch {}
+    try { if (checklistClearHoverTimeoutRef.current) { clearTimeout(checklistClearHoverTimeoutRef.current); checklistClearHoverTimeoutRef.current = null; } } catch {}
+    try { checklistDragOffsetRef.current = null; } catch {}
+    try { checklistDragStartRef.current = null; } catch {}
+    try { checklistDragDirectionRef.current = null; } catch {}
+    try { draggingIdx.current = null; } catch {}
+    try { setChecklistDragging(null); } catch {}
+    try { setChecklistHoverIndex(null); } catch {}
+
+    // After a drag, clear focus/selection so no item stays highlighted.
+    try { setActiveChecklistRowIdx(null); } catch {}
+    try {
+      const ed: any = getCurrentChecklistEditor();
+      if (ed?.commands?.blur) ed.commands.blur();
+      else if (ed?.view?.dom) (ed.view.dom as HTMLElement).blur();
+    } catch {}
+    try { (document.activeElement as HTMLElement | null)?.blur(); } catch {}
+    try { document.getSelection()?.removeAllRanges(); } catch {}
+    try { activeChecklistEditor.current = null; } catch {}
+    try { setChecklistToolbarTick((t) => t + 1); } catch {}
+
+    try { (rootRef.current as any)?.style?.removeProperty?.('--checklist-item-shift'); } catch {}
+    try { (rootRef.current as HTMLElement | null)?.classList?.remove?.('is-dragging'); } catch {}
   }
 
   function applyChecklistMarkAcrossLine(mark: 'bold' | 'italic' | 'underline') {
@@ -330,7 +391,7 @@ export default function TakeNoteBar({
 
   function getNonEmptyChecklistItems() {
     return (items || [])
-      .map((it) => ({ content: String(it?.content || ''), checked: !!it?.checked }))
+      .map((it) => ({ content: String(it?.content || ''), checked: !!it?.checked, indent: (typeof it?.indent === 'number' ? Number(it.indent) : 0) }))
       .filter((it) => stripHtmlToText(it.content).length > 0);
   }
 
@@ -383,7 +444,8 @@ export default function TakeNoteBar({
       const inReminder = document.querySelector('.reminder-popover')?.contains(t);
       const inCollab = document.querySelector('.collab-modal')?.contains(t);
       const inImageDlg = document.querySelector('.image-dialog')?.contains(t);
-      if (inPalette || inReminder || inCollab || inImageDlg) return;
+      const inUrlModal = document.querySelector('.url-entry-dialog')?.contains(t) || document.querySelector('.url-entry-backdrop')?.contains(t);
+      if (inPalette || inReminder || inCollab || inImageDlg || inUrlModal) return;
 
       // Prefer composedPath: it's resilient even if the click target is removed
       // during the same event (e.g. state updates that replace the button).
@@ -442,7 +504,7 @@ export default function TakeNoteBar({
 
   function addItem() {
     setItems(s => {
-      const next = [...s, { content: '' }];
+      const next = [...s, { content: '', indent: 0 }];
       return next;
     });
   }
@@ -490,7 +552,7 @@ export default function TakeNoteBar({
       const payload: any = { title, body: null, type: mode === 'checklist' ? 'CHECKLIST' : 'TEXT', color: bg || null };
       if (mode === 'checklist') {
         const filtered = getNonEmptyChecklistItems();
-        payload.items = filtered.map((it, i) => ({ content: it.content, checked: !!it.checked, ord: i }));
+        payload.items = filtered.map((it, i) => ({ content: it.content, checked: !!it.checked, indent: (typeof (it as any).indent === 'number' ? Number((it as any).indent) : 0), ord: i }));
       }
       if (pendingReminder && pendingReminder.dueAtIso) {
         payload.reminderDueAt = pendingReminder.dueAtIso;
@@ -606,7 +668,7 @@ export default function TakeNoteBar({
           <div
             className="checkbox-visual"
             onMouseDown={(e) => { e.stopPropagation(); }}
-            onClick={(e) => { e.stopPropagation(); ignoreNextDocClickRef.current = true; try { setAddToCurrentCollection(activeCollectionId != null); } catch {} setMode('checklist'); setItems([{ content: '' }]); setExpanded(true); focusItem(0); }}
+            onClick={(e) => { e.stopPropagation(); ignoreNextDocClickRef.current = true; try { setAddToCurrentCollection(activeCollectionId != null); } catch {} setMode('checklist'); setItems([{ content: '', indent: 0 }]); setExpanded(true); focusItem(0); }}
             aria-label="Start checklist"
           >
             <svg viewBox="0 0 24 24" fill="none" aria-hidden focusable="false">
@@ -795,7 +857,50 @@ export default function TakeNoteBar({
             </div>
           </div>
 
-          <div style={{ marginTop: 8 }}>
+          <div
+            style={{ marginTop: 8 }}
+            onDragOver={(e) => {
+              if (checklistDragging == null) return;
+              e.preventDefault();
+            }}
+            onDrop={(e) => {
+              // Fallback drop handler (e.g. when source row has pointer-events disabled)
+              if (checklistDragging == null) return;
+              e.preventDefault();
+              const src = draggingIdx.current ?? parseInt(e.dataTransfer.getData('text/plain') || '-1', 10);
+              if (src < 0) { cleanupChecklistDrag(); return; }
+
+              const dir = checklistDragDirectionRef.current;
+              if (dir === 'horizontal') {
+                const start = checklistDragStartRef.current;
+                const dx = start ? ((e.clientX || 0) - start.x) : 0;
+                if (Math.abs(dx) >= CHECKLIST_DRAG.indentPx) {
+                  setItems((s) => s.map((it, i) => {
+                    if (i !== src) return it;
+                    const curIndent = (typeof it.indent === 'number' ? Number(it.indent) : 0);
+                    const nextIndent = dx > 0
+                      ? Math.min(CHECKLIST_DRAG.maxIndent, curIndent + 1)
+                      : Math.max(0, curIndent - 1);
+                    return { ...it, indent: nextIndent };
+                  }));
+                }
+                cleanupChecklistDrag();
+                return;
+              }
+
+              // Vertical reorder fallback: use current hover index.
+              const dst = (typeof checklistHoverIndex === 'number' ? checklistHoverIndex : src);
+              if (dst >= 0 && dst !== src) {
+                setItems((s) => {
+                  const copy = [...s];
+                  const [moved] = copy.splice(src, 1);
+                  copy.splice(dst, 0, moved);
+                  return copy;
+                });
+              }
+              cleanupChecklistDrag();
+            }}
+          >
           {items.length === 0 && (
             <div style={{ marginBottom: 8 }}>
               <button
@@ -805,7 +910,7 @@ export default function TakeNoteBar({
                 onClick={(e) => {
                   e.preventDefault();
                   e.stopPropagation();
-                  setItems([{ content: '' }]);
+                  setItems([{ content: '', indent: 0 }]);
                   setActiveChecklistRowIdx(0);
                   // wait for ChecklistItemRT to mount + register
                   setTimeout(() => focusItem(0), 30);
@@ -816,14 +921,74 @@ export default function TakeNoteBar({
           {items.map((it, idx) => (
             <div
               key={idx}
-              className={`checklist-item${activeChecklistRowIdx === idx ? ' is-active' : ''}`}
-              draggable
-              onDragStart={(e) => { draggingIdx.current = idx; e.dataTransfer?.setData('text/plain', String(idx)); }}
-              onDragOver={(e) => e.preventDefault()}
+              className={`checklist-item${activeChecklistRowIdx === idx ? ' is-active' : ''}${(checklistDragging != null && checklistHoverIndex != null && checklistDragging !== idx)
+                ? (idx > checklistDragging && idx <= checklistHoverIndex ? ' shift-up' : (idx < checklistDragging && idx >= checklistHoverIndex ? ' shift-down' : ''))
+                : ''}`}
+              onDragOver={(e) => {
+                e.preventDefault();
+                if (checklistDragging == null) return;
+                if (checklistDragDirectionRef.current === 'horizontal') return;
+                const target = e.currentTarget as HTMLElement;
+                const rect = target.getBoundingClientRect();
+
+                // Throttle hover calculations to animation frames to reduce jitter.
+                try { if (checklistRafRef.current) cancelAnimationFrame(checklistRafRef.current); } catch {}
+                checklistRafRef.current = requestAnimationFrame(() => {
+                  if (checklistDragging == null) return;
+                  let shouldHover = false;
+                  try {
+                    const ghost = checklistGhostRef.current ? checklistGhostRef.current.getBoundingClientRect() : null;
+                    if (ghost) {
+                      const overlap = Math.max(0, Math.min(ghost.bottom, rect.bottom) - Math.max(ghost.top, rect.top));
+                      const frac = overlap / (rect.height || 1);
+                      const y = (e as unknown as React.DragEvent<HTMLElement>).clientY || 0;
+                      const movingDown = y > (checklistLastDragYRef.current || y);
+                      checklistLastDragYRef.current = y;
+                      const thresh = movingDown ? 0.55 : 0.35;
+                      shouldHover = frac >= thresh;
+                    } else {
+                      // Fallback: midpoint-based hover
+                      const y = (e as unknown as React.DragEvent<HTMLElement>).clientY || 0;
+                      shouldHover = y >= rect.top && y <= rect.bottom;
+                    }
+                  } catch {}
+
+                  if (shouldHover) {
+                    try { if (checklistClearHoverTimeoutRef.current) { clearTimeout(checklistClearHoverTimeoutRef.current); checklistClearHoverTimeoutRef.current = null; } } catch {}
+                    try { setChecklistHoverIndex((prev) => (prev === idx ? prev : idx)); } catch {}
+                  } else {
+                    if (checklistHoverIndex === idx && checklistClearHoverTimeoutRef.current === null) {
+                      checklistClearHoverTimeoutRef.current = window.setTimeout(() => {
+                        try { setChecklistHoverIndex((prev) => (prev === idx ? null : prev)); } catch {}
+                        checklistClearHoverTimeoutRef.current = null;
+                      }, 80);
+                    }
+                  }
+                });
+              }}
               onDrop={(e) => {
+                e.stopPropagation();
                 e.preventDefault();
                 const src = draggingIdx.current ?? parseInt(e.dataTransfer.getData('text/plain') || '-1', 10);
                 const dst = idx;
+                const dir = checklistDragDirectionRef.current;
+                if (dir === 'horizontal') {
+                  const start = checklistDragStartRef.current;
+                  const dx = start ? ((e.clientX || 0) - start.x) : 0;
+                  if (src >= 0 && Math.abs(dx) >= CHECKLIST_DRAG.indentPx) {
+                    setItems((s) => s.map((it, i) => {
+                      if (i !== src) return it;
+                      const curIndent = (typeof it.indent === 'number' ? Number(it.indent) : 0);
+                      const nextIndent = dx > 0
+                        ? Math.min(CHECKLIST_DRAG.maxIndent, curIndent + 1)
+                        : Math.max(0, curIndent - 1);
+                      return { ...it, indent: nextIndent };
+                    }));
+                  }
+                  cleanupChecklistDrag();
+                  return;
+                }
+
                 if (src >= 0 && src !== dst) {
                   setItems(s => {
                     const copy = [...s];
@@ -832,11 +997,93 @@ export default function TakeNoteBar({
                     return copy;
                   });
                 }
-                draggingIdx.current = null;
+                cleanupChecklistDrag();
               }}
-              style={{ display: 'flex', gap: 8, alignItems: 'center' }}
+              style={{ display: 'flex', gap: 8, alignItems: 'center', marginLeft: (typeof it.indent === 'number' ? Number(it.indent) : 0) * 18 }}
             >
-              <div className="drag-handle" style={{ width: 20, cursor: 'grab', userSelect: 'none', WebkitUserSelect: 'none', MozUserSelect: 'none', msUserSelect: 'none' }} aria-hidden>≡</div>
+              <div
+                className="drag-handle"
+                draggable
+                onDragStart={(e) => {
+                  draggingIdx.current = idx;
+                  try { e.dataTransfer.effectAllowed = 'move'; } catch {}
+                  try { e.dataTransfer.dropEffect = 'move'; } catch {}
+                  try { e.dataTransfer?.setData('text/plain', String(idx)); } catch {}
+
+                  // Desktop: create a visual lift ghost and set shift distance (mirrors ChecklistEditor logic).
+                  try {
+                    const handle = e.currentTarget as HTMLElement;
+                    const row = (handle.closest('.checklist-item') as HTMLElement | null) || handle;
+                    const rect = row.getBoundingClientRect();
+                    const offsetX = (e.clientX || 0) - rect.left;
+                    const offsetY = (e.clientY || 0) - rect.top;
+                    checklistDragOffsetRef.current = { x: offsetX, y: offsetY };
+                    checklistDragStartRef.current = { x: (e.clientX || 0), y: (e.clientY || 0) };
+                    checklistDragDirectionRef.current = null;
+                    checklistSourceLeftRef.current = rect.left;
+                    checklistSourceTopRef.current = rect.top;
+                    checklistLastDragYRef.current = (e.clientY || 0);
+
+                    const ghost = row.cloneNode(true) as HTMLElement;
+                    ghost.style.position = 'fixed';
+                    ghost.style.left = ((e.clientX || 0) - offsetX) + 'px';
+                    ghost.style.top = ((e.clientY || 0) - offsetY) + 'px';
+                    ghost.style.width = rect.width + 'px';
+                    ghost.style.pointerEvents = 'none';
+                    ghost.style.zIndex = '9999';
+                    ghost.style.opacity = '0.98';
+                    ghost.classList.add('checklist-ghost');
+                    document.body.appendChild(ghost);
+                    checklistGhostRef.current = ghost as any;
+
+                    // Initialize dragging state after drag image is set to avoid drag-start flicker.
+                    try { setChecklistDragging(idx); } catch {}
+                    try { setChecklistHoverIndex(idx); } catch {}
+                    setTimeout(() => { try { row.classList.add('drag-source'); } catch {} }, 0);
+
+                    // Hide browser-native drag image; our ghost provides the visuals.
+                    try {
+                      const timg = transparentDragImgRef.current;
+                      if (timg && e.dataTransfer) e.dataTransfer.setDragImage(timg, 0, 0);
+                    } catch {}
+                    try { (rootRef.current as any)?.style?.setProperty?.('--checklist-item-shift', `${Math.round(rect.height)}px`); } catch {}
+                    try { (rootRef.current as HTMLElement | null)?.classList?.add?.('is-dragging'); } catch {}
+
+                    const onDocDragOver = (ev: DragEvent) => {
+                      if (!checklistGhostRef.current) return;
+                      const off = checklistDragOffsetRef.current || { x: 12, y: 12 };
+                      const start = checklistDragStartRef.current;
+
+                      if (checklistDragDirectionRef.current === null && start) {
+                        const dx = Math.abs((ev.clientX || 0) - start.x);
+                        const dy = Math.abs((ev.clientY || 0) - start.y);
+                        const THRESH = CHECKLIST_DRAG.directionLockPx;
+                        if (dx > THRESH || dy > THRESH) {
+                          checklistDragDirectionRef.current = dx > dy ? 'horizontal' : 'vertical';
+                        }
+                      }
+                      try {
+                        if (checklistDragDirectionRef.current === 'vertical') {
+                          checklistGhostRef.current.style.left = checklistSourceLeftRef.current + 'px';
+                          checklistGhostRef.current.style.top = ((ev.clientY || 0) - off.y) + 'px';
+                        } else if (checklistDragDirectionRef.current === 'horizontal') {
+                          checklistGhostRef.current.style.left = ((ev.clientX || 0) - off.x) + 'px';
+                          checklistGhostRef.current.style.top = ((start?.y || checklistSourceTopRef.current) - off.y) + 'px';
+                        } else {
+                          checklistGhostRef.current.style.left = checklistSourceLeftRef.current + 'px';
+                          checklistGhostRef.current.style.top = ((ev.clientY || 0) - off.y) + 'px';
+                        }
+                      } catch {}
+                    };
+                    checklistDocDragOverRef.current = onDocDragOver;
+                    document.addEventListener('dragover', onDocDragOver);
+                  } catch {}
+                }}
+                onDragEnd={() => { cleanupChecklistDrag(); }}
+                style={{ width: 20, cursor: 'grab', userSelect: 'none', WebkitUserSelect: 'none', MozUserSelect: 'none', msUserSelect: 'none' }}
+                aria-label="Drag to reorder"
+                title="Drag to reorder"
+              >≡</div>
               <div className="checkbox-visual" onClick={() => toggleLocalItemChecked(idx)} aria-hidden>
                 {it.checked && (
                   <svg viewBox="0 0 24 24" fill="none" aria-hidden focusable="false">
@@ -848,10 +1095,15 @@ export default function TakeNoteBar({
                 <ChecklistItemRT
                   value={it.content}
                   onChange={(html) => updateItem(idx, html)}
-                  onRequestUrlPreview={() => { try { setShowUrlModal(true); } catch {} }}
+                  onRequestUrlPreview={() => { try { ignoreNextDocClickRef.current = true; } catch {} try { setShowUrlModal(true); } catch {} }}
                   onEnter={() => {
                     try { setActiveChecklistRowIdx(idx + 1); } catch {}
-                    setItems(s => { const copy = [...s]; copy.splice(idx + 1, 0, { content: '' }); return copy; });
+                    setItems(s => {
+                      const copy = [...s];
+                      const curIndent = (typeof copy[idx]?.indent === 'number' ? Number(copy[idx]?.indent) : 0);
+                      copy.splice(idx + 1, 0, { content: '', indent: curIndent });
+                      return copy;
+                    });
                     focusItem(idx + 1);
                   }}
                   onArrowUp={() => focusItem(Math.max(0, idx - 1))}

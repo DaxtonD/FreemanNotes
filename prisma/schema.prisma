@@ -88,6 +88,17 @@ model UserDevicePrefs {
   checkboxSize     Int?
   checklistTextSize Int?
   noteLineSpacing  Float?
+  // Note Card (device-scoped appearance)
+  cardTitleSize           Int?
+  cardChecklistSpacing    Int?
+  cardCheckboxSize        Int?
+  cardChecklistTextSize   Int?
+  cardNoteLineSpacing     Float?
+  // Note Editor (device-scoped appearance)
+  editorChecklistSpacing  Int?
+  editorCheckboxSize      Int?
+  editorChecklistTextSize Int?
+  editorNoteLineSpacing   Float?
   noteWidth        Int?
   fontFamily       String?
   dragBehavior     String?
@@ -316,6 +327,7 @@ model NotePref {
   noteId    Int
   userId    Int
   color     String?
+  imagesExpanded Boolean @default(false)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   note      Note     @relation(fields: [noteId], references: [id])

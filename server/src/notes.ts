@@ -27,6 +27,11 @@ async function getParticipantIdsForNote(noteId: number, note?: { ownerId: number
 }
 
 async function hardDeleteNote(noteId: number): Promise<void> {
+  const note = await prisma.note.findUnique({ where: { id: noteId }, select: { ownerId: true } });
+  const ownerId = Number((note as any)?.ownerId);
+  const imgs = await prisma.noteImage.findMany({ where: { noteId }, select: { url: true } });
+  const urls = (imgs || []).map((i: any) => String(i?.url || '')).filter(Boolean);
+
   // Delete dependent rows first (some relations are not cascading).
   await prisma.$transaction([
     prisma.noteItem.deleteMany({ where: { noteId } }),
@@ -37,6 +42,89 @@ async function hardDeleteNote(noteId: number): Promise<void> {
     (prisma as any).noteCollection.deleteMany({ where: { noteId } }),
     prisma.note.delete({ where: { id: noteId } }),
   ]);
+
+  // Best-effort: remove uploaded image files for this note.
+  // Keep this post-transaction so DB deletion can't be blocked by file IO.
+  try {
+    if (Number.isFinite(ownerId)) {
+      await cleanupNoteUploadsForUrls({ ownerId, noteId, urls });
+    }
+  } catch {}
+}
+
+function stripUrlQueryAndHash(u: string): string {
+  const s = String(u || '');
+  const q = s.indexOf('?');
+  const h = s.indexOf('#');
+  const cut = (q === -1) ? h : (h === -1 ? q : Math.min(q, h));
+  return cut === -1 ? s : s.slice(0, cut);
+}
+
+function isPathInside(parent: string, child: string): boolean {
+  const parentResolved = path.resolve(parent);
+  const childResolved = path.resolve(child);
+
+  // Windows is case-insensitive by default.
+  const parentCmp = process.platform === 'win32' ? parentResolved.toLowerCase() : parentResolved;
+  const childCmp = process.platform === 'win32' ? childResolved.toLowerCase() : childResolved;
+  if (parentCmp === childCmp) return true;
+  const sep = path.sep;
+  return childCmp.startsWith(parentCmp.endsWith(sep) ? parentCmp : parentCmp + sep);
+}
+
+function uploadsAbsPathFromRel(relPosix: string): string | null {
+  const rel = path.posix.normalize(String(relPosix || '').replace(/\\/g, '/'));
+  if (!rel || rel === '.' || rel.startsWith('..') || rel.includes('/../')) return null;
+  const uploadsDir = getUploadsDir();
+  const abs = path.join(uploadsDir, ...rel.split('/'));
+  if (!isPathInside(uploadsDir, abs)) return null;
+  return abs;
+}
+
+async function cleanupNoteUploadsForUrls(opts: { ownerId: number; noteId: number; urls: string[] }): Promise<void> {
+  const ownerId = Number(opts.ownerId);
+  const noteId = Number(opts.noteId);
+  if (!Number.isFinite(ownerId) || !Number.isFinite(noteId)) return;
+
+  const prefix = `/uploads/notes/${ownerId}/${noteId}/`;
+  const seen = new Set<string>();
+
+  for (const raw of (opts.urls || [])) {
+    const url = stripUrlQueryAndHash(String(raw || '').trim());
+    if (!url || seen.has(url)) continue;
+    seen.add(url);
+
+    if (!url.startsWith(prefix)) continue;
+    const rel = url.slice('/uploads/'.length); // safe because prefix starts with /uploads/
+    const abs = uploadsAbsPathFromRel(rel);
+    if (!abs) continue;
+
+    // If some other note still references the exact same URL, don't delete.
+    try {
+      const remaining = await prisma.noteImage.findFirst({ where: { url } , select: { id: true } });
+      if (remaining) continue;
+    } catch {
+      // If we can't check, be conservative and keep the file.
+      continue;
+    }
+
+    try {
+      await fsp.unlink(abs);
+    } catch {
+      // ignore missing/unlink errors
+    }
+  }
+
+  // Optional best-effort cleanup: remove the note directory if it is empty.
+  try {
+    const uploadsDir = getUploadsDir();
+    const noteDir = path.join(uploadsDir, 'notes', String(ownerId), String(noteId));
+    if (!isPathInside(uploadsDir, noteDir)) return;
+    const entries = await fsp.readdir(noteDir).catch(() => [] as any);
+    if (Array.isArray(entries) && entries.length === 0) {
+      await fsp.rmdir(noteDir).catch(() => {});
+    }
+  } catch {}
 }
 
 function parseDateTimeMaybe(v: any): Date | null {
@@ -209,6 +297,7 @@ router.get('/api/notes', async (req: Request, res: Response) => {
           items: itemsFromDb,
           imagesCount: (typeof (n as any)?._count?.images === 'number') ? Number((n as any)._count.images) : 0,
           viewerColor: (Array.isArray(n.notePrefs) && n.notePrefs[0]?.color) ? String(n.notePrefs[0].color) : null,
+          viewerImagesExpanded: !!(Array.isArray(n.notePrefs) && (n.notePrefs[0] as any)?.imagesExpanded),
         viewerCollections,
           // Reminders are owner-only; collaborators should not see the owner's reminder state.
           reminderDueAt: isOwnerView ? (n as any).reminderDueAt : null,
@@ -681,9 +770,18 @@ router.delete('/api/notes/:id/images/:imageId', async (req: Request, res: Respon
       if (!collab) return res.status(403).json({ error: 'forbidden' });
     }
     // ensure image belongs to this note
-    const img = await prisma.noteImage.findUnique({ where: { id: imageId } });
+    const img = await prisma.noteImage.findUnique({ where: { id: imageId }, select: { id: true, noteId: true, url: true } as any });
     if (!img || img.noteId !== id) return res.status(404).json({ error: 'image not found' });
     await prisma.noteImage.delete({ where: { id: imageId } });
+
+    // Best-effort: delete the underlying upload file if it was a persisted note upload.
+    try {
+      const url = String((img as any).url || '');
+      if (url) {
+        await cleanupNoteUploadsForUrls({ ownerId: Number(note.ownerId), noteId: id, urls: [url] });
+      }
+    } catch {}
+
     try {
       const collabs = await prisma.collaborator.findMany({ where: { noteId: id }, select: { userId: true } });
       const participantIds = Array.from(new Set<number>([note.ownerId, ...collabs.map(c => Number(c.userId)).filter((n) => Number.isFinite(n))]));
@@ -888,7 +986,11 @@ router.patch('/api/notes/:id', async (req: Request, res: Response) => {
     if (!user) return res.status(401).json({ error: 'unauthenticated' });
     const noteId = Number(req.params.id);
     if (!Number.isInteger(noteId)) return res.status(400).json({ error: 'invalid note id' });
-    const color = (typeof req.body?.color === 'string' ? String(req.body.color) : null);
+    const wantsColor = !!(req.body && Object.prototype.hasOwnProperty.call(req.body, 'color'));
+    const wantsImagesExpanded = !!(req.body && Object.prototype.hasOwnProperty.call(req.body, 'imagesExpanded'));
+    const color = wantsColor ? (typeof req.body?.color === 'string' ? String(req.body.color) : '') : undefined;
+    const imagesExpanded = wantsImagesExpanded ? !!(req.body as any)?.imagesExpanded : undefined;
+    if (!wantsColor && !wantsImagesExpanded) return res.status(400).json({ error: 'no prefs provided' });
     try {
         const note = await (prisma as any).note.findUnique({ where: { id: noteId } });
       if (!note) return res.status(404).json({ error: 'not found' });
@@ -897,19 +999,45 @@ router.patch('/api/notes/:id', async (req: Request, res: Response) => {
         const collab = await prisma.collaborator.findFirst({ where: { noteId, userId: user.id } });
         if (!collab) return res.status(403).json({ error: 'forbidden' });
       }
-      if (color && color.length) {
-          const pref = await (prisma as any).notePref.upsert({
-          where: { noteId_userId: { noteId, userId: user.id } },
-          update: { color },
-          create: { noteId, userId: user.id, color }
-        });
-        try { notifyUser(user.id, 'note-color-changed', { noteId, color }); } catch {}
-        return res.json({ prefs: pref });
+
+      // Back-compat: if caller only sends an empty color, delete the preference row.
+      // If additional prefs are provided, keep the row and just clear `color`.
+      if (wantsColor && !wantsImagesExpanded) {
+        const c = (typeof color === 'string') ? String(color) : '';
+        if (!c.length) {
+          await (prisma as any).notePref.deleteMany({ where: { noteId, userId: user.id } });
+          try { notifyUser(user.id, 'note-color-changed', { noteId, color: '' }); } catch {}
+          return res.json({ ok: true });
+        }
       }
-      // delete preference if color null/empty
-        await (prisma as any).notePref.deleteMany({ where: { noteId, userId: user.id } });
-      try { notifyUser(user.id, 'note-color-changed', { noteId, color: '' }); } catch {}
-      return res.json({ ok: true });
+
+      const updateData: any = {};
+      const createData: any = { noteId, userId: user.id };
+      if (wantsColor) {
+        const c = (typeof color === 'string') ? String(color) : '';
+        updateData.color = c.length ? c : null;
+        createData.color = c.length ? c : null;
+      }
+      if (wantsImagesExpanded) {
+        updateData.imagesExpanded = !!imagesExpanded;
+        createData.imagesExpanded = !!imagesExpanded;
+      }
+
+      const pref = await (prisma as any).notePref.upsert({
+        where: { noteId_userId: { noteId, userId: user.id } },
+        update: updateData,
+        create: createData,
+      });
+
+      if (wantsColor) {
+        const c = (typeof color === 'string') ? String(color) : '';
+        try { notifyUser(user.id, 'note-color-changed', { noteId, color: c }); } catch {}
+      }
+      if (wantsImagesExpanded) {
+        try { notifyUser(user.id, 'note-images-expanded-changed', { noteId, imagesExpanded: !!imagesExpanded }); } catch {}
+      }
+
+      return res.json({ prefs: pref });
     } catch (err) {
       res.status(500).json({ error: String(err) });
     }

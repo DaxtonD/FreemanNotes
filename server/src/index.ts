@@ -263,9 +263,29 @@ async function start() {
   } else {
     // Production: serve built client from client-dist
     const clientDist = path.resolve(__dirname, "..", "..", "client-dist");
-    app.use(express.static(clientDist));
+    app.use(express.static(clientDist, {
+      etag: true,
+      setHeaders: (res, filePath) => {
+        try {
+          const rel = path.relative(clientDist, filePath).replace(/\\/g, "/");
+          // App shell files must revalidate so new builds roll out.
+          if (rel === "index.html" || rel === "manifest.webmanifest" || rel === "sw.js") {
+            res.setHeader("Cache-Control", "no-cache");
+            return;
+          }
+          // Vite emits content-hashed assets; safe to cache forever.
+          if (rel.startsWith("assets/")) {
+            res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+            return;
+          }
+          // Default: revalidate.
+          res.setHeader("Cache-Control", "no-cache");
+        } catch {}
+      }
+    }));
     app.get("*", (req, res) => {
       const indexHtml = path.join(clientDist, "index.html");
+      try { res.setHeader("Cache-Control", "no-cache"); } catch {}
       res.sendFile(indexHtml);
     });
   }

@@ -107,6 +107,16 @@ function mergeEffectivePrefs(user: any, devicePrefs: any | null): any {
     'checkboxSize',
     'checklistTextSize',
     'noteLineSpacing',
+    // Split appearance prefs (card vs editor)
+    'cardTitleSize',
+    'cardChecklistSpacing',
+    'cardCheckboxSize',
+    'cardChecklistTextSize',
+    'cardNoteLineSpacing',
+    'editorChecklistSpacing',
+    'editorCheckboxSize',
+    'editorChecklistTextSize',
+    'editorNoteLineSpacing',
     'noteWidth',
     'fontFamily',
     'dragBehavior',
@@ -187,6 +197,15 @@ router.post("/api/auth/register", async (req: Request, res: Response) => {
             checkboxSize: user.checkboxSize,
             checklistTextSize: user.checklistTextSize,
             noteLineSpacing: user.noteLineSpacing,
+            cardTitleSize: 20,
+            cardChecklistSpacing: user.checklistSpacing,
+            cardCheckboxSize: user.checkboxSize,
+            cardChecklistTextSize: user.checklistTextSize,
+            cardNoteLineSpacing: user.noteLineSpacing,
+            editorChecklistSpacing: user.checklistSpacing,
+            editorCheckboxSize: user.checkboxSize,
+            editorChecklistTextSize: user.checklistTextSize,
+            editorNoteLineSpacing: user.noteLineSpacing,
             noteWidth: user.noteWidth,
             fontFamily: user.fontFamily,
             dragBehavior: user.dragBehavior,
@@ -276,6 +295,32 @@ router.get("/api/auth/me", async (req: Request, res: Response) => {
           });
         }
       } catch {}
+
+      // Backfill split appearance prefs (card/editor) from legacy shared device prefs and/or user defaults.
+      try {
+        if (devicePrefs) {
+          const backfill: any = {};
+          const legacyChecklistSpacing = (devicePrefs as any).checklistSpacing ?? (user as any).checklistSpacing;
+          const legacyCheckboxSize = (devicePrefs as any).checkboxSize ?? (user as any).checkboxSize;
+          const legacyChecklistTextSize = (devicePrefs as any).checklistTextSize ?? (user as any).checklistTextSize;
+          const legacyNoteLineSpacing = (devicePrefs as any).noteLineSpacing ?? (user as any).noteLineSpacing;
+
+          if ((devicePrefs as any).cardTitleSize == null) backfill.cardTitleSize = 20;
+          if ((devicePrefs as any).cardChecklistSpacing == null && typeof legacyChecklistSpacing === 'number') backfill.cardChecklistSpacing = legacyChecklistSpacing;
+          if ((devicePrefs as any).cardCheckboxSize == null && typeof legacyCheckboxSize === 'number') backfill.cardCheckboxSize = legacyCheckboxSize;
+          if ((devicePrefs as any).cardChecklistTextSize == null && typeof legacyChecklistTextSize === 'number') backfill.cardChecklistTextSize = legacyChecklistTextSize;
+          if ((devicePrefs as any).cardNoteLineSpacing == null && typeof legacyNoteLineSpacing === 'number') backfill.cardNoteLineSpacing = legacyNoteLineSpacing;
+
+          if ((devicePrefs as any).editorChecklistSpacing == null && typeof legacyChecklistSpacing === 'number') backfill.editorChecklistSpacing = legacyChecklistSpacing;
+          if ((devicePrefs as any).editorCheckboxSize == null && typeof legacyCheckboxSize === 'number') backfill.editorCheckboxSize = legacyCheckboxSize;
+          if ((devicePrefs as any).editorChecklistTextSize == null && typeof legacyChecklistTextSize === 'number') backfill.editorChecklistTextSize = legacyChecklistTextSize;
+          if ((devicePrefs as any).editorNoteLineSpacing == null && typeof legacyNoteLineSpacing === 'number') backfill.editorNoteLineSpacing = legacyNoteLineSpacing;
+
+          if (Object.keys(backfill).length > 0) {
+            devicePrefs = await prismaAny.userDevicePrefs.update({ where: { profileId: ctx.profileId }, data: backfill });
+          }
+        }
+      } catch {}
       effective = mergeEffectivePrefs(user, devicePrefs);
       effective.device = { deviceKey: ctx.deviceKey, deviceName: ctx.deviceName };
     }
@@ -290,7 +335,38 @@ router.patch('/api/auth/me', async (req: Request, res: Response) => {
   const user = await getUserFromToken(req);
   if (!user) return res.status(401).json({ error: 'unauthenticated' });
   const body = req.body || {};
-  const { name, fontFamily, noteWidth, dragBehavior, animationSpeed, checklistSpacing, checkboxSize, checklistTextSize, chipDisplayMode, noteLineSpacing, themeChoice, animationBehavior, animationsEnabled, imageThumbSize, trashAutoEmptyDays, linkColorDark, linkColorLight, editorImageThumbSize, editorImagesExpandedByDefault, disableNoteCardLinks } = body as any;
+  const {
+    name,
+    fontFamily,
+    noteWidth,
+    dragBehavior,
+    animationSpeed,
+    checklistSpacing,
+    checkboxSize,
+    checklistTextSize,
+    chipDisplayMode,
+    noteLineSpacing,
+    // Split appearance prefs (card vs editor)
+    cardTitleSize,
+    cardChecklistSpacing,
+    cardCheckboxSize,
+    cardChecklistTextSize,
+    cardNoteLineSpacing,
+    editorChecklistSpacing,
+    editorCheckboxSize,
+    editorChecklistTextSize,
+    editorNoteLineSpacing,
+    themeChoice,
+    animationBehavior,
+    animationsEnabled,
+    imageThumbSize,
+    trashAutoEmptyDays,
+    linkColorDark,
+    linkColorLight,
+    editorImageThumbSize,
+    editorImagesExpandedByDefault,
+    disableNoteCardLinks
+  } = body as any;
 
   // Resolve device context early so we can decide whether a pref is user-scoped or device-scoped.
   let deviceCtxEarly: DeviceContext | null = null;
@@ -320,6 +396,41 @@ router.patch('/api/auth/me', async (req: Request, res: Response) => {
   if (typeof checklistTextSize === 'number') prefData.checklistTextSize = checklistTextSize;
   if (typeof chipDisplayMode === 'string') prefData.chipDisplayMode = chipDisplayMode;
   if (typeof noteLineSpacing === 'number') prefData.noteLineSpacing = noteLineSpacing;
+
+  // Split appearance prefs (device-scoped)
+  if (typeof cardTitleSize === 'number' && Number.isFinite(cardTitleSize)) {
+    prefData.cardTitleSize = Math.max(12, Math.min(40, Math.trunc(cardTitleSize)));
+  }
+  if (typeof cardChecklistSpacing === 'number' && Number.isFinite(cardChecklistSpacing)) {
+    prefData.cardChecklistSpacing = Math.max(2, Math.min(40, Math.trunc(cardChecklistSpacing)));
+    // Back-compat: keep legacy shared keys aligned with card values.
+    prefData.checklistSpacing = prefData.cardChecklistSpacing;
+  }
+  if (typeof cardCheckboxSize === 'number' && Number.isFinite(cardCheckboxSize)) {
+    prefData.cardCheckboxSize = Math.max(10, Math.min(60, Math.trunc(cardCheckboxSize)));
+    prefData.checkboxSize = prefData.cardCheckboxSize;
+  }
+  if (typeof cardChecklistTextSize === 'number' && Number.isFinite(cardChecklistTextSize)) {
+    prefData.cardChecklistTextSize = Math.max(10, Math.min(34, Math.trunc(cardChecklistTextSize)));
+    prefData.checklistTextSize = prefData.cardChecklistTextSize;
+  }
+  if (typeof cardNoteLineSpacing === 'number' && Number.isFinite(cardNoteLineSpacing)) {
+    prefData.cardNoteLineSpacing = Math.max(0.9, Math.min(2.2, Number(cardNoteLineSpacing)));
+    prefData.noteLineSpacing = prefData.cardNoteLineSpacing;
+  }
+
+  if (typeof editorChecklistSpacing === 'number' && Number.isFinite(editorChecklistSpacing)) {
+    prefData.editorChecklistSpacing = Math.max(2, Math.min(40, Math.trunc(editorChecklistSpacing)));
+  }
+  if (typeof editorCheckboxSize === 'number' && Number.isFinite(editorCheckboxSize)) {
+    prefData.editorCheckboxSize = Math.max(10, Math.min(60, Math.trunc(editorCheckboxSize)));
+  }
+  if (typeof editorChecklistTextSize === 'number' && Number.isFinite(editorChecklistTextSize)) {
+    prefData.editorChecklistTextSize = Math.max(10, Math.min(34, Math.trunc(editorChecklistTextSize)));
+  }
+  if (typeof editorNoteLineSpacing === 'number' && Number.isFinite(editorNoteLineSpacing)) {
+    prefData.editorNoteLineSpacing = Math.max(0.9, Math.min(2.2, Number(editorNoteLineSpacing)));
+  }
   if (typeof themeChoice === 'string') prefData.themeChoice = themeChoice;
   if (typeof animationBehavior === 'string') prefData.animationBehavior = animationBehavior;
   if (typeof animationsEnabled === 'boolean') prefData.animationsEnabled = animationsEnabled;

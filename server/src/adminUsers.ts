@@ -2,6 +2,9 @@ import { Router, Request, Response } from "express";
 import prisma from "./prismaClient";
 import jwt from "jsonwebtoken";
 import bcrypt from "bcryptjs";
+import { getUploadsDir } from './uploads';
+import * as fsp from 'fs/promises';
+import path from 'path';
 
 const router = Router();
 
@@ -48,6 +51,88 @@ function safeUser(u: any) {
     createdAt: u.createdAt,
     updatedAt: u.updatedAt
   };
+}
+
+function stripUrlQueryAndHash(u: string): string {
+  const s = String(u || '');
+  const q = s.indexOf('?');
+  const h = s.indexOf('#');
+  const cut = (q === -1) ? h : (h === -1 ? q : Math.min(q, h));
+  return cut === -1 ? s : s.slice(0, cut);
+}
+
+function isPathInside(parent: string, child: string): boolean {
+  const parentResolved = path.resolve(parent);
+  const childResolved = path.resolve(child);
+
+  const parentCmp = process.platform === 'win32' ? parentResolved.toLowerCase() : parentResolved;
+  const childCmp = process.platform === 'win32' ? childResolved.toLowerCase() : childResolved;
+  if (parentCmp === childCmp) return true;
+  const sep = path.sep;
+  return childCmp.startsWith(parentCmp.endsWith(sep) ? parentCmp : parentCmp + sep);
+}
+
+function uploadsAbsPathFromRel(relPosix: string): string | null {
+  const rel = path.posix.normalize(String(relPosix || '').replace(/\\/g, '/'));
+  if (!rel || rel === '.' || rel.startsWith('..') || rel.includes('/../')) return null;
+  const uploadsDir = getUploadsDir();
+  const abs = path.join(uploadsDir, ...rel.split('/'));
+  if (!isPathInside(uploadsDir, abs)) return null;
+  return abs;
+}
+
+async function cleanupUserNoteUploadsForUrls(opts: { userId: number; urls: string[] }): Promise<void> {
+  const userId = Number(opts.userId);
+  if (!Number.isFinite(userId)) return;
+
+  const prefix = `/uploads/notes/${userId}/`;
+  const unique = Array.from(new Set(
+    (opts.urls || [])
+      .map((u) => stripUrlQueryAndHash(String(u || '').trim()))
+      .filter((u) => u && u.startsWith(prefix))
+  ));
+
+  if (unique.length === 0) return;
+
+  // Check for any remaining DB references (e.g., another note copied the same URL).
+  const remaining = new Set<string>();
+  const chunkSize = 500;
+  for (let i = 0; i < unique.length; i += chunkSize) {
+    const chunk = unique.slice(i, i + chunkSize);
+    try {
+      const rows = await prisma.noteImage.findMany({ where: { url: { in: chunk } }, select: { url: true } });
+      for (const r of (rows || []) as any[]) {
+        const u = String((r as any)?.url || '');
+        if (u) remaining.add(u);
+      }
+    } catch {
+      // If we can't check, be conservative and abort cleanup.
+      return;
+    }
+  }
+
+  const uploadsDir = getUploadsDir();
+  for (const url of unique) {
+    if (remaining.has(url)) continue;
+
+    const rel = url.slice('/uploads/'.length);
+    const abs = uploadsAbsPathFromRel(rel);
+    if (!abs) continue;
+
+    try { await fsp.unlink(abs); } catch {}
+
+    // Best-effort: prune now-empty directories (note folder, then user folder).
+    try {
+      const fileDir = path.dirname(abs);
+      if (isPathInside(uploadsDir, fileDir)) {
+        await fsp.rmdir(fileDir).catch(() => {});
+      }
+      const userDir = path.join(uploadsDir, 'notes', String(userId));
+      if (isPathInside(uploadsDir, userDir)) {
+        await fsp.rmdir(userDir).catch(() => {});
+      }
+    } catch {}
+  }
 }
 
 // List/search users + roles (admin only)
@@ -192,6 +277,10 @@ router.delete("/api/admin/users/:id", async (req: Request, res: Response) => {
     const target = await prisma.user.findUnique({ where: { id }, select: { id: true } });
     if (!target) return res.status(404).json({ error: "user not found" });
 
+    // Preload note image URLs for owned notes so we can delete persisted uploads after DB delete.
+    const imgs = await prisma.noteImage.findMany({ where: { note: { ownerId: id } } as any, select: { url: true } as any });
+    const imageUrls = (imgs || []).map((i: any) => String(i?.url || '')).filter(Boolean);
+
     await prisma.$transaction([
       // Remove this user as a collaborator on other people's notes.
       prisma.collaborator.deleteMany({ where: { userId: id } }),
@@ -220,6 +309,11 @@ router.delete("/api/admin/users/:id", async (req: Request, res: Response) => {
       // Finally delete the user.
       prisma.user.delete({ where: { id } })
     ]);
+
+    // Best-effort: remove persisted uploads for deleted user's owned notes.
+    try {
+      await cleanupUserNoteUploadsForUrls({ userId: id, urls: imageUrls });
+    } catch {}
 
     res.json({ ok: true });
   } catch (err) {

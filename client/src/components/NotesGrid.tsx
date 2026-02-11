@@ -503,6 +503,13 @@ export default function NotesGrid({
     }));
   }
 
+  function applyImagesExpandedToNote(noteId: number, imagesExpanded: boolean) {
+    setNotes((s) => s.map((n: any) => {
+      if (Number(n.id) !== Number(noteId)) return n;
+      return { ...n, viewerImagesExpanded: !!imagesExpanded };
+    }));
+  }
+
   function applyCollectionsToNote(noteId: number, collections: ViewerCollectionLite[]) {
     const nextCollections = (Array.isArray(collections) ? collections : [])
       .filter((c) => c && typeof (c as any).id === 'number' && typeof (c as any).name === 'string')
@@ -1659,6 +1666,53 @@ export default function NotesGrid({
                   document.documentElement.style.setProperty('--note-card-width', `${Number(payload.noteWidth)}px`);
                   try { localStorage.setItem('prefs.noteWidth', String(Number(payload.noteWidth))); } catch {}
                 }
+                // Split appearance prefs (card vs editor)
+                if (typeof (payload as any).cardTitleSize === 'number') {
+                  document.documentElement.style.setProperty('--card-title-size', `${Number((payload as any).cardTitleSize)}px`);
+                  try { localStorage.setItem('prefs.cardTitleSize', String(Number((payload as any).cardTitleSize))); } catch {}
+                }
+                if (typeof (payload as any).cardChecklistSpacing === 'number') {
+                  document.documentElement.style.setProperty('--card-checklist-gap', `${Number((payload as any).cardChecklistSpacing)}px`);
+                  try { localStorage.setItem('prefs.cardChecklistSpacing', String(Number((payload as any).cardChecklistSpacing))); } catch {}
+                  // legacy fallback
+                  document.documentElement.style.setProperty('--checklist-gap', `${Number((payload as any).cardChecklistSpacing)}px`);
+                  try { localStorage.setItem('prefs.checklistSpacing', String(Number((payload as any).cardChecklistSpacing))); } catch {}
+                }
+                if (typeof (payload as any).cardCheckboxSize === 'number') {
+                  document.documentElement.style.setProperty('--card-checklist-checkbox-size', `${Number((payload as any).cardCheckboxSize)}px`);
+                  try { localStorage.setItem('prefs.cardCheckboxSize', String(Number((payload as any).cardCheckboxSize))); } catch {}
+                  document.documentElement.style.setProperty('--checklist-checkbox-size', `${Number((payload as any).cardCheckboxSize)}px`);
+                  try { localStorage.setItem('prefs.checkboxSize', String(Number((payload as any).cardCheckboxSize))); } catch {}
+                }
+                if (typeof (payload as any).cardChecklistTextSize === 'number') {
+                  document.documentElement.style.setProperty('--card-checklist-text-size', `${Number((payload as any).cardChecklistTextSize)}px`);
+                  try { localStorage.setItem('prefs.cardChecklistTextSize', String(Number((payload as any).cardChecklistTextSize))); } catch {}
+                  document.documentElement.style.setProperty('--checklist-text-size', `${Number((payload as any).cardChecklistTextSize)}px`);
+                  try { localStorage.setItem('prefs.checklistTextSize', String(Number((payload as any).cardChecklistTextSize))); } catch {}
+                }
+                if (typeof (payload as any).cardNoteLineSpacing === 'number') {
+                  document.documentElement.style.setProperty('--card-note-line-height', String(Number((payload as any).cardNoteLineSpacing)));
+                  try { localStorage.setItem('prefs.cardNoteLineSpacing', String(Number((payload as any).cardNoteLineSpacing))); } catch {}
+                  document.documentElement.style.setProperty('--note-line-height', String(Number((payload as any).cardNoteLineSpacing)));
+                  try { localStorage.setItem('prefs.noteLineSpacing', String(Number((payload as any).cardNoteLineSpacing))); } catch {}
+                }
+
+                if (typeof (payload as any).editorChecklistSpacing === 'number') {
+                  document.documentElement.style.setProperty('--editor-checklist-gap', `${Number((payload as any).editorChecklistSpacing)}px`);
+                  try { localStorage.setItem('prefs.editorChecklistSpacing', String(Number((payload as any).editorChecklistSpacing))); } catch {}
+                }
+                if (typeof (payload as any).editorCheckboxSize === 'number') {
+                  document.documentElement.style.setProperty('--editor-checklist-checkbox-size', `${Number((payload as any).editorCheckboxSize)}px`);
+                  try { localStorage.setItem('prefs.editorCheckboxSize', String(Number((payload as any).editorCheckboxSize))); } catch {}
+                }
+                if (typeof (payload as any).editorChecklistTextSize === 'number') {
+                  document.documentElement.style.setProperty('--editor-checklist-text-size', `${Number((payload as any).editorChecklistTextSize)}px`);
+                  try { localStorage.setItem('prefs.editorChecklistTextSize', String(Number((payload as any).editorChecklistTextSize))); } catch {}
+                }
+                if (typeof (payload as any).editorNoteLineSpacing === 'number') {
+                  document.documentElement.style.setProperty('--editor-note-line-height', String(Number((payload as any).editorNoteLineSpacing)));
+                  try { localStorage.setItem('prefs.editorNoteLineSpacing', String(Number((payload as any).editorNoteLineSpacing))); } catch {}
+                }
                 if (typeof payload.checklistTextSize === 'number') {
                   document.documentElement.style.setProperty('--checklist-text-size', `${Number(payload.checklistTextSize)}px`);
                   try { localStorage.setItem('prefs.checklistTextSize', String(Number(payload.checklistTextSize))); } catch {}
@@ -2599,6 +2653,10 @@ export default function NotesGrid({
     }
     if (evt && evt.type === 'color' && typeof evt.noteId === 'number') {
       applyColorToNote(evt.noteId, (typeof evt.color === 'string') ? String(evt.color) : '');
+      return;
+    }
+    if (evt && evt.type === 'imagesExpanded' && typeof evt.noteId === 'number') {
+      applyImagesExpandedToNote(evt.noteId, !!(evt as any).imagesExpanded);
       return;
     }
     if (evt && evt.type === 'collections' && typeof evt.noteId === 'number' && Array.isArray(evt.collections)) {

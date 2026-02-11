@@ -30,28 +30,97 @@ export default function PreferencesModal({ onClose }: { onClose: () => void }) {
   const effectiveTheme = (themeCtx && (themeCtx as any).effective) || 'dark';
   const themeChoice = (themeCtx && (themeCtx as any).choice) || 'system';
   const setThemeChoice: (t: any) => void = (themeCtx && (themeCtx as any).setChoice) || (() => {});
-  const [pending, setPending] = useState<number>(() => {
+  // Split appearance prefs (card vs editor)
+  const [pendingCardTitleSize, setPendingCardTitleSize] = useState<number>(() => {
     try {
-      const v = localStorage.getItem('prefs.checklistSpacing');
-      return v ? Number(v) : 15;
-    } catch {
-      return 15;
-    }
-  });
-  const [pendingCheckboxSize, setPendingCheckboxSize] = useState<number>(() => {
-    try { return Number(localStorage.getItem('prefs.checkboxSize') || '20'); } catch { return 20; }
-  });
-  const [pendingTextSize, setPendingTextSize] = useState<number>(() => {
-    try { return Number(localStorage.getItem('prefs.checklistTextSize') || '17'); } catch { return 17; }
-  });
-  const [pendingNoteLineSpacing, setPendingNoteLineSpacing] = useState<number>(() => {
-    try {
-      const v = localStorage.getItem('prefs.noteLineSpacing');
+      const v = localStorage.getItem('prefs.cardTitleSize');
       if (v) return Number(v);
-      const userVal = auth && (auth.user as any)?.noteLineSpacing;
+      const userVal = auth && (auth.user as any)?.cardTitleSize;
       if (typeof userVal === 'number') return userVal;
+      const css = getComputedStyle(document.documentElement);
+      const fromCss = Number.parseInt(String(css.getPropertyValue('--card-title-size') || '').trim(), 10);
+      return Number.isFinite(fromCss) && fromCss > 0 ? fromCss : 20;
+    } catch { return 20; }
+  });
+  const [pendingCardChecklistSpacing, setPendingCardChecklistSpacing] = useState<number>(() => {
+    try {
+      const v = localStorage.getItem('prefs.cardChecklistSpacing') ?? localStorage.getItem('prefs.checklistSpacing');
+      if (v) return Number(v);
+      const userVal = auth && (auth.user as any)?.cardChecklistSpacing;
+      if (typeof userVal === 'number') return userVal;
+      const legacyUserVal = auth && (auth.user as any)?.checklistSpacing;
+      if (typeof legacyUserVal === 'number') return legacyUserVal;
+      return 15;
+    } catch { return 15; }
+  });
+  const [pendingCardCheckboxSize, setPendingCardCheckboxSize] = useState<number>(() => {
+    try {
+      const v = localStorage.getItem('prefs.cardCheckboxSize') ?? localStorage.getItem('prefs.checkboxSize');
+      if (v) return Number(v);
+      const userVal = auth && (auth.user as any)?.cardCheckboxSize;
+      if (typeof userVal === 'number') return userVal;
+      const legacyUserVal = auth && (auth.user as any)?.checkboxSize;
+      if (typeof legacyUserVal === 'number') return legacyUserVal;
+      return 20;
+    } catch { return 20; }
+  });
+  const [pendingCardTextSize, setPendingCardTextSize] = useState<number>(() => {
+    try {
+      const v = localStorage.getItem('prefs.cardChecklistTextSize') ?? localStorage.getItem('prefs.checklistTextSize');
+      if (v) return Number(v);
+      const userVal = auth && (auth.user as any)?.cardChecklistTextSize;
+      if (typeof userVal === 'number') return userVal;
+      const legacyUserVal = auth && (auth.user as any)?.checklistTextSize;
+      if (typeof legacyUserVal === 'number') return legacyUserVal;
+      return 17;
+    } catch { return 17; }
+  });
+  const [pendingCardNoteLineSpacing, setPendingCardNoteLineSpacing] = useState<number>(() => {
+    try {
+      const v = localStorage.getItem('prefs.cardNoteLineSpacing') ?? localStorage.getItem('prefs.noteLineSpacing');
+      if (v) return Number(v);
+      const userVal = auth && (auth.user as any)?.cardNoteLineSpacing;
+      if (typeof userVal === 'number') return userVal;
+      const legacyUserVal = auth && (auth.user as any)?.noteLineSpacing;
+      if (typeof legacyUserVal === 'number') return legacyUserVal;
       return 1.38;
     } catch { return 1.38; }
+  });
+  const [pendingEditorChecklistSpacing, setPendingEditorChecklistSpacing] = useState<number>(() => {
+    try {
+      const v = localStorage.getItem('prefs.editorChecklistSpacing');
+      if (v) return Number(v);
+      const userVal = auth && (auth.user as any)?.editorChecklistSpacing;
+      if (typeof userVal === 'number') return userVal;
+      return pendingCardChecklistSpacing;
+    } catch { return pendingCardChecklistSpacing; }
+  });
+  const [pendingEditorCheckboxSize, setPendingEditorCheckboxSize] = useState<number>(() => {
+    try {
+      const v = localStorage.getItem('prefs.editorCheckboxSize');
+      if (v) return Number(v);
+      const userVal = auth && (auth.user as any)?.editorCheckboxSize;
+      if (typeof userVal === 'number') return userVal;
+      return pendingCardCheckboxSize;
+    } catch { return pendingCardCheckboxSize; }
+  });
+  const [pendingEditorTextSize, setPendingEditorTextSize] = useState<number>(() => {
+    try {
+      const v = localStorage.getItem('prefs.editorChecklistTextSize');
+      if (v) return Number(v);
+      const userVal = auth && (auth.user as any)?.editorChecklistTextSize;
+      if (typeof userVal === 'number') return userVal;
+      return pendingCardTextSize;
+    } catch { return pendingCardTextSize; }
+  });
+  const [pendingEditorNoteLineSpacing, setPendingEditorNoteLineSpacing] = useState<number>(() => {
+    try {
+      const v = localStorage.getItem('prefs.editorNoteLineSpacing');
+      if (v) return Number(v);
+      const userVal = auth && (auth.user as any)?.editorNoteLineSpacing;
+      if (typeof userVal === 'number') return userVal;
+      return pendingCardNoteLineSpacing;
+    } catch { return pendingCardNoteLineSpacing; }
   });
   const [pendingNoteWidth, setPendingNoteWidth] = useState<number>(() => {
     try {
@@ -212,6 +281,21 @@ export default function PreferencesModal({ onClose }: { onClose: () => void }) {
   const [activeSection, setActiveSection] = useState<string | null>(null);
   activeSectionRef.current = activeSection;
 
+  const goBackOneLevel = () => {
+    try {
+      const cur = activeSectionRef.current;
+      if (cur === 'appearance-card' || cur === 'appearance-editor') {
+        setActiveSection('appearance');
+        return;
+      }
+      if (cur != null) {
+        setActiveSection(null);
+        return;
+      }
+      onCloseRef.current?.();
+    } catch {}
+  };
+
   useEffect(() => {
     if (!isPhone) return;
     try {
@@ -219,8 +303,7 @@ export default function PreferencesModal({ onClose }: { onClose: () => void }) {
       const id = backIdRef.current;
       const onBack = () => {
         try {
-          if (activeSectionRef.current != null) setActiveSection(null);
-          else onCloseRef.current?.();
+          goBackOneLevel();
         } catch {}
       };
       window.dispatchEvent(new CustomEvent('freemannotes:back/register', { detail: { id, onBack } }));
@@ -236,12 +319,43 @@ export default function PreferencesModal({ onClose }: { onClose: () => void }) {
 
   // when the modal mounts, reflect current saved value into the slider
   useEffect(() => {
-    const saved = (() => {
-      try { return Number(localStorage.getItem('prefs.checklistSpacing') || '8'); } catch { return 8; }
-    })();
-    setPending(saved);
+    try {
+      const cardTitle = localStorage.getItem('prefs.cardTitleSize');
+      if (cardTitle) setPendingCardTitleSize(Number(cardTitle));
+    } catch {}
+    try {
+      const cardSpacing = localStorage.getItem('prefs.cardChecklistSpacing') ?? localStorage.getItem('prefs.checklistSpacing');
+      if (cardSpacing) setPendingCardChecklistSpacing(Number(cardSpacing));
+    } catch {}
+    try {
+      const cardCb = localStorage.getItem('prefs.cardCheckboxSize') ?? localStorage.getItem('prefs.checkboxSize');
+      if (cardCb) setPendingCardCheckboxSize(Number(cardCb));
+    } catch {}
+    try {
+      const cardText = localStorage.getItem('prefs.cardChecklistTextSize') ?? localStorage.getItem('prefs.checklistTextSize');
+      if (cardText) setPendingCardTextSize(Number(cardText));
+    } catch {}
+    try {
+      const cardLs = localStorage.getItem('prefs.cardNoteLineSpacing') ?? localStorage.getItem('prefs.noteLineSpacing');
+      if (cardLs) setPendingCardNoteLineSpacing(Number(cardLs));
+    } catch {}
+    try {
+      const edSpacing = localStorage.getItem('prefs.editorChecklistSpacing');
+      if (edSpacing) setPendingEditorChecklistSpacing(Number(edSpacing));
+    } catch {}
+    try {
+      const edCb = localStorage.getItem('prefs.editorCheckboxSize');
+      if (edCb) setPendingEditorCheckboxSize(Number(edCb));
+    } catch {}
+    try {
+      const edText = localStorage.getItem('prefs.editorChecklistTextSize');
+      if (edText) setPendingEditorTextSize(Number(edText));
+    } catch {}
+    try {
+      const edLs = localStorage.getItem('prefs.editorNoteLineSpacing');
+      if (edLs) setPendingEditorNoteLineSpacing(Number(edLs));
+    } catch {}
     try { const f = localStorage.getItem('prefs.fontFamily'); if (f) setPendingFont(f); } catch {}
-    try { const ls = localStorage.getItem('prefs.noteLineSpacing') ?? ((auth && (auth.user as any)?.noteLineSpacing) != null ? String((auth as any).user.noteLineSpacing) : null); if (ls) setPendingNoteLineSpacing(Number(ls)); } catch {}
     try {
       const w = localStorage.getItem('prefs.noteWidth') ?? ((auth && (auth.user as any)?.noteWidth) != null ? String((auth as any).user.noteWidth) : null);
       if (w) setPendingNoteWidth(Number(w));
@@ -302,10 +416,23 @@ export default function PreferencesModal({ onClose }: { onClose: () => void }) {
   }, [isPhone, pendingDragBehavior]);
 
   async function onSave() {
-    document.documentElement.style.setProperty('--checklist-gap', `${pending}px`);
-    document.documentElement.style.setProperty('--checklist-checkbox-size', `${pendingCheckboxSize}px`);
-    document.documentElement.style.setProperty('--checklist-text-size', `${pendingTextSize}px`);
-    document.documentElement.style.setProperty('--note-line-height', String(pendingNoteLineSpacing));
+    // Card appearance
+    document.documentElement.style.setProperty('--card-title-size', `${pendingCardTitleSize}px`);
+    document.documentElement.style.setProperty('--card-checklist-gap', `${pendingCardChecklistSpacing}px`);
+    document.documentElement.style.setProperty('--card-checklist-checkbox-size', `${pendingCardCheckboxSize}px`);
+    document.documentElement.style.setProperty('--card-checklist-text-size', `${pendingCardTextSize}px`);
+    document.documentElement.style.setProperty('--card-note-line-height', String(pendingCardNoteLineSpacing));
+    // Editor appearance
+    document.documentElement.style.setProperty('--editor-checklist-gap', `${pendingEditorChecklistSpacing}px`);
+    document.documentElement.style.setProperty('--editor-checklist-checkbox-size', `${pendingEditorCheckboxSize}px`);
+    document.documentElement.style.setProperty('--editor-checklist-text-size', `${pendingEditorTextSize}px`);
+    document.documentElement.style.setProperty('--editor-note-line-height', String(pendingEditorNoteLineSpacing));
+
+    // Legacy vars (global) fall back to card values.
+    document.documentElement.style.setProperty('--checklist-gap', `${pendingCardChecklistSpacing}px`);
+    document.documentElement.style.setProperty('--checklist-checkbox-size', `${pendingCardCheckboxSize}px`);
+    document.documentElement.style.setProperty('--checklist-text-size', `${pendingCardTextSize}px`);
+    document.documentElement.style.setProperty('--note-line-height', String(pendingCardNoteLineSpacing));
     // Note width preference is disabled on phones (layout auto-fits card width).
     if (!isPhone) {
       document.documentElement.style.setProperty('--note-card-width', `${pendingNoteWidth}px`);
@@ -315,10 +442,20 @@ export default function PreferencesModal({ onClose }: { onClose: () => void }) {
     document.documentElement.style.setProperty('--link-color-dark', pendingLinkColorDark);
     document.documentElement.style.setProperty('--link-color-light', pendingLinkColorLight);
     // checkbox color customization removed — theme controls visuals
-    try { localStorage.setItem('prefs.checklistSpacing', String(pending)); } catch {}
-    try { localStorage.setItem('prefs.checkboxSize', String(pendingCheckboxSize)); } catch {}
-    try { localStorage.setItem('prefs.checklistTextSize', String(pendingTextSize)); } catch {}
-    try { localStorage.setItem('prefs.noteLineSpacing', String(pendingNoteLineSpacing)); } catch {}
+    try { localStorage.setItem('prefs.cardTitleSize', String(pendingCardTitleSize)); } catch {}
+    try { localStorage.setItem('prefs.cardChecklistSpacing', String(pendingCardChecklistSpacing)); } catch {}
+    try { localStorage.setItem('prefs.cardCheckboxSize', String(pendingCardCheckboxSize)); } catch {}
+    try { localStorage.setItem('prefs.cardChecklistTextSize', String(pendingCardTextSize)); } catch {}
+    try { localStorage.setItem('prefs.cardNoteLineSpacing', String(pendingCardNoteLineSpacing)); } catch {}
+    try { localStorage.setItem('prefs.editorChecklistSpacing', String(pendingEditorChecklistSpacing)); } catch {}
+    try { localStorage.setItem('prefs.editorCheckboxSize', String(pendingEditorCheckboxSize)); } catch {}
+    try { localStorage.setItem('prefs.editorChecklistTextSize', String(pendingEditorTextSize)); } catch {}
+    try { localStorage.setItem('prefs.editorNoteLineSpacing', String(pendingEditorNoteLineSpacing)); } catch {}
+    // Legacy keys (kept for backward compatibility)
+    try { localStorage.setItem('prefs.checklistSpacing', String(pendingCardChecklistSpacing)); } catch {}
+    try { localStorage.setItem('prefs.checkboxSize', String(pendingCardCheckboxSize)); } catch {}
+    try { localStorage.setItem('prefs.checklistTextSize', String(pendingCardTextSize)); } catch {}
+    try { localStorage.setItem('prefs.noteLineSpacing', String(pendingCardNoteLineSpacing)); } catch {}
     if (!isPhone) {
       try { localStorage.setItem('prefs.noteWidth', String(pendingNoteWidth)); } catch {}
     }
@@ -346,10 +483,15 @@ export default function PreferencesModal({ onClose }: { onClose: () => void }) {
         ...(isPhone ? {} : { noteWidth: pendingNoteWidth }),
         dragBehavior: pendingDragBehavior,
         animationSpeed: pendingAnimSpeed,
-        checklistSpacing: pending,
-        checkboxSize: pendingCheckboxSize,
-        checklistTextSize: pendingTextSize,
-        noteLineSpacing: pendingNoteLineSpacing,
+        cardTitleSize: pendingCardTitleSize,
+        cardChecklistSpacing: pendingCardChecklistSpacing,
+        cardCheckboxSize: pendingCardCheckboxSize,
+        cardChecklistTextSize: pendingCardTextSize,
+        cardNoteLineSpacing: pendingCardNoteLineSpacing,
+        editorChecklistSpacing: pendingEditorChecklistSpacing,
+        editorCheckboxSize: pendingEditorCheckboxSize,
+        editorChecklistTextSize: pendingEditorTextSize,
+        editorNoteLineSpacing: pendingEditorNoteLineSpacing,
         chipDisplayMode: pendingChipDisplayMode,
         imageThumbSize: pendingImageThumbSize,
         editorImageThumbSize: pendingEditorImageThumbSize,
@@ -453,7 +595,7 @@ export default function PreferencesModal({ onClose }: { onClose: () => void }) {
       <div className={`prefs-dialog${isPhone ? ' phone' : ''}`} role="dialog" aria-modal aria-label="Preferences">
         <div className="dialog-header prefs-header">
           {isPhone && activeSection != null ? (
-            <button className="btn prefs-back" type="button" onClick={() => setActiveSection(null)} aria-label="Back">
+            <button className="btn prefs-back" type="button" onClick={goBackOneLevel} aria-label="Back">
               ←
             </button>
           ) : (
@@ -463,6 +605,8 @@ export default function PreferencesModal({ onClose }: { onClose: () => void }) {
             {activeSection == null ? (isPhone ? 'Settings' : 'Preferences') : (
               activeSection === 'about' ? 'About' :
               activeSection === 'appearance' ? 'Appearance' :
+              activeSection === 'appearance-card' ? 'Note Card Preferences' :
+              activeSection === 'appearance-editor' ? 'Note Editor Preferences' :
               activeSection === 'colors' ? 'Colors' :
               activeSection === 'noteMgmt' ? 'Note Management' :
               activeSection === 'drag' ? 'Drag & Animation' :
@@ -696,11 +840,117 @@ export default function PreferencesModal({ onClose }: { onClose: () => void }) {
                 <button className="btn" type="button" onClick={() => { try { onClose(); } catch {} try { auth?.logout?.(); } catch {} }}>Sign out</button>
               </div>
             </div>
+          ) : activeSection === 'appearance-card' ? (
+            <div>
+              {!isPhone && <button className="btn" type="button" onClick={() => setActiveSection('appearance')} aria-label="Back">← Back</button>}
+              <div style={{ height: 8 }} />
+              <h4>Note Card Preferences</h4>
+
+              <div style={{ display: 'block' }}>
+                <div style={{ marginBottom: 16 }}>
+                  <div style={{ display: 'flex', gap: 12, alignItems: 'center', justifyContent: 'flex-start' }}>
+                    <label style={{ color: 'var(--muted)', minWidth: 140 }}>Note Title Size</label>
+                    <input aria-label="card title size" type="range" min={12} max={34} step={1} value={pendingCardTitleSize} onChange={(e) => setPendingCardTitleSize(Number(e.target.value))} />
+                    <div style={{ width: 48, textAlign: 'left' }}>{pendingCardTitleSize}px</div>
+                  </div>
+                  <div style={{ height: 10 }} />
+                  <div style={{ display: 'flex', gap: 12, alignItems: 'center', justifyContent: 'flex-start' }}>
+                    <label style={{ color: 'var(--muted)', minWidth: 140 }}>Note line spacing</label>
+                    <input aria-label="card note line spacing" type="range" min={0.9} max={1.8} step={0.02} value={pendingCardNoteLineSpacing} onChange={(e) => setPendingCardNoteLineSpacing(Number(e.target.value))} />
+                    <div style={{ width: 48, textAlign: 'left' }}>{pendingCardNoteLineSpacing.toFixed(2)}</div>
+                  </div>
+                  <div style={{ height: 10 }} />
+                  <div style={{ display: 'flex', gap: 12, alignItems: 'center', justifyContent: 'flex-start' }}>
+                    <label style={{ color: 'var(--muted)', minWidth: 140 }}>Checklist item spacing</label>
+                    <input aria-label="card checklist spacing" type="range" min={2} max={24} step={1} value={pendingCardChecklistSpacing} onChange={(e) => setPendingCardChecklistSpacing(Number(e.target.value))} />
+                    <div style={{ width: 48, textAlign: 'left' }}>{pendingCardChecklistSpacing}px</div>
+                  </div>
+                  <div style={{ height: 10 }} />
+                  <div style={{ display: 'flex', gap: 12, alignItems: 'center', justifyContent: 'flex-start' }}>
+                    <label style={{ color: 'var(--muted)', minWidth: 140 }}>Checkbox size</label>
+                    <input aria-label="card checkbox size" type="range" min={10} max={36} step={1} value={pendingCardCheckboxSize} onChange={(e) => setPendingCardCheckboxSize(Number(e.target.value))} />
+                    <div style={{ width: 48, textAlign: 'left' }}>{pendingCardCheckboxSize}px</div>
+                  </div>
+                  <div style={{ height: 10 }} />
+                  <div style={{ display: 'flex', gap: 12, alignItems: 'center', justifyContent: 'flex-start' }}>
+                    <label style={{ color: 'var(--muted)', minWidth: 140 }}>Text size</label>
+                    <input aria-label="card checklist text size" type="range" min={12} max={24} step={1} value={pendingCardTextSize} onChange={(e) => setPendingCardTextSize(Number(e.target.value))} />
+                    <div style={{ width: 48, textAlign: 'left' }}>{pendingCardTextSize}px</div>
+                  </div>
+                </div>
+              </div>
+
+              <div style={{ marginTop: 16, display: 'flex', gap: 8, justifyContent: 'flex-start' }}>
+                <button className="btn" type="button" onClick={goBackOneLevel}>Back</button>
+                <button className="btn" type="button" onClick={onSave}>Save</button>
+              </div>
+            </div>
+          ) : activeSection === 'appearance-editor' ? (
+            <div>
+              {!isPhone && <button className="btn" type="button" onClick={() => setActiveSection('appearance')} aria-label="Back">← Back</button>}
+              <div style={{ height: 8 }} />
+              <h4>Note Editor Preferences</h4>
+
+              <div style={{ display: 'block' }}>
+                <div style={{ marginBottom: 16 }}>
+                  <div style={{ display: 'flex', gap: 12, alignItems: 'center', justifyContent: 'flex-start' }}>
+                    <label style={{ color: 'var(--muted)', minWidth: 140 }}>Note line spacing</label>
+                    <input aria-label="editor note line spacing" type="range" min={0.9} max={1.8} step={0.02} value={pendingEditorNoteLineSpacing} onChange={(e) => setPendingEditorNoteLineSpacing(Number(e.target.value))} />
+                    <div style={{ width: 48, textAlign: 'left' }}>{pendingEditorNoteLineSpacing.toFixed(2)}</div>
+                  </div>
+                  <div style={{ height: 10 }} />
+                  <div style={{ display: 'flex', gap: 12, alignItems: 'center', justifyContent: 'flex-start' }}>
+                    <label style={{ color: 'var(--muted)', minWidth: 140 }}>Checklist item spacing</label>
+                    <input aria-label="editor checklist spacing" type="range" min={2} max={24} step={1} value={pendingEditorChecklistSpacing} onChange={(e) => setPendingEditorChecklistSpacing(Number(e.target.value))} />
+                    <div style={{ width: 48, textAlign: 'left' }}>{pendingEditorChecklistSpacing}px</div>
+                  </div>
+                  <div style={{ height: 10 }} />
+                  <div style={{ display: 'flex', gap: 12, alignItems: 'center', justifyContent: 'flex-start' }}>
+                    <label style={{ color: 'var(--muted)', minWidth: 140 }}>Checkbox size</label>
+                    <input aria-label="editor checkbox size" type="range" min={10} max={36} step={1} value={pendingEditorCheckboxSize} onChange={(e) => setPendingEditorCheckboxSize(Number(e.target.value))} />
+                    <div style={{ width: 48, textAlign: 'left' }}>{pendingEditorCheckboxSize}px</div>
+                  </div>
+                  <div style={{ height: 10 }} />
+                  <div style={{ display: 'flex', gap: 12, alignItems: 'center', justifyContent: 'flex-start' }}>
+                    <label style={{ color: 'var(--muted)', minWidth: 140 }}>Text size</label>
+                    <input aria-label="editor checklist text size" type="range" min={12} max={24} step={1} value={pendingEditorTextSize} onChange={(e) => setPendingEditorTextSize(Number(e.target.value))} />
+                    <div style={{ width: 48, textAlign: 'left' }}>{pendingEditorTextSize}px</div>
+                  </div>
+                </div>
+              </div>
+
+              <div style={{ marginTop: 16, display: 'flex', gap: 8, justifyContent: 'flex-start' }}>
+                <button className="btn" type="button" onClick={goBackOneLevel}>Back</button>
+                <button className="btn" type="button" onClick={onSave}>Save</button>
+              </div>
+            </div>
           ) : activeSection === 'appearance' ? (
             <div>
               {!isPhone && <button className="btn" type="button" onClick={() => setActiveSection(null)} aria-label="Back">← Back</button>}
               <div style={{ height: 8 }} />
               <h4>Appearance</h4>
+              {isPhone ? (
+                <>
+                  <div className="prefs-list" role="list" aria-label="Appearance preferences">
+                    <button className="prefs-item" type="button" onClick={() => setActiveSection('appearance-card')} role="listitem">
+                      <span className="prefs-item__label">Note Card Preferences</span>
+                      <span className="prefs-item__chev" aria-hidden>›</span>
+                    </button>
+                    <button className="prefs-item" type="button" onClick={() => setActiveSection('appearance-editor')} role="listitem">
+                      <span className="prefs-item__label">Note Editor Preferences</span>
+                      <span className="prefs-item__chev" aria-hidden>›</span>
+                    </button>
+                  </div>
+                  <div style={{ height: 14 }} />
+                </>
+              ) : (
+                <>
+                  <div style={{ marginBottom: 14, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                    <button className="btn" type="button" onClick={() => setActiveSection('appearance-card')}>Note Card Preferences</button>
+                    <button className="btn" type="button" onClick={() => setActiveSection('appearance-editor')}>Note Editor Preferences</button>
+                  </div>
+                </>
+              )}
               <div style={{ marginBottom: 16 }}>
                 <h5 style={{ margin: 0, color: 'var(--muted)' }}>Theme</h5>
                 <div style={{ display: 'flex', gap: 12, alignItems: 'center', justifyContent: 'flex-start' }}>
@@ -767,54 +1017,101 @@ export default function PreferencesModal({ onClose }: { onClose: () => void }) {
                   {photoUploading && <div style={{ color: 'var(--muted)', fontSize: 13 }}>Uploading…</div>}
                 </div>
               </div>
+              {!isPhone && (
+                <div style={{ display: 'block' }}>
+                  <div style={{ marginBottom: 16 }}>
+                    <h5 style={{ margin: 0, color: 'var(--muted)' }}>Note Card Preferences</h5>
+                    <div style={{ height: 8 }} />
+                    <div style={{ display: 'flex', gap: 12, alignItems: 'center', justifyContent: 'flex-start' }}>
+                      <label style={{ color: 'var(--muted)', minWidth: 140 }}>Note Title Size</label>
+                      <input aria-label="card title size" type="range" min={12} max={34} step={1} value={pendingCardTitleSize} onChange={(e) => setPendingCardTitleSize(Number(e.target.value))} />
+                      <div style={{ width: 48, textAlign: 'left' }}>{pendingCardTitleSize}px</div>
+                    </div>
+                    <div style={{ height: 10 }} />
+                    <div style={{ display: 'flex', gap: 12, alignItems: 'center', justifyContent: 'flex-start' }}>
+                      <label style={{ color: 'var(--muted)', minWidth: 140 }}>Note line spacing</label>
+                      <input aria-label="card note line spacing" type="range" min={0.9} max={1.8} step={0.02} value={pendingCardNoteLineSpacing} onChange={(e) => setPendingCardNoteLineSpacing(Number(e.target.value))} />
+                      <div style={{ width: 48, textAlign: 'left' }}>{pendingCardNoteLineSpacing.toFixed(2)}</div>
+                    </div>
+                    <div style={{ height: 10 }} />
+                    <div style={{ display: 'flex', gap: 12, alignItems: 'center', justifyContent: 'flex-start' }}>
+                      <label style={{ color: 'var(--muted)', minWidth: 140 }}>Checklist item spacing</label>
+                      <input aria-label="card checklist spacing" type="range" min={2} max={24} step={1} value={pendingCardChecklistSpacing} onChange={(e) => setPendingCardChecklistSpacing(Number(e.target.value))} />
+                      <div style={{ width: 48, textAlign: 'left' }}>{pendingCardChecklistSpacing}px</div>
+                    </div>
+                    <div style={{ height: 10 }} />
+                    <div style={{ display: 'flex', gap: 12, alignItems: 'center', justifyContent: 'flex-start' }}>
+                      <label style={{ color: 'var(--muted)', minWidth: 140 }}>Checkbox size</label>
+                      <input aria-label="card checkbox size" type="range" min={10} max={36} step={1} value={pendingCardCheckboxSize} onChange={(e) => setPendingCardCheckboxSize(Number(e.target.value))} />
+                      <div style={{ width: 48, textAlign: 'left' }}>{pendingCardCheckboxSize}px</div>
+                    </div>
+                    <div style={{ height: 10 }} />
+                    <div style={{ display: 'flex', gap: 12, alignItems: 'center', justifyContent: 'flex-start' }}>
+                      <label style={{ color: 'var(--muted)', minWidth: 140 }}>Text size</label>
+                      <input aria-label="card checklist text size" type="range" min={12} max={24} step={1} value={pendingCardTextSize} onChange={(e) => setPendingCardTextSize(Number(e.target.value))} />
+                      <div style={{ width: 48, textAlign: 'left' }}>{pendingCardTextSize}px</div>
+                    </div>
+                  </div>
+
+                  <div style={{ marginBottom: 16 }}>
+                    <h5 style={{ margin: 0, color: 'var(--muted)' }}>Note Editor Preferences</h5>
+                    <div style={{ height: 8 }} />
+                    <div style={{ display: 'flex', gap: 12, alignItems: 'center', justifyContent: 'flex-start' }}>
+                      <label style={{ color: 'var(--muted)', minWidth: 140 }}>Note line spacing</label>
+                      <input aria-label="editor note line spacing" type="range" min={0.9} max={1.8} step={0.02} value={pendingEditorNoteLineSpacing} onChange={(e) => setPendingEditorNoteLineSpacing(Number(e.target.value))} />
+                      <div style={{ width: 48, textAlign: 'left' }}>{pendingEditorNoteLineSpacing.toFixed(2)}</div>
+                    </div>
+                    <div style={{ height: 10 }} />
+                    <div style={{ display: 'flex', gap: 12, alignItems: 'center', justifyContent: 'flex-start' }}>
+                      <label style={{ color: 'var(--muted)', minWidth: 140 }}>Checklist item spacing</label>
+                      <input aria-label="editor checklist spacing" type="range" min={2} max={24} step={1} value={pendingEditorChecklistSpacing} onChange={(e) => setPendingEditorChecklistSpacing(Number(e.target.value))} />
+                      <div style={{ width: 48, textAlign: 'left' }}>{pendingEditorChecklistSpacing}px</div>
+                    </div>
+                    <div style={{ height: 10 }} />
+                    <div style={{ display: 'flex', gap: 12, alignItems: 'center', justifyContent: 'flex-start' }}>
+                      <label style={{ color: 'var(--muted)', minWidth: 140 }}>Checkbox size</label>
+                      <input aria-label="editor checkbox size" type="range" min={10} max={36} step={1} value={pendingEditorCheckboxSize} onChange={(e) => setPendingEditorCheckboxSize(Number(e.target.value))} />
+                      <div style={{ width: 48, textAlign: 'left' }}>{pendingEditorCheckboxSize}px</div>
+                    </div>
+                    <div style={{ height: 10 }} />
+                    <div style={{ display: 'flex', gap: 12, alignItems: 'center', justifyContent: 'flex-start' }}>
+                      <label style={{ color: 'var(--muted)', minWidth: 140 }}>Text size</label>
+                      <input aria-label="editor checklist text size" type="range" min={12} max={24} step={1} value={pendingEditorTextSize} onChange={(e) => setPendingEditorTextSize(Number(e.target.value))} />
+                      <div style={{ width: 48, textAlign: 'left' }}>{pendingEditorTextSize}px</div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
               <div style={{ display: 'block' }}>
-                <div style={{ display: 'flex', gap: 12, alignItems: 'center', justifyContent: 'flex-start' }}>
-                  <label style={{ color: 'var(--muted)', minWidth: 120 }}>Checklist item spacing</label>
-                  <input aria-label="checklist spacing" type="range" min={2} max={24} value={pending} onChange={(e) => setPending(Number(e.target.value))} />
-                  <div style={{ width: 48, textAlign: 'left' }}>{pending}px</div>
-                </div>
-                <div style={{ height: 10 }} />
-                <div style={{ display: 'flex', gap: 12, alignItems: 'center', justifyContent: 'flex-start' }}>
-                  <label style={{ color: 'var(--muted)', minWidth: 120 }}>Note line spacing</label>
-                  <input aria-label="note line spacing" type="range" min={0.9} max={1.8} step={0.02} value={pendingNoteLineSpacing} onChange={(e) => setPendingNoteLineSpacing(Number(e.target.value))} />
-                  <div style={{ width: 48, textAlign: 'left' }}>{pendingNoteLineSpacing.toFixed(2)}</div>
-                </div>
-                <div style={{ height: 10 }} />
-                <div style={{ display: 'flex', gap: 12, alignItems: 'center', justifyContent: 'flex-start' }}>
-                  <label style={{ color: 'var(--muted)', minWidth: 120 }}>Checkbox size</label>
-                  <input aria-label="checkbox size" type="range" min={10} max={36} value={pendingCheckboxSize} onChange={(e) => setPendingCheckboxSize(Number(e.target.value))} />
-                  <div style={{ width: 48, textAlign: 'left' }}>{pendingCheckboxSize}px</div>
-                </div>
-                <div style={{ height: 10 }} />
-                <div style={{ display: 'flex', gap: 12, alignItems: 'center', justifyContent: 'flex-start' }}>
-                  <label style={{ color: 'var(--muted)', minWidth: 120 }}>Text size</label>
-                  <input aria-label="checklist text size" type="range" min={12} max={20} value={pendingTextSize} onChange={(e) => setPendingTextSize(Number(e.target.value))} />
-                  <div style={{ width: 48, textAlign: 'left' }}>{pendingTextSize}px</div>
-                </div>
-                <div style={{ height: 10 }} />
+
+                <div style={{ marginBottom: 16 }}>
+                  <h5 style={{ margin: 0, color: 'var(--muted)' }}>Layout</h5>
+                  <div style={{ height: 8 }} />
                   {!isPhone ? (
                     <div style={{ display: 'flex', gap: 12, alignItems: 'center', justifyContent: 'flex-start' }}>
-                      <label style={{ color: 'var(--muted)', minWidth: 120 }}>Note width</label>
+                      <label style={{ color: 'var(--muted)', minWidth: 140 }}>Note width</label>
                       <input aria-label="note width" type="range" min={180} max={520} value={pendingNoteWidth} onChange={(e) => setPendingNoteWidth(Number(e.target.value))} />
                       <div style={{ width: 64, textAlign: 'left' }}>{pendingNoteWidth}px</div>
                     </div>
                   ) : (
                     <div style={{ display: 'flex', gap: 12, alignItems: 'center', justifyContent: 'flex-start', opacity: 0.7 }}>
-                      <label style={{ color: 'var(--muted)', minWidth: 120 }}>Note width</label>
+                      <label style={{ color: 'var(--muted)', minWidth: 140 }}>Note width</label>
                       <div style={{ color: 'var(--muted)' }}>Auto (disabled on mobile)</div>
                     </div>
                   )}
-                <div style={{ height: 10 }} />
-                <div style={{ display: 'flex', gap: 12, alignItems: 'center', justifyContent: 'flex-start' }}>
-                  <label style={{ color: 'var(--muted)', minWidth: 120 }}>Image thumbnails</label>
-                  <input aria-label="image thumbnail size" type="range" min={48} max={192} step={8} value={pendingImageThumbSize} onChange={(e) => setPendingImageThumbSize(Number(e.target.value))} />
-                  <div style={{ width: 64, textAlign: 'left' }}>{pendingImageThumbSize}px</div>
-                </div>
-                <div style={{ height: 10 }} />
-                <div style={{ display: 'flex', gap: 12, alignItems: 'center', justifyContent: 'flex-start' }}>
-                  <label style={{ color: 'var(--muted)', minWidth: 120 }}>Editor thumbnails</label>
-                  <input aria-label="editor thumbnail size" type="range" min={48} max={240} step={8} value={pendingEditorImageThumbSize} onChange={(e) => setPendingEditorImageThumbSize(Number(e.target.value))} />
-                  <div style={{ width: 64, textAlign: 'left' }}>{pendingEditorImageThumbSize}px</div>
+                  <div style={{ height: 10 }} />
+                  <div style={{ display: 'flex', gap: 12, alignItems: 'center', justifyContent: 'flex-start' }}>
+                    <label style={{ color: 'var(--muted)', minWidth: 140 }}>Image thumbnails</label>
+                    <input aria-label="image thumbnail size" type="range" min={48} max={192} step={8} value={pendingImageThumbSize} onChange={(e) => setPendingImageThumbSize(Number(e.target.value))} />
+                    <div style={{ width: 64, textAlign: 'left' }}>{pendingImageThumbSize}px</div>
+                  </div>
+                  <div style={{ height: 10 }} />
+                  <div style={{ display: 'flex', gap: 12, alignItems: 'center', justifyContent: 'flex-start' }}>
+                    <label style={{ color: 'var(--muted)', minWidth: 140 }}>Editor thumbnails</label>
+                    <input aria-label="editor thumbnail size" type="range" min={48} max={240} step={8} value={pendingEditorImageThumbSize} onChange={(e) => setPendingEditorImageThumbSize(Number(e.target.value))} />
+                    <div style={{ width: 64, textAlign: 'left' }}>{pendingEditorImageThumbSize}px</div>
+                  </div>
                 </div>
                 <div style={{ height: 10 }} />
                 <div style={{ display: 'flex', gap: 12, alignItems: 'center', justifyContent: 'flex-start', flexWrap: 'wrap' }}>
@@ -856,7 +1153,7 @@ export default function PreferencesModal({ onClose }: { onClose: () => void }) {
                 </div>
               </div>
               <div style={{ marginTop: 16, display: 'flex', gap: 8, justifyContent: 'flex-start' }}>
-                <button className="btn" type="button" onClick={() => setActiveSection(null)}>Back</button>
+                <button className="btn" type="button" onClick={goBackOneLevel}>Back</button>
                 <button className="btn" type="button" onClick={onSave}>Save</button>
                 <span style={{ flex: 1 }} />
                 {(auth?.user as any)?.role === 'admin' && <button className="btn" type="button" onClick={() => setShowInvite(true)}>Send Invite</button>}

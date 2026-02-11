@@ -15,10 +15,34 @@ function applySavedPrefs() {
 				'prefs.editorImageThumbSize': '--editor-image-thumb-size',
 				'prefs.fontFamily': '--app-font-family',
 				'prefs.noteLineSpacing': '--note-line-height',
+				// Split appearance prefs (card vs editor)
+				'prefs.cardTitleSize': '--card-title-size',
+				'prefs.cardChecklistSpacing': '--card-checklist-gap',
+				'prefs.cardCheckboxSize': '--card-checklist-checkbox-size',
+				'prefs.cardChecklistTextSize': '--card-checklist-text-size',
+				'prefs.cardNoteLineSpacing': '--card-note-line-height',
+				'prefs.editorChecklistSpacing': '--editor-checklist-gap',
+				'prefs.editorCheckboxSize': '--editor-checklist-checkbox-size',
+				'prefs.editorChecklistTextSize': '--editor-checklist-text-size',
+				'prefs.editorNoteLineSpacing': '--editor-note-line-height',
 				'prefs.linkColorDark': '--link-color-dark',
 				'prefs.linkColorLight': '--link-color-light',
 			};
-			const pxKeys = new Set(['prefs.checklistSpacing', 'prefs.checkboxSize', 'prefs.checklistTextSize', 'prefs.noteWidth', 'prefs.imageThumbSize', 'prefs.editorImageThumbSize']);
+			const pxKeys = new Set([
+				'prefs.checklistSpacing',
+				'prefs.checkboxSize',
+				'prefs.checklistTextSize',
+				'prefs.noteWidth',
+				'prefs.imageThumbSize',
+				'prefs.editorImageThumbSize',
+				'prefs.cardTitleSize',
+				'prefs.cardChecklistSpacing',
+				'prefs.cardCheckboxSize',
+				'prefs.cardChecklistTextSize',
+				'prefs.editorChecklistSpacing',
+				'prefs.editorCheckboxSize',
+				'prefs.editorChecklistTextSize',
+			]);
 			Object.entries(map).forEach(([key, cssVar]) => {
 				const v = localStorage.getItem(key);
 				if (v === null || v === '') return;

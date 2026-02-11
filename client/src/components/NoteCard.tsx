@@ -10,7 +10,7 @@ import MoreMenu from "./MoreMenu";
 import MoveToCollectionModal from "./MoveToCollectionModal";
 import UrlEntryModal from "./UrlEntryModal";
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faPalette, faUsers, faTag, faFolder } from '@fortawesome/free-solid-svg-icons';
+import { faPalette, faUsers, faTag, faFolder, faImage } from '@fortawesome/free-solid-svg-icons';
 import LabelsDialog from "./LabelsDialog";
 import ColorPalette from "./ColorPalette";
 import ImageDialog from "./ImageDialog";
@@ -40,6 +40,7 @@ type Note = {
   type?: string;
   color?: string;
   viewerColor?: string | null;
+  viewerImagesExpanded?: boolean | null;
   viewerCollections?: Array<{ id: number; name: string; parentId: number | null }>;
   noteLabels?: Array<{ id: number; label?: { id: number; name: string } }>;
   images?: Array<{ id: number; url?: string; ocrSearchText?: string | null; ocrText?: string | null; ocrStatus?: string | null }>
@@ -98,6 +99,7 @@ export default function NoteCard({
   const [pinned, setPinned] = useState(false);
   const [images, setImages] = useState<Array<{ id:number; url:string }>>((note.images as any) || []);
   const [thumbsPerRow, setThumbsPerRow] = useState<number>(3);
+  const [imagesExpanded, setImagesExpanded] = React.useState<boolean>(() => !!(note as any).viewerImagesExpanded);
   const [noteItems, setNoteItems] = useState<any[]>(note.items || []);
   const [title, setTitle] = useState<string>(note.title || '');
 
@@ -108,9 +110,20 @@ export default function NoteCard({
       const next = arr
         .filter((i: any) => i && typeof i.url === 'string' && String(i.url || '').length > 0)
         .map((i: any) => ({ id: Number(i.id), url: String(i.url) }));
-      setImages(next);
+
+      // Important: notes returned from `/api/notes` may include `images` metadata without URLs.
+      // Don't clobber already-fetched local preview URLs in that case.
+      if (next.length > 0) {
+        setImages(next);
+        return;
+      }
+
+      const count = Number((note as any).imagesCount ?? 0);
+      if (!Number.isFinite(count) || count <= 0) {
+        setImages([]);
+      }
     } catch {}
-  }, [note.id, (note as any).images]);
+  }, [note.id, (note as any).images, (note as any).imagesCount]);
 
   React.useEffect(() => {
     try { setArchived(!!(note as any).archived); } catch {}
@@ -156,6 +169,20 @@ export default function NoteCard({
 
   const [expandedMeta, setExpandedMeta] = React.useState<null | 'collab' | 'labels' | 'collections'>(null);
   const [collectionPathById, setCollectionPathById] = React.useState<Record<number, string>>({});
+  const metaWrapRef = React.useRef<HTMLDivElement | null>(null);
+  const metaPanelRef = React.useRef<HTMLDivElement | null>(null);
+  const metaAnimTimersRef = React.useRef<number[]>([]);
+  const [metaVisibleCount, setMetaVisibleCount] = React.useState<number>(0);
+  const [metaPanelHeight, setMetaPanelHeight] = React.useState<number>(0);
+
+  const clearMetaAnimTimers = React.useCallback(() => {
+    try {
+      for (const id of metaAnimTimersRef.current) {
+        try { window.clearTimeout(id); } catch {}
+      }
+    } catch {}
+    metaAnimTimersRef.current = [];
+  }, []);
 
   const [showPalette, setShowPalette] = useState(false);
   const [showImageDialog, setShowImageDialog] = useState(false);
@@ -188,6 +215,105 @@ export default function NoteCard({
     }
   }, []);
   const previewRowAlignItems: React.CSSProperties['alignItems'] = isCoarsePointer ? 'center' : 'flex-start';
+
+  React.useEffect(() => {
+    clearMetaAnimTimers();
+    if (!expandedMeta) {
+      setMetaVisibleCount(0);
+      setMetaPanelHeight(0);
+      return;
+    }
+
+    // Stepwise animation:
+    // - show the container sized for item 1
+    // - pop item 1
+    // - expand to item 2, then pop item 2
+    // - ...
+    setMetaVisibleCount(0);
+    const raf = window.requestAnimationFrame(() => {
+      try {
+        const panel = metaPanelRef.current;
+        if (!panel) return;
+        const items = Array.from(panel.querySelectorAll<HTMLElement>('.note-meta-item'));
+        if (!items.length) {
+          setMetaPanelHeight(0);
+          return;
+        }
+
+        const cs = window.getComputedStyle(panel);
+        const padBottom = (() => {
+          const v = parseFloat(cs.paddingBottom || '0');
+          return Number.isFinite(v) ? v : 0;
+        })();
+
+        const heights = items.map((el) => {
+          try {
+            // offsetTop includes paddingTop; we only need to add paddingBottom.
+            return Math.ceil(el.offsetTop + el.offsetHeight + padBottom);
+          } catch {
+            return 0;
+          }
+        }).filter((h) => h > 0);
+
+        if (!heights.length) {
+          setMetaPanelHeight(0);
+          return;
+        }
+
+        // Container appears first, already sized for item 1.
+        setMetaPanelHeight(heights[0]);
+
+        const ITEM_IN_MS = 55;
+        const CONTAINER_MS = 40;
+        const BETWEEN_MS = 20;
+
+        const tShowFirst = window.setTimeout(() => {
+          setMetaVisibleCount(1);
+        }, 10);
+        metaAnimTimersRef.current.push(tShowFirst);
+
+        for (let i = 2; i <= heights.length; i++) {
+          const idx = i - 1;
+          const tExpandAt = 10 + ITEM_IN_MS + BETWEEN_MS + ((i - 2) * (CONTAINER_MS + ITEM_IN_MS + BETWEEN_MS));
+          const tShowAt = tExpandAt + CONTAINER_MS;
+
+          const tExpand = window.setTimeout(() => {
+            setMetaPanelHeight(heights[idx]);
+          }, tExpandAt);
+          metaAnimTimersRef.current.push(tExpand);
+
+          const tShow = window.setTimeout(() => {
+            setMetaVisibleCount(i);
+          }, tShowAt);
+          metaAnimTimersRef.current.push(tShow);
+        }
+      } catch {}
+    });
+
+    return () => {
+      try { window.cancelAnimationFrame(raf); } catch {}
+      clearMetaAnimTimers();
+    };
+  }, [expandedMeta, note.id, labels.length, viewerCollections.length, collaborators.length, clearMetaAnimTimers]);
+
+  React.useEffect(() => {
+    if (!expandedMeta) return;
+    const onDoc = (e: any) => {
+      try {
+        const wrap = metaWrapRef.current;
+        const t = (e?.target as Node | null) || null;
+        if (wrap && t && wrap.contains(t)) return;
+        setExpandedMeta(null);
+      } catch {}
+    };
+    // Capture so we can close even if inner handlers stopPropagation.
+    document.addEventListener('pointerdown', onDoc, true);
+    document.addEventListener('mousedown', onDoc, true);
+    return () => {
+      document.removeEventListener('pointerdown', onDoc, true);
+      document.removeEventListener('mousedown', onDoc, true);
+    };
+  }, [expandedMeta]);
 
   const openEditor = React.useCallback(() => {
     if (note.type === 'CHECKLIST' || (note.items && note.items.length)) setShowEditor(true);
@@ -332,6 +458,7 @@ export default function NoteCard({
 
   React.useEffect(() => {
     const el = imagesWrapRef.current;
+    if (!imagesExpanded) return;
     if (!el) return;
     const GAP = 6;
     const compute = () => {
@@ -357,25 +484,27 @@ export default function NoteCard({
       window.removeEventListener('resize', compute);
       window.removeEventListener('notes-grid:recalc', compute as any);
     };
-  }, []);
+  }, [imagesExpanded]);
 
   const fileRef = useRef<HTMLInputElement | null>(null);
   const { token, user } = useAuth();
 
   // Since `/api/notes` no longer ships full `images` arrays (to avoid huge payloads),
   // fetch images per-note only when the note indicates it has images.
-  const didFetchImagesForNoteIdRef = React.useRef<number | null>(null);
+  const imagesFetchInFlightRef = React.useRef(false);
   React.useEffect(() => {
-    didFetchImagesForNoteIdRef.current = null;
+    imagesFetchInFlightRef.current = false;
   }, [note.id]);
   React.useEffect(() => {
+    if (!imagesExpanded) return;
     const count = Number((note as any).imagesCount ?? 0);
     const provided = (note as any).images;
     if (Array.isArray(provided) && provided.some((i: any) => i && typeof i.url === 'string' && String(i.url || '').length > 0)) return; // parent already provided image URLs
     if (!Number.isFinite(count) || count <= 0) return;
+    if (Array.isArray(images) && images.length > 0) return;
     if (!token) return;
-    if (didFetchImagesForNoteIdRef.current === Number(note.id)) return;
-    didFetchImagesForNoteIdRef.current = Number(note.id);
+    if (imagesFetchInFlightRef.current) return;
+    imagesFetchInFlightRef.current = true;
     (async () => {
       try {
         const res = await fetch(`/api/notes/${note.id}/images`, { headers: { Authorization: `Bearer ${token}` } });
@@ -387,8 +516,32 @@ export default function NoteCard({
           .map((img: any) => ({ id: Number(img.id || Date.now()), url: String(img.url) }));
         setImages(next);
       } catch {}
+      finally {
+        imagesFetchInFlightRef.current = false;
+      }
     })();
-  }, [note.id, (note as any).imagesCount, (note as any).images, token]);
+  }, [imagesExpanded, note.id, (note as any).imagesCount, (note as any).images, token, images]);
+
+  function notifyImagesExpanded(next: boolean) {
+    try { (onChange as any)?.({ type: 'imagesExpanded', noteId: note.id, imagesExpanded: !!next }); } catch {}
+  }
+
+  React.useEffect(() => {
+    setImagesExpanded(!!(note as any).viewerImagesExpanded);
+  }, [note.id, (note as any).viewerImagesExpanded]);
+
+  async function persistImagesExpanded(next: boolean) {
+    try {
+      const res = await fetch(`/api/notes/${note.id}/prefs`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', Authorization: token ? `Bearer ${token}` : '' },
+        body: JSON.stringify({ imagesExpanded: !!next })
+      });
+      if (!res.ok) throw new Error(await res.text());
+    } catch (err) {
+      console.error('Failed to save image preview preference', err);
+    }
+  }
   const disableNoteCardLinks = (() => {
     try {
       const stored = localStorage.getItem('prefs.disableNoteCardLinks');
@@ -401,15 +554,57 @@ export default function NoteCard({
   const disableNoteCardLinkClicksNow = !!disableNoteCardLinks;
 
   const [previewMenu, setPreviewMenu] = useState<{ x: number; y: number; previewId: number } | null>(null);
-  const longPressTimerRef = useRef<number | null>(null);
   const bodyLongPressTimerRef = useRef<number | null>(null);
   const bodyLongPressStartRef = useRef<{ x: number; y: number } | null>(null);
   const suppressNextBodyClickRef = useRef(false);
   const [previewMenuIsSheet, setPreviewMenuIsSheet] = useState(false);
   const [urlModal, setUrlModal] = useState<{ previewId: number; initialUrl: string } | null>(null);
-  function clearLongPress() {
-    if (longPressTimerRef.current) window.clearTimeout(longPressTimerRef.current);
-    longPressTimerRef.current = null;
+
+  function isMoreMenuLongPressExcluded(target: HTMLElement | null): boolean {
+    try {
+      if (!target) return false;
+      // Don't hijack long-press for actual form controls / editing surfaces.
+      if ((target as any).closest?.('input, textarea, select, [contenteditable="true"]')) return true;
+      // Don't hijack long-press on checklist toggles.
+      if ((target as any).closest?.('.note-checkbox')) return true;
+      // Keep URL preview actions available via its own menu button.
+      if ((target as any).closest?.('.link-preview-menu')) return true;
+    } catch {}
+    return false;
+  }
+
+  function maybeBeginMoreMenuLongPress(e: React.PointerEvent<any>) {
+    try {
+      // Mobile/PWA: long-press anywhere on the card (including images / URL previews)
+      // to open the More menu. Avoid interactive controls where long-press is meaningful.
+      if (showMore) return;
+      const pt = String((e as any).pointerType || '');
+      const touchLike = pt === 'touch' || isCoarsePointer;
+      if (!touchLike) return;
+      const target = (e.target as HTMLElement | null) || null;
+      if (isMoreMenuLongPressExcluded(target)) return;
+
+      clearBodyLongPress();
+      bodyLongPressStartRef.current = { x: e.clientX, y: e.clientY };
+      const x = e.clientX;
+      const y = e.clientY;
+      bodyLongPressTimerRef.current = window.setTimeout(() => {
+        clearBodyLongPress();
+        suppressNextBodyClickRef.current = true;
+        try { setMoreAnchorPoint({ x, y }); } catch {}
+        try { setShowMore(true); } catch {}
+      }, 520);
+    } catch {}
+  }
+
+  function maybeCancelMoreMenuLongPressOnMove(e: React.PointerEvent<any>) {
+    try {
+      const start = bodyLongPressStartRef.current;
+      if (!start) return;
+      const dx = Math.abs((e.clientX || 0) - start.x);
+      const dy = Math.abs((e.clientY || 0) - start.y);
+      if (dx > 10 || dy > 10) clearBodyLongPress();
+    } catch {}
   }
 
   function clearBodyLongPress() {
@@ -1153,7 +1348,7 @@ export default function NoteCard({
     return (
     <article
       ref={(el) => { noteRef.current = el as HTMLElement | null; }}
-      className={`note-card${labels.length > 0 ? ' has-labels' : ''}${viewerCollections.length > 0 ? ' has-collections' : ''}${(noteItems && noteItems.length > 0) ? ' has-checklist' : ''}`}
+      className={`note-card${expandedMeta ? ' is-meta-expanded' : ''}${labels.length > 0 ? ' has-labels' : ''}${viewerCollections.length > 0 ? ' has-collections' : ''}${(noteItems && noteItems.length > 0) ? ' has-checklist' : ''}`}
       style={styleVars}
       {...(!title ? (dragHandleAttributes || {}) : {})}
       {...(!title ? (() => {
@@ -1242,17 +1437,12 @@ export default function NoteCard({
           .map((c) => ({ ...c, path: collectionPathById[Number(c.id)] || String(c.name || '') }))
           .sort((a, b) => String(a.path).localeCompare(String(b.path)));
 
-        const closeOnMouseLeave = () => {
-          if (isCoarsePointer) return;
-          setExpandedMeta(null);
-        };
-
         return (
           <div
             className={`note-meta${expandedMeta ? ' is-expanded' : ''}`}
+            ref={metaWrapRef}
             onPointerDown={(e) => { e.stopPropagation(); }}
             onClick={(e) => { e.stopPropagation(); }}
-            onMouseLeave={closeOnMouseLeave}
             onBlurCapture={(e) => {
               const next = (e.relatedTarget as HTMLElement | null);
               if (next && (e.currentTarget as HTMLElement).contains(next)) return;
@@ -1267,7 +1457,6 @@ export default function NoteCard({
                   aria-expanded={expandedMeta === 'collab'}
                   aria-controls={panelId}
                   title="Collaborators"
-                  onMouseEnter={() => { if (!isCoarsePointer) setExpandedMeta('collab'); }}
                   onFocus={(e) => {
                     // On mobile, taps often trigger focus before click. If we open on focus,
                     // the subsequent click toggles it closed, which feels like a double-tap.
@@ -1295,7 +1484,6 @@ export default function NoteCard({
                   aria-expanded={expandedMeta === 'labels'}
                   aria-controls={panelId}
                   title="Labels"
-                  onMouseEnter={() => { if (!isCoarsePointer) setExpandedMeta('labels'); }}
                   onFocus={(e) => {
                     try {
                       const isFocusVisible = (e.currentTarget as any)?.matches?.(':focus-visible');
@@ -1320,7 +1508,6 @@ export default function NoteCard({
                   aria-expanded={expandedMeta === 'collections'}
                   aria-controls={panelId}
                   title={`${viewerCollections.length} collections`}
-                  onMouseEnter={() => { if (!isCoarsePointer) setExpandedMeta('collections'); }}
                   onFocus={(e) => {
                     try {
                       const isFocusVisible = (e.currentTarget as any)?.matches?.(':focus-visible');
@@ -1344,30 +1531,34 @@ export default function NoteCard({
               className={`note-meta-panel${expandedMeta ? ' is-open' : ''}`}
               role="region"
               aria-label="Note metadata"
+              ref={metaPanelRef}
+              style={expandedMeta ? ({ height: Math.max(0, metaPanelHeight || 0) } as any) : ({ height: 0 } as any)}
             >
               {expandedMeta === 'collab' && (
                 <div className="collab-chips" aria-label="Collaborators">
-                  {chipParticipants.map((p) => {
+                  {chipParticipants.map((p, idx) => {
                     const mode = ((user as any)?.chipDisplayMode) || 'image+text';
                     const showImg = (mode === 'image' || mode === 'image+text') && !!p.userImageUrl;
                     const showText = (mode === 'text' || mode === 'image+text');
                     return (
-                      <button
-                        key={p.key}
-                        type="button"
-                        className="chip"
-                        title={p.email}
-                        style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          try { (onChange as any)?.({ type: 'filter:collaborator', noteId: Number(note.id), userId: Number(p.userId), name: String(p.name || '') }); } catch {}
-                        }}
-                      >
-                        {showImg ? (
-                          <img src={p.userImageUrl!} alt="" style={{ width: 18, height: 18, borderRadius: '50%', objectFit: 'cover' }} />
-                        ) : null}
-                        {showText ? (<span>{p.name}</span>) : null}
-                      </button>
+                      <div key={p.key} className={`note-meta-item${idx < metaVisibleCount ? ' is-visible' : ''}`}>
+                        <button
+                          type="button"
+                          className="chip"
+                          title={p.email}
+                          style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                              setExpandedMeta(null);
+                            try { (onChange as any)?.({ type: 'filter:collaborator', noteId: Number(note.id), userId: Number(p.userId), name: String(p.name || '') }); } catch {}
+                          }}
+                        >
+                          {showImg ? (
+                            <img src={p.userImageUrl!} alt="" style={{ width: 18, height: 18, borderRadius: '50%', objectFit: 'cover' }} />
+                          ) : null}
+                          {showText ? (<span>{p.name}</span>) : null}
+                        </button>
+                      </div>
                     );
                   })}
                 </div>
@@ -1375,18 +1566,20 @@ export default function NoteCard({
 
               {expandedMeta === 'labels' && (
                 <div className="label-chips" aria-label="Labels">
-                  {labels.map((l) => (
-                    <button
-                      key={l.id}
-                      type="button"
-                      className="chip"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        try { (onChange as any)?.({ type: 'filter:labels', noteId: Number(note.id), labelId: Number(l.id), labelName: String(l.name || '') }); } catch {}
-                      }}
-                    >
-                      {l.name}
-                    </button>
+                  {labels.map((l, idx) => (
+                    <div key={l.id} className={`note-meta-item${idx < metaVisibleCount ? ' is-visible' : ''}`}>
+                      <button
+                        type="button"
+                        className="chip"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setExpandedMeta(null);
+                          try { (onChange as any)?.({ type: 'filter:labels', noteId: Number(note.id), labelId: Number(l.id), labelName: String(l.name || '') }); } catch {}
+                        }}
+                      >
+                        {l.name}
+                      </button>
+                    </div>
                   ))}
                 </div>
               )}
@@ -1394,19 +1587,23 @@ export default function NoteCard({
               {expandedMeta === 'collections' && (
                 <div className="note-collections" aria-label="Collections">
                   <div className="note-collections-list" role="list">
-                    {withPath.map((c) => (
-                      <button
-                        key={c.id}
-                        type="button"
-                        className="chip note-collection-chip"
-                        title={c.path}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          try { (onChange as any)?.({ type: 'filter:collection', noteId: Number(note.id), collectionId: Number(c.id), collectionName: String(c.name || '') }); } catch {}
-                        }}
+                    {withPath.map((c, idx) => (
+                      <div key={c.id} className={`note-meta-item${idx < metaVisibleCount ? ' is-visible' : ''}`}
+                        role="listitem"
                       >
-                        {c.path}
-                      </button>
+                        <button
+                          type="button"
+                          className="chip note-collection-chip"
+                          title={c.path}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setExpandedMeta(null);
+                            try { (onChange as any)?.({ type: 'filter:collection', noteId: Number(note.id), collectionId: Number(c.id), collectionName: String(c.name || '') }); } catch {}
+                          }}
+                        >
+                          {c.path}
+                        </button>
+                      </div>
                     ))}
                   </div>
                 </div>
@@ -1419,40 +1616,10 @@ export default function NoteCard({
       <div
         className="note-body"
         ref={bodyRef}
-        onPointerDown={(e) => {
-          // Mobile/PWA: long-press the body to open the More menu.
-          // (Not on title; and ignore interactive targets like checkboxes/links.)
-          try {
-            if (showMore) return;
-            const pt = String((e as any).pointerType || '');
-            const touchLike = pt === 'touch' || isCoarsePointer;
-            if (!touchLike) return;
-            const target = (e.target as HTMLElement | null) || null;
-            if (isInteractiveTarget(target)) return;
-
-            clearBodyLongPress();
-            bodyLongPressStartRef.current = { x: e.clientX, y: e.clientY };
-            const x = e.clientX;
-            const y = e.clientY;
-            bodyLongPressTimerRef.current = window.setTimeout(() => {
-              clearBodyLongPress();
-              suppressNextBodyClickRef.current = true;
-              try { setMoreAnchorPoint({ x, y }); } catch {}
-              try { setShowMore(true); } catch {}
-            }, 520);
-          } catch {}
-        }}
+        onPointerDown={maybeBeginMoreMenuLongPress}
         onPointerUp={() => { clearBodyLongPress(); }}
         onPointerCancel={() => { clearBodyLongPress(); }}
-        onPointerMove={(e) => {
-          try {
-            const start = bodyLongPressStartRef.current;
-            if (!start) return;
-            const dx = Math.abs((e.clientX || 0) - start.x);
-            const dy = Math.abs((e.clientY || 0) - start.y);
-            if (dx > 10 || dy > 10) clearBodyLongPress();
-          } catch {}
-        }}
+        onPointerMove={maybeCancelMoreMenuLongPressOnMove}
         onClickCapture={(e) => {
           try {
             if (suppressNextBodyClickRef.current) {
@@ -1552,29 +1719,102 @@ export default function NoteCard({
         )}
       </div>
 
-      {images && images.length > 0 && (
-        <div className="note-images" ref={imagesWrapRef}>
-          {(() => {
-            const maxSlots = Math.max(1, thumbsPerRow) * 3;
-            const visible = images.slice(0, Math.min(images.length, maxSlots));
-            const hiddenCount = Math.max(0, images.length - maxSlots);
-            return visible.map((img, idx) => (
-            <button
-              key={img.id}
-              className="note-image"
-              style={{ padding: 0, border: 'none', background: 'transparent', cursor: 'pointer' }}
-              onClick={() => { openEditor(); }}
-              onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); }}
+      {(() => {
+        const count = (() => {
+          const fromNote = Number((note as any).imagesCount ?? 0);
+          if (Number.isFinite(fromNote) && fromNote > 0) return fromNote;
+          return Array.isArray(images) ? images.length : 0;
+        })();
+        if (!count) return null;
+
+        return (
+          <>
+            <div
+              className="note-images-toggle"
+              onPointerDown={maybeBeginMoreMenuLongPress}
+              onPointerUp={() => { clearBodyLongPress(); }}
+              onPointerCancel={() => { clearBodyLongPress(); }}
+              onPointerMove={maybeCancelMoreMenuLongPressOnMove}
+              onClick={(e) => { try { e.stopPropagation(); } catch {} }}
             >
-              <img src={img.url} alt="note image" loading="lazy" decoding="async" />
-              {hiddenCount > 0 && idx === visible.length - 1 && (
-                <span className="note-image-moreOverlay" aria-label={`${hiddenCount} more images`}>+{hiddenCount} more</span>
-              )}
-            </button>
-            ));
-          })()}
-        </div>
-      )}
+              <button
+                type="button"
+                className={`chip chip--images${imagesExpanded ? ' is-active' : ''}`}
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  const next = !imagesExpanded;
+                  setImagesExpanded(next);
+                  notifyImagesExpanded(next);
+                  persistImagesExpanded(next);
+                }}
+                aria-expanded={imagesExpanded}
+                aria-label={`${imagesExpanded ? 'Hide' : 'Show'} ${count} images`}
+                title={`${imagesExpanded ? 'Hide' : 'Show'} images`}
+                style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+              >
+                <FontAwesomeIcon icon={faImage} className="meta-fa-icon" />
+                <span>{`+${count} image${count === 1 ? '' : 's'}`}</span>
+              </button>
+            </div>
+
+            {imagesExpanded && (
+              (images && images.length > 0) ? (
+                <div
+                  className="note-images"
+                  ref={imagesWrapRef}
+                  onPointerDown={maybeBeginMoreMenuLongPress}
+                  onPointerUp={() => { clearBodyLongPress(); }}
+                  onPointerCancel={() => { clearBodyLongPress(); }}
+                  onPointerMove={maybeCancelMoreMenuLongPressOnMove}
+                  onClickCapture={(e) => {
+                    try {
+                      if (!suppressNextBodyClickRef.current) return;
+                      suppressNextBodyClickRef.current = false;
+                      e.preventDefault();
+                      e.stopPropagation();
+                    } catch {}
+                  }}
+                >
+                  {(() => {
+                    const maxSlots = Math.max(1, thumbsPerRow) * 3;
+                    const visible = images.slice(0, Math.min(images.length, maxSlots));
+                    const hiddenCount = Math.max(0, images.length - maxSlots);
+                    return visible.map((img, idx) => (
+                      <button
+                        key={img.id}
+                        className="note-image"
+                        style={{ padding: 0, border: 'none', background: 'transparent', cursor: 'pointer' }}
+                        onClick={(e) => {
+                          try {
+                            if (suppressNextBodyClickRef.current) {
+                              suppressNextBodyClickRef.current = false;
+                              e.preventDefault();
+                              e.stopPropagation();
+                              return;
+                            }
+                          } catch {}
+                          openEditor();
+                        }}
+                        onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); }}
+                      >
+                        <img src={img.url} alt="note image" loading="lazy" decoding="async" />
+                        {hiddenCount > 0 && idx === visible.length - 1 && (
+                          <span className="note-image-moreOverlay" aria-label={`${hiddenCount} more images`}>+{hiddenCount} more</span>
+                        )}
+                      </button>
+                    ));
+                  })()}
+                </div>
+              ) : (
+                <div className="note-images note-images--loading" style={{ marginTop: 10, opacity: 0.75 }}>
+                  Loading images…
+                </div>
+              )
+            )}
+          </>
+        );
+      })()}
 
       {(() => {
         try {
@@ -1593,7 +1833,22 @@ export default function NoteCard({
           const visible = list.slice(0, max);
           const hiddenCount = Math.max(0, list.length - max);
           return (
-            <div className="note-link-previews" onClick={(e) => { try { e.stopPropagation(); } catch {} }}>
+            <div
+              className="note-link-previews"
+              onPointerDown={maybeBeginMoreMenuLongPress}
+              onPointerUp={() => { clearBodyLongPress(); }}
+              onPointerCancel={() => { clearBodyLongPress(); }}
+              onPointerMove={maybeCancelMoreMenuLongPressOnMove}
+              onClickCapture={(e) => {
+                try {
+                  if (!suppressNextBodyClickRef.current) return;
+                  suppressNextBodyClickRef.current = false;
+                  e.preventDefault();
+                  e.stopPropagation();
+                } catch {}
+              }}
+              onClick={(e) => { try { e.stopPropagation(); } catch {} }}
+            >
               {visible.map((p: any) => {
                 const domain = (p.domain || (() => { try { return new URL(p.url).hostname.replace(/^www\./i, ''); } catch { return ''; } })());
                 return (
@@ -1601,17 +1856,6 @@ export default function NoteCard({
                     key={p.id}
                     className="link-preview-row note-link-preview"
                     onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); setPreviewMenu({ x: e.clientX, y: e.clientY, previewId: p.id }); }}
-                    onPointerDown={(e) => {
-                      clearLongPress();
-                      const x = (e as any).clientX ?? 0;
-                      const y = (e as any).clientY ?? 0;
-                      longPressTimerRef.current = window.setTimeout(() => {
-                        try { setPreviewMenu({ x, y, previewId: p.id }); } catch {}
-                      }, 520);
-                    }}
-                    onPointerUp={clearLongPress}
-                    onPointerCancel={clearLongPress}
-                    onPointerMove={clearLongPress}
                   >
                     <a
                       className="link-preview"

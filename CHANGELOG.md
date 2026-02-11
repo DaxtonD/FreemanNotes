@@ -9,6 +9,16 @@ Adheres to Semantic Versioning (MAJOR.MINOR.PATCH).
 ### Added
 - 
 
+## [0.6.3] - 2026-02-10
+
+### Added
+- Note cards now show a "+N images" chip by default; click to expand/collapse image thumbnails.
+- Per-note image preview expansion preference persists per user across devices and updates in realtime across connected clients.
+
+### Fixed
+- NoteCard collaborator/label/collection dropdowns now collapse immediately after selecting an item.
+- Take-note checklist: desktop drag handle reliably starts drag, drag visuals are stable, vertical/horizontal direction locking supports indent, and link insertion no longer triggers click-away close.
+
 ## [0.6.2] - 2026-02-10
 
 ### Added
