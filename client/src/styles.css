@@ -1336,6 +1336,26 @@ button.chip:focus{outline:2px solid rgba(255,255,255,0.18);outline-offset:2px;}
   color: rgba(255,255,255,0.96) !important;
   border: 1px solid rgba(255,255,255,0.10);
 }
+
+/* Leading icon + ellipsis text inside meta dropdown chips */
+.note-meta-panel .note-meta-chip{
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.note-meta-panel .note-meta-chip__icon{
+  flex: 0 0 auto;
+  width: 14px;
+  height: 14px;
+  font-size: 12px;
+  opacity: 0.92;
+}
+.note-meta-panel .note-meta-chip__text{
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 :root[data-theme="light"] .note-meta-panel .note-meta-item > .chip{
   background: #ffffff !important;
   border-color: rgba(0,0,0,0.10);

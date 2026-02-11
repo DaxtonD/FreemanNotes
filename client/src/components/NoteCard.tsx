@@ -10,7 +10,7 @@ import MoreMenu from "./MoreMenu";
 import MoveToCollectionModal from "./MoveToCollectionModal";
 import UrlEntryModal from "./UrlEntryModal";
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faPalette, faUsers, faTag, faFolder, faImage } from '@fortawesome/free-solid-svg-icons';
+import { faPalette, faUsers, faTag, faFolder, faImage, faUser } from '@fortawesome/free-solid-svg-icons';
 import LabelsDialog from "./LabelsDialog";
 import ColorPalette from "./ColorPalette";
 import ImageDialog from "./ImageDialog";
@@ -1544,19 +1544,21 @@ export default function NoteCard({
                       <div key={p.key} className={`note-meta-item${idx < metaVisibleCount ? ' is-visible' : ''}`}>
                         <button
                           type="button"
-                          className="chip"
+                          className="chip note-meta-chip"
                           title={p.email}
-                          style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
                           onClick={(e) => {
                             e.stopPropagation();
                               setExpandedMeta(null);
                             try { (onChange as any)?.({ type: 'filter:collaborator', noteId: Number(note.id), userId: Number(p.userId), name: String(p.name || '') }); } catch {}
                           }}
                         >
+                          {!showImg ? (
+                            <FontAwesomeIcon icon={faUser} className="note-meta-chip__icon" />
+                          ) : null}
                           {showImg ? (
                             <img src={p.userImageUrl!} alt="" style={{ width: 18, height: 18, borderRadius: '50%', objectFit: 'cover' }} />
                           ) : null}
-                          {showText ? (<span>{p.name}</span>) : null}
+                          {showText ? (<span className="note-meta-chip__text">{p.name}</span>) : null}
                         </button>
                       </div>
                     );
@@ -1570,14 +1572,15 @@ export default function NoteCard({
                     <div key={l.id} className={`note-meta-item${idx < metaVisibleCount ? ' is-visible' : ''}`}>
                       <button
                         type="button"
-                        className="chip"
+                        className="chip note-meta-chip"
                         onClick={(e) => {
                           e.stopPropagation();
                           setExpandedMeta(null);
                           try { (onChange as any)?.({ type: 'filter:labels', noteId: Number(note.id), labelId: Number(l.id), labelName: String(l.name || '') }); } catch {}
                         }}
                       >
-                        {l.name}
+                        <FontAwesomeIcon icon={faTag} className="note-meta-chip__icon" />
+                        <span className="note-meta-chip__text">{l.name}</span>
                       </button>
                     </div>
                   ))}
@@ -1593,7 +1596,7 @@ export default function NoteCard({
                       >
                         <button
                           type="button"
-                          className="chip note-collection-chip"
+                          className="chip note-meta-chip note-collection-chip"
                           title={c.path}
                           onClick={(e) => {
                             e.stopPropagation();
@@ -1601,7 +1604,8 @@ export default function NoteCard({
                             try { (onChange as any)?.({ type: 'filter:collection', noteId: Number(note.id), collectionId: Number(c.id), collectionName: String(c.name || '') }); } catch {}
                           }}
                         >
-                          {c.path}
+                          <FontAwesomeIcon icon={faFolder} className="note-meta-chip__icon" />
+                          <span className="note-meta-chip__text">{c.path}</span>
                         </button>
                       </div>
                     ))}
