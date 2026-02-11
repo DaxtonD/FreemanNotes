@@ -5,6 +5,7 @@ import os
 import time
 import argparse
 import tempfile
+import contextlib
 
 from PIL import Image
 
@@ -86,15 +87,20 @@ def preprocess_image(input_path: str) -> str:
 
 
 def run_ocr(img_path: str, lang: str):
-    ocr = PaddleOCR(lang=lang, use_angle_cls=True)
+    # PaddleOCR may print model download/progress logs to stdout.
+    # The Node runner expects stdout to be valid JSON, so redirect any
+    # third-party stdout noise to stderr.
+    with contextlib.redirect_stdout(sys.stderr):
+        ocr = PaddleOCR(lang=lang, use_angle_cls=True)
 
     pre_path = preprocess_image(img_path)
     deskew_path = None
     try:
         deskew_path = maybe_deskew_png(pre_path)
-        t0 = time.time()
-        result = ocr.ocr(deskew_path, cls=True)
-        dt = time.time() - t0
+        with contextlib.redirect_stdout(sys.stderr):
+            t0 = time.time()
+            result = ocr.ocr(deskew_path, cls=True)
+            dt = time.time() - t0
     finally:
         try:
             if deskew_path and deskew_path != pre_path:
@@ -155,7 +161,8 @@ def main():
 
     try:
         res = run_ocr(img_path, lang)
-        print(json.dumps(res, ensure_ascii=False))
+        sys.stdout.write(json.dumps(res, ensure_ascii=False) + "\n")
+        sys.stdout.flush()
     except Exception as e:
         sys.stderr.write("OCR error: %s\n" % str(e))
         sys.exit(3)

@@ -37,6 +37,41 @@ function err(code: OcrFailure['code'], message: string, cause?: unknown): OcrFai
   return { ok: false, code, message, cause: cause ? String(cause) : undefined };
 }
 
+function parseRunnerJson(stdout: string): any {
+  const raw = String(stdout || '').trim();
+  if (!raw) return {};
+
+  // Fast path: stdout is pure JSON.
+  try {
+    return JSON.parse(raw);
+  } catch {}
+
+  // Common case: logs printed before the final JSON line.
+  const lines = raw.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i];
+    if (!line) continue;
+    if (line.startsWith('{') && line.endsWith('}')) {
+      try {
+        return JSON.parse(line);
+      } catch {}
+    }
+  }
+
+  // Fallback: attempt to parse the last JSON object substring.
+  const lastClose = raw.lastIndexOf('}');
+  if (lastClose >= 0) {
+    for (let start = raw.lastIndexOf('{', lastClose); start >= 0; start = raw.lastIndexOf('{', start - 1)) {
+      const candidate = raw.slice(start, lastClose + 1).trim();
+      try {
+        return JSON.parse(candidate);
+      } catch {}
+    }
+  }
+
+  throw new SyntaxError('Runner stdout did not contain valid JSON.');
+}
+
 async function writeTempPng(buffer: Buffer): Promise<string> {
   const name = `freemannotes-ocr-${Date.now()}-${crypto.randomBytes(6).toString('hex')}.png`;
   const filePath = path.join(os.tmpdir(), name);
@@ -117,7 +152,7 @@ export async function runPaddleOcrOnPng(preprocessedPng: Buffer, opts?: { lang?:
 
       let parsed: any;
       try {
-        parsed = JSON.parse(run.out || '{}');
+        parsed = parseRunnerJson(run.out || '{}');
       } catch (e) {
         ocrLog('warn', 'runner invalid JSON', { python: py, err: tailString(e, 800), stdout: tailString(run.out, 800), stderr: tailString(run.err, 800) });
         return err('ENGINE_FAILED', 'PaddleOCR runner returned invalid JSON.', `${String(e)}; stderr=${run.err}`);
