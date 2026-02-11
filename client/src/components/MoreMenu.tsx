@@ -1,4 +1,4 @@
-import React, { useLayoutEffect, useRef, useState } from "react";
+import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
 function MenuIcon({ children }: { children: React.ReactNode }) {
@@ -77,6 +77,22 @@ export default function MoreMenu({
   const rootRef = useRef<HTMLDivElement | null>(null);
   const [style, setStyle] = useState<React.CSSProperties>({ position: "fixed", visibility: "hidden", left: 0, top: 0, zIndex: 10000 });
   const [isSheet, setIsSheet] = useState(false);
+  const backIdRef = useRef<string>((() => {
+    try { return `more-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`; } catch { return `more-${Math.random()}`; }
+  })());
+
+  useEffect(() => {
+    try {
+      const id = backIdRef.current;
+      const onBack = () => { try { onClose(); } catch {} };
+      window.dispatchEvent(new CustomEvent('freemannotes:back/register', { detail: { id, onBack } }));
+      return () => {
+        try { window.dispatchEvent(new CustomEvent('freemannotes:back/unregister', { detail: { id } })); } catch {}
+      };
+    } catch {
+      return;
+    }
+  }, [onClose]);
 
   useLayoutEffect(() => {
     const decide = () => {
@@ -161,29 +177,16 @@ export default function MoreMenu({
     });
   }, [anchorRef, anchorPoint, itemsCount, isSheet]);
 
-  useLayoutEffect(() => {
-    function onDoc(e: Event) {
-      if (!rootRef.current) return;
-      if (!rootRef.current.contains(e.target as Node)) onClose();
-    }
-    document.addEventListener("pointerdown", onDoc);
-    document.addEventListener("mousedown", onDoc);
-    return () => {
-      document.removeEventListener("pointerdown", onDoc);
-      document.removeEventListener("mousedown", onDoc);
-    };
-  }, [onClose]);
+  // Note: click-away is handled by the backdrop so underlying UI isn't clickable.
 
   const node = (
     <>
-      {isSheet && (
-        <div
-          className="more-menu-backdrop"
-          role="presentation"
-          onPointerDown={onClose}
-          onMouseDown={onClose}
-        />
-      )}
+      <div
+        className="more-menu-backdrop"
+        role="presentation"
+        onPointerDown={(e) => { try { e.preventDefault(); e.stopPropagation(); } catch {} onClose(); }}
+        onMouseDown={(e) => { try { e.preventDefault(); e.stopPropagation(); } catch {} onClose(); }}
+      />
       <div
         ref={rootRef}
         className={`more-menu${isSheet ? ' more-menu--sheet' : ''}`}
