@@ -217,7 +217,9 @@ router.post("/api/auth/register", async (req: Request, res: Response) => {
             editorImagesExpandedByDefault: false,
             disableNoteCardLinks: false
           },
-          update: { lastSeenAt: new Date() }
+          // Upsert is used here only to ensure the prefs row exists.
+          // `lastSeenAt` belongs to device profile/client, not prefs.
+          update: {}
         });
       }
     } catch {}
