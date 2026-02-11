@@ -40,6 +40,9 @@ export default function MoreMenu({
   anchorPoint, // optional click coordinate { x, y }
   itemsCount = 4,
   pinned,
+  onAddCollaborator,
+  onAddImage,
+  onAddReminder,
   onTogglePin,
   onClose,
   onDelete,
@@ -56,6 +59,9 @@ export default function MoreMenu({
   anchorPoint?: { x: number; y: number } | null;
   itemsCount?: number;
   pinned?: boolean;
+  onAddCollaborator?: () => void;
+  onAddImage?: () => void;
+  onAddReminder?: () => void;
   onTogglePin?: () => void;
   onClose: () => void;
   onDelete: () => void;
@@ -211,6 +217,53 @@ export default function MoreMenu({
             }
             onClick={() => {
               onTogglePin();
+              onClose();
+            }}
+          />
+        )}
+
+        {onAddCollaborator && (
+          <MenuItem
+            label={'Add collaborator'}
+            icon={
+              <MenuIcon>
+                <path d="M16 11c1.93 0 3.5-1.57 3.5-3.5S17.93 4 16 4s-3.5 1.57-3.5 3.5S14.07 11 16 11Zm-8 1c1.93 0 3.5-1.57 3.5-3.5S9.93 5 8 5 4.5 6.57 4.5 8.5 6.07 12 8 12Zm8 2c-2.22 0-4.1 1.2-5.1 3H21v-1c0-1.66-2.24-3-5-3Zm-8 1c-2.76 0-5 1.34-5 3v1h8.6c.23-1.08.7-2.07 1.37-2.9C11.9 15.7 10.08 15 8 15Z" />
+                <path d="M21 11v2h-2v2h-2v-2h-2v-2h2V9h2v2h2Z" />
+              </MenuIcon>
+            }
+            onClick={() => {
+              onAddCollaborator();
+              onClose();
+            }}
+          />
+        )}
+
+        {onAddImage && (
+          <MenuItem
+            label={'Add image'}
+            icon={
+              <MenuIcon>
+                <path d="M4 6a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v12H6a2 2 0 0 1-2-2V6Zm2 0v10h14V6H6Zm3 3a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3Zm-2 7 3.2-4.2 2.4 3 1.8-2.2L19 16H7Z" />
+              </MenuIcon>
+            }
+            onClick={() => {
+              onAddImage();
+              onClose();
+            }}
+          />
+        )}
+
+        {onAddReminder && (
+          <MenuItem
+            label={'Add reminder'}
+            icon={
+              <MenuIcon>
+                <path d="M12 22a2 2 0 0 0 2-2h-4a2 2 0 0 0 2 2Z" />
+                <path d="M18 8V7a6 6 0 1 0-12 0v1c0 3.5-2 5-2 5h16s-2-1.5-2-5Z" />
+              </MenuIcon>
+            }
+            onClick={() => {
+              onAddReminder();
               onClose();
             }}
           />

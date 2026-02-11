@@ -1285,7 +1285,7 @@ button.chip:focus{outline:2px solid rgba(255,255,255,0.18);outline-offset:2px;}
 
 /* Note images */
 .note-image{border-radius:6px;overflow:hidden}
-.note-image img{display:block}
+.note-image img{display:block;-webkit-touch-callout:none;-webkit-user-select:none;user-select:none;-webkit-user-drag:none;touch-action:manipulation}
 
 /* Note card image thumbnails */
 .note-card .note-images{

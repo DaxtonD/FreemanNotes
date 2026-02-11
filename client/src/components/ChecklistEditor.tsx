@@ -16,7 +16,7 @@ import * as Y from 'yjs';
 import { WebsocketProvider } from 'y-websocket';
 import UrlEntryModal from './UrlEntryModal';
 
-export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImagesUpdated, onColorChanged, moreMenu }:
+export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImagesUpdated, onColorChanged, onCollaboratorsChanged, moreMenu }:
   {
     note: any;
     onClose: () => void;
@@ -24,6 +24,7 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
     noteBg?: string;
     onImagesUpdated?: (images: Array<{ id:number; url:string }>) => void;
     onColorChanged?: (color: string) => void;
+    onCollaboratorsChanged?: (next: Array<{ collabId?: number; userId: number; email: string; name?: string; userImageUrl?: string }>) => void;
     moreMenu?: {
       onDelete: () => void;
       deleteLabel?: string;
@@ -196,7 +197,7 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
         .filter((p: any) => Number.isFinite(p.id) && p.url);
     } catch { return []; }
   });
-  const [collaborators, setCollaborators] = useState<{ id:number; email:string }[]>([]);
+  const [collaborators, setCollaborators] = useState<Array<{ collabId?: number; userId: number; email: string; name?: string; userImageUrl?: string }>>([]);
   const itemEditorRefs = useRef<Array<any | null>>([]);
   const [showMore, setShowMore] = useState(false);
   const moreBtnRef = useRef<HTMLButtonElement | null>(null);
@@ -220,6 +221,32 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
       setLinkPreviews(next);
     } catch {}
   }, [note.id]);
+
+  // Keep collaborators in sync with server-provided note data.
+  React.useEffect(() => {
+    try {
+      const arr = ((note as any).collaborators || [])
+        .map((c: any) => {
+          const u = (c && (c.user || {}));
+          if (u && typeof u.id === 'number' && typeof u.email === 'string') {
+            const img = (typeof (u as any).userImageUrl === 'string')
+              ? String((u as any).userImageUrl)
+              : (typeof (c as any).userImageUrl === 'string' ? String((c as any).userImageUrl) : undefined);
+            return {
+              collabId: (typeof c.id === 'number' ? Number(c.id) : undefined),
+              userId: Number(u.id),
+              email: String(u.email),
+              name: (typeof u.name === 'string' ? String(u.name) : undefined),
+              userImageUrl: img,
+            };
+          }
+          return null;
+        })
+        .filter(Boolean) as any;
+      setCollaborators(arr);
+      try { (onCollaboratorsChanged as any)?.(arr); } catch {}
+    } catch {}
+  }, [(note as any).collaborators]);
 
   const saveTitleNow = React.useCallback(async (nextTitle?: string) => {
     const t = (typeof nextTitle === 'string' ? nextTitle : title);
@@ -1195,16 +1222,41 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
     })();
   }
 
-  function onCollaboratorSelect(u: { id:number; email:string; name?: string }) {
-    setCollaborators(s => (s.find(x=>x.id===u.id)?s:[...s,u]));
+  function onCollaboratorSelect(u: { id:number; email:string; name?: string; userImageUrl?: string }) {
+    setCollaborators((s) => {
+      if (s.find(x => x.userId === u.id)) return s;
+      const next = [...s, { userId: u.id, email: u.email, name: u.name, userImageUrl: u.userImageUrl }];
+      try { (onCollaboratorsChanged as any)?.(next); } catch {}
+      return next;
+    });
     setShowCollaborator(false);
+
     (async () => {
       try {
-        const res = await fetch(`/api/notes/${note.id}/collaborators`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ email: u.email }) });
+        const res = await fetch(`/api/notes/${note.id}/collaborators`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ email: u.email })
+        });
         if (!res.ok) throw new Error(await res.text());
+        const data = await res.json();
+        const collab = (data && (data.collaborator || null));
+        if (collab && typeof collab.id === 'number') {
+          setCollaborators((s) => {
+            const next = s.map(c => (c.userId === u.id ? { ...c, collabId: Number(collab.id) } : c));
+            try { (onCollaboratorsChanged as any)?.(next); } catch {}
+            return next;
+          });
+        }
       } catch (err) {
         console.error('Failed to add collaborator', err);
         window.alert('Failed to add collaborator');
+        // Revert optimistic add on failure
+        setCollaborators((s) => {
+          const next = s.filter(c => c.userId !== u.id);
+          try { (onCollaboratorsChanged as any)?.(next); } catch {}
+          return next;
+        });
       }
     })();
   }
@@ -1212,6 +1264,11 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
     try {
       const res = await fetch(`/api/notes/${note.id}/collaborators/${collabId}`, { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } });
       if (!res.ok) throw new Error(await res.text());
+      setCollaborators((s) => {
+        const next = s.filter(c => c.collabId !== collabId);
+        try { (onCollaboratorsChanged as any)?.(next); } catch {}
+        return next;
+      });
     } catch (err) {
       console.error('Failed to remove collaborator', err);
       window.alert('Failed to remove collaborator');
@@ -2171,22 +2228,22 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
                 <CollaboratorModal
                   onClose={() => setShowCollaborator(false)}
                   onSelect={onCollaboratorSelect}
-                  current={((): Array<{ collabId?: number; userId: number; email: string; name?: string }> => {
-                    const arr: Array<{ collabId?: number; userId: number; email: string; name?: string }> = [];
+                  current={((): Array<{ collabId?: number; userId: number; email: string; name?: string; userImageUrl?: string }> => {
+                    const arr: Array<{ collabId?: number; userId: number; email: string; name?: string; userImageUrl?: string }> = [];
                     try {
                       const currentUserId = (user && (user as any).id) ? Number((user as any).id) : undefined;
                       const owner = (note as any).owner || null;
                       if (owner && typeof owner.id === 'number' && owner.id !== currentUserId) {
-                        arr.push({ userId: Number(owner.id), email: String(owner.email || ''), name: (typeof owner.name === 'string' ? owner.name : undefined) });
+                        arr.push({
+                          userId: Number(owner.id),
+                          email: String(owner.email || ''),
+                          name: (typeof owner.name === 'string' ? owner.name : undefined),
+                          userImageUrl: (typeof (owner as any).userImageUrl === 'string' ? String((owner as any).userImageUrl) : undefined),
+                        });
                       }
-                      const cols = ((note as any).collaborators || []) as Array<any>;
-                      for (const c of cols) {
-                        const u = (c && (c.user || {}));
-                        const uid = typeof u.id === 'number' ? Number(u.id) : (typeof c.userId === 'number' ? Number(c.userId) : undefined);
-                        const email = (typeof u.email === 'string' ? String(u.email) : undefined);
-                        const nm = (typeof u.name === 'string' ? String(u.name) : undefined);
-                        if (uid && email) {
-                          arr.push({ collabId: Number(c.id), userId: uid, email, name: nm });
+                      for (const c of collaborators) {
+                        if (typeof c.userId === 'number' && c.email) {
+                          arr.push({ collabId: c.collabId, userId: c.userId, email: c.email, name: c.name, userImageUrl: c.userImageUrl });
                         }
                       }
                     } catch {}

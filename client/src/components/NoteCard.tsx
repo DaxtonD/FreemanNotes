@@ -1532,6 +1532,7 @@ export default function NoteCard({
               className="note-image"
               style={{ padding: 0, border: 'none', background: 'transparent', cursor: 'pointer' }}
               onClick={() => { openEditor(); }}
+              onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); }}
             >
               <img src={img.url} alt="note image" />
               {hiddenCount > 0 && idx === visible.length - 1 && (
@@ -1751,10 +1752,13 @@ export default function NoteCard({
         <MoreMenu
           anchorRef={noteRef}
           anchorPoint={moreAnchorPoint}
-          itemsCount={isTrashed ? 2 : 6}
+          itemsCount={isTrashed ? 2 : 9}
           onClose={() => setShowMore(false)}
           pinned={pinned}
           onTogglePin={(!isTrashed && isOwner) ? togglePinned : undefined}
+          onAddCollaborator={isTrashed ? undefined : (() => setShowCollaborator(true))}
+          onAddImage={isTrashed ? undefined : (() => setShowImageDialog(true))}
+          onAddReminder={(isTrashed || !isOwner) ? undefined : (() => setShowReminderPicker(true))}
           onDelete={onDeleteNote}
           deleteLabel={isTrashed ? 'Delete permanently' : (isOwner ? 'Move to trash' : 'Leave note')}
           onRestore={isTrashed && isOwner ? onRestoreNote : undefined}
@@ -1853,6 +1857,7 @@ export default function NoteCard({
         <ChecklistEditor
           note={{ ...note, items: noteItems, images }}
           noteBg={bg}
+          onCollaboratorsChanged={(next) => { try { setCollaborators(next as any); } catch {} }}
           onColorChanged={(next: string) => {
             try {
               const v = String(next || '');
@@ -1881,6 +1886,7 @@ export default function NoteCard({
         <RichTextEditor
           note={{ ...note, images }}
           noteBg={bg}
+          onCollaboratorsChanged={(next) => { try { setCollaborators(next as any); } catch {} }}
           onColorChanged={(next: string) => {
             try {
               const v = String(next || '');
