@@ -135,7 +135,7 @@ async function start() {
                   // Persist initial snapshot atomically
                   try {
                     const snapshot = Y.encodeStateAsUpdate(ydoc);
-                    await prisma.note.update({ where: { id: noteId }, data: { yData: Buffer.from(snapshot) } });
+                    await prisma.note.updateMany({ where: { id: noteId }, data: { yData: Buffer.from(snapshot) } });
                   } catch (e) {
                     console.warn('Yjs initial persist error:', e);
                   }
@@ -151,7 +151,7 @@ async function start() {
             ydoc.on("update", async () => {
               try {
                 const snapshot = Y.encodeStateAsUpdate(ydoc);
-                await prisma.note.update({ where: { id: noteId }, data: { yData: Buffer.from(snapshot) } });
+                await prisma.note.updateMany({ where: { id: noteId }, data: { yData: Buffer.from(snapshot) } });
               } catch (e) {
                 console.warn("Yjs persist error:", e);
               }
@@ -165,7 +165,7 @@ async function start() {
           const noteId = Number(m[1]);
           try {
             const snapshot = Y.encodeStateAsUpdate(ydoc);
-            await prisma.note.update({ where: { id: noteId }, data: { yData: Buffer.from(snapshot) } });
+            await prisma.note.updateMany({ where: { id: noteId }, data: { yData: Buffer.from(snapshot) } });
           } catch (e) {
             console.warn("Yjs final persist error:", e);
           }
