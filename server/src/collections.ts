@@ -146,6 +146,9 @@ router.post("/api/collections", async (req: Request, res: Response) => {
 			data: { ownerId: user.id, parentId, name },
 			select: { id: true, name: true, parentId: true, createdAt: true, updatedAt: true },
 		});
+		try {
+			notifyUser(user.id, 'collections-changed', { invalidateAll: true, reason: 'create', id: Number(created.id), parentId: (created.parentId == null ? null : Number(created.parentId)), name: String(created.name || '') });
+		} catch {}
 		res.status(201).json({ collection: created });
 	} catch (err: any) {
 		// Prisma unique constraint
@@ -171,6 +174,9 @@ router.patch("/api/collections/:id", async (req: Request, res: Response) => {
 			data: { ...(typeof name === "string" ? { name } : {}) },
 			select: { id: true, name: true, parentId: true, createdAt: true, updatedAt: true },
 		});
+		try {
+			notifyUser(user.id, 'collections-changed', { invalidateAll: true, reason: 'rename', id: Number(updated.id), parentId: (updated.parentId == null ? null : Number(updated.parentId)), name: String(updated.name || '') });
+		} catch {}
 		res.json({ collection: updated });
 	} catch (err: any) {
 		if (String(err?.code || "") === "P2002") {
@@ -188,7 +194,81 @@ router.delete("/api/collections/:id", async (req: Request, res: Response) => {
 	try {
 		const existing = await (prisma as any).collection.findFirst({ where: { id, ownerId: user.id } });
 		if (!existing) return res.status(404).json({ error: "not found" });
+
+		// Determine subtree ids (so notes in nested collections update too).
+		const subtreeIds: number[] = [];
+		try {
+			const seen = new Set<number>();
+			let frontier: number[] = [Number(id)];
+			let guard = 0;
+			while (frontier.length && guard < 256) {
+				guard++;
+				const next: number[] = [];
+				for (const cid of frontier) {
+					if (!Number.isInteger(cid) || seen.has(cid)) continue;
+					seen.add(cid);
+					subtreeIds.push(cid);
+				}
+				if (!subtreeIds.length) break;
+				const kids = await (prisma as any).collection.findMany({
+					where: { ownerId: user.id, parentId: { in: frontier } },
+					select: { id: true },
+				});
+				for (const k of (Array.isArray(kids) ? kids : [])) {
+					const kid = Number((k as any)?.id);
+					if (Number.isInteger(kid) && !seen.has(kid)) next.push(kid);
+				}
+				frontier = next;
+			}
+		} catch {
+			// Fallback: just treat the target as the only id.
+			if (!subtreeIds.length) subtreeIds.push(Number(id));
+		}
+
+		// Capture affected note ids before deletion (so we can notify clients).
+		const affectedNoteIds: number[] = [];
+		try {
+			const rows = await (prisma as any).noteCollection.findMany({
+				where: { userId: user.id, collectionId: { in: subtreeIds } },
+				select: { noteId: true },
+			});
+			const set = new Set<number>();
+			for (const r of (Array.isArray(rows) ? rows : [])) {
+				const nid = Number((r as any)?.noteId);
+				if (Number.isInteger(nid)) set.add(nid);
+			}
+			affectedNoteIds.push(...Array.from(set.values()));
+		} catch {}
+
+		// Delete the collection. DB constraints are configured to cascade to children and memberships.
 		await (prisma as any).collection.delete({ where: { id } });
+
+		// Notify all active clients for this user so note chips update immediately.
+		try {
+			if (affectedNoteIds.length) {
+				const remainingRows = await (prisma as any).noteCollection.findMany({
+					where: { userId: user.id, noteId: { in: affectedNoteIds } },
+					include: { collection: { select: { id: true, name: true, parentId: true } } },
+					orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+				});
+				const map = new Map<number, Array<{ id: number; name: string; parentId: number | null }>>();
+				for (const row of (Array.isArray(remainingRows) ? remainingRows : [])) {
+					const nid = Number((row as any)?.noteId);
+					const c = (row as any)?.collection;
+					if (!Number.isInteger(nid) || !c || typeof c.id !== 'number') continue;
+					const entry = map.get(nid) || [];
+					entry.push({ id: Number(c.id), name: String(c.name || ''), parentId: (c.parentId == null ? null : Number(c.parentId)) });
+					map.set(nid, entry);
+				}
+				for (const nid of affectedNoteIds) {
+					notifyUser(user.id, 'note-collections-changed', { noteId: nid, collections: map.get(nid) || [] });
+				}
+			}
+		} catch {}
+		try {
+			notifyUser(user.id, 'collections-changed', { invalidateAll: true, reason: 'delete', id: Number(id), subtreeIds });
+		} catch {}
+
 		res.json({ ok: true });
 	} catch (err) {
 		res.status(500).json({ error: String(err) });
@@ -258,6 +338,7 @@ router.post('/api/notes/:id/collections', async (req: Request, res: Response) =>
 		});
 		const collections = await getNoteCollectionsForUser(user.id, noteId);
 		try { notifyUser(user.id, 'note-collections-changed', { noteId, collections }); } catch {}
+		try { notifyUser(user.id, 'collections-changed', { reason: 'membership', noteId, collectionId }); } catch {}
 		return res.status(201).json({ ok: true, collections });
 	} catch (err) {
 		return res.status(500).json({ error: String(err) });
@@ -277,6 +358,7 @@ router.delete('/api/notes/:id/collections/:collectionId', async (req: Request, r
 		await (prisma as any).noteCollection.deleteMany({ where: { userId: user.id, noteId, collectionId } });
 		const collections = await getNoteCollectionsForUser(user.id, noteId);
 		try { notifyUser(user.id, 'note-collections-changed', { noteId, collections }); } catch {}
+		try { notifyUser(user.id, 'collections-changed', { reason: 'membership', noteId, collectionId }); } catch {}
 		return res.json({ ok: true, collections });
 	} catch (err) {
 		return res.status(500).json({ error: String(err) });
@@ -295,6 +377,7 @@ router.delete('/api/notes/:id/collections', async (req: Request, res: Response) 
 		await (prisma as any).noteCollection.deleteMany({ where: { userId: user.id, noteId } });
 		const collections: any[] = [];
 		try { notifyUser(user.id, 'note-collections-changed', { noteId, collections }); } catch {}
+		try { notifyUser(user.id, 'collections-changed', { reason: 'membership', noteId }); } catch {}
 		return res.json({ ok: true, collections });
 	} catch (err) {
 		return res.status(500).json({ error: String(err) });
@@ -323,6 +406,7 @@ router.put("/api/notes/:id/collection", async (req: Request, res: Response) => {
 		}
 		const collections = await getNoteCollectionsForUser(user.id, noteId);
 		try { notifyUser(user.id, 'note-collections-changed', { noteId, collections }); } catch {}
+		try { notifyUser(user.id, 'collections-changed', { reason: 'membership', noteId }); } catch {}
 		return res.json({ ok: true, collections });
 	} catch (err) {
 		res.status(500).json({ error: String(err) });

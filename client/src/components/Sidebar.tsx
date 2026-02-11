@@ -181,6 +181,54 @@ export default function Sidebar({
     refreshCollections();
   }, [refreshCollections]);
 
+  // Real-time cross-session updates: other clients can create/rename/delete collections.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    if (!token) return;
+
+    const onCollectionsChanged = (ev: Event) => {
+      try {
+        const ce = ev as CustomEvent<any>;
+        const detail = ce?.detail || {};
+        const reason = (typeof detail?.reason === 'string') ? String(detail.reason) : '';
+        const id = (Number.isFinite(Number(detail?.id)) ? Number(detail.id) : null);
+        const name = (typeof detail?.name === 'string') ? String(detail.name) : null;
+
+        // Keep breadcrumb stack names in sync across sessions.
+        if (reason === 'rename' && id != null && name != null) {
+          try {
+            const stack = Array.isArray(collectionStack) ? collectionStack : [];
+            const idx = stack.findIndex((c) => Number(c.id) === Number(id));
+            if (idx >= 0) {
+              const updated = stack.slice();
+              updated[idx] = { ...updated[idx], name };
+              onCollectionStackChange && onCollectionStackChange(updated);
+            }
+          } catch {}
+        }
+
+        // If current path was deleted elsewhere, pop back to the nearest surviving ancestor.
+        if (reason === 'delete' && id != null) {
+          try {
+            const stack = Array.isArray(collectionStack) ? collectionStack : [];
+            const idx = stack.findIndex((c) => Number(c.id) === Number(id));
+            if (idx >= 0) {
+              onCollectionStackChange && onCollectionStackChange(stack.slice(0, idx));
+            }
+          } catch {}
+        }
+
+        // Only refetch if the list is visible.
+        try { refreshCollections(); } catch {}
+      } catch {}
+    };
+
+    try { window.addEventListener('collections:changed', onCollectionsChanged as any); } catch {}
+    return () => {
+      try { window.removeEventListener('collections:changed', onCollectionsChanged as any); } catch {}
+    };
+  }, [token, refreshCollections, collectionStack, onCollectionStackChange]);
+
   const toggleCollectionsOpen = () => {
     setCollectionsOpen((wasOpen) => {
       const next = !wasOpen;

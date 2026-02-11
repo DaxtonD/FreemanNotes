@@ -4,6 +4,9 @@ node_modules/
 # Build
 dist/
 
+# Client build output
+client-dist/
+
 
 # Local env files
 .env

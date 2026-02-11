@@ -1527,6 +1527,12 @@ export default function NotesGrid({
               applyLabelsToNote(noteId, labels as any);
               break;
             }
+            case 'labels-changed': {
+              try {
+                window.dispatchEvent(new Event('labels:refresh'));
+              } catch {}
+              break;
+            }
             case 'note-items-changed': {
               const payload = msg.payload || {};
               const noteId = Number(payload.noteId);
@@ -1592,6 +1598,13 @@ export default function NotesGrid({
               if (!Number.isFinite(noteId)) break;
               const collections = Array.isArray(payload.collections) ? payload.collections : [];
               applyCollectionsToNote(noteId, collections);
+              break;
+            }
+            case 'collections-changed': {
+              const payload = msg.payload || {};
+              try {
+                window.dispatchEvent(new CustomEvent('collections:changed', { detail: payload }));
+              } catch {}
               break;
             }
             case 'note-collection-changed': {

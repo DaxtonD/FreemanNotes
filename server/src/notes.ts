@@ -245,9 +245,10 @@ router.get('/api/notes', async (req: Request, res: Response) => {
         owner: true,
         items: true,
         _count: { select: { images: true } },
-        // Include OCR fields for global search, but omit `url` to avoid huge payloads
-        // when legacy images are stored as base64 data URLs.
-        images: { select: { id: true, ocrStatus: true, ocrText: true, ocrSearchText: true, createdAt: true } },
+        // Include `url` so note cards can render thumbnails after refresh.
+        // Guard against legacy base64 data URLs (which can be huge) by stripping them
+        // in the normalization pass below.
+        images: { select: { id: true, url: true, ocrStatus: true, ocrText: true, ocrSearchText: true, createdAt: true }, orderBy: { createdAt: 'asc' } },
         linkPreviews: { orderBy: { createdAt: 'asc' } },
           noteCollections: {
           where: { userId: user.id },
@@ -295,6 +296,12 @@ router.get('/api/notes', async (req: Request, res: Response) => {
         return {
           ...n,
           items: itemsFromDb,
+          images: (Array.isArray(n.images) ? n.images : []).map((img: any) => {
+            const u = String(img?.url || '');
+            // Never send legacy base64 data URLs in list payloads.
+            if (u && isDataUrlImage(u)) return { ...img, url: null };
+            return img;
+          }),
           imagesCount: (typeof (n as any)?._count?.images === 'number') ? Number((n as any)._count.images) : 0,
           viewerColor: (Array.isArray(n.notePrefs) && n.notePrefs[0]?.color) ? String(n.notePrefs[0].color) : null,
           viewerImagesExpanded: !!(Array.isArray(n.notePrefs) && (n.notePrefs[0] as any)?.imagesExpanded),
@@ -809,18 +816,36 @@ router.post('/api/notes/:id/labels', async (req: Request, res: Response) => {
       if (!collab) return res.status(403).json({ error: 'forbidden' });
     }
 
-    // upsert label for this user (unique on ownerId+name)
-    const label = await prisma.label.upsert({
-      where: { ownerId_name: { ownerId: user.id, name } },
-      update: {},
-      create: { ownerId: user.id, name }
-    });
+    // Create label if needed (unique on ownerId+name). Track creation so we can broadcast label list updates.
+    let createdLabel = false;
+    let label: any = null;
+    try {
+      label = await prisma.label.findUnique({ where: { ownerId_name: { ownerId: user.id, name } } as any });
+    } catch {}
+    if (!label) {
+      try {
+        label = await prisma.label.create({ data: { ownerId: user.id, name } });
+        createdLabel = true;
+      } catch {
+        try {
+          label = await prisma.label.findUnique({ where: { ownerId_name: { ownerId: user.id, name } } as any });
+        } catch {}
+      }
+    }
+    if (!label) return res.status(500).json({ error: 'failed to create label' });
     // link label to note (unique on noteId+labelId); since label.ownerId is current user, this remains per-user
     await prisma.noteLabel.upsert({
       where: { noteId_labelId: { noteId: id, labelId: label.id } },
       update: {},
       create: { noteId: id, labelId: label.id }
     });
+
+    // If we created a brand-new label, refresh other sessions' sidebar label lists.
+    if (createdLabel) {
+      try {
+        notifyUser(user.id, 'labels-changed', { invalidateAll: true, reason: 'create', id: Number(label.id), name: String(label.name || '') });
+      } catch {}
+    }
 
     // Realtime: labels are per-user; update this user's other connected clients.
     try {
@@ -1467,10 +1492,53 @@ router.delete('/api/labels/:labelId', async (req: Request, res: Response) => {
     if (!label) return res.status(404).json({ error: 'label not found' });
     if (label.ownerId !== user.id) return res.status(403).json({ error: 'forbidden' });
 
+    // Capture affected notes before deletion so we can broadcast chip updates.
+    let affectedNoteIds: number[] = [];
+    try {
+      const rows = await prisma.noteLabel.findMany({ where: { labelId }, select: { noteId: true } });
+      const set = new Set<number>();
+      for (const r of (Array.isArray(rows) ? rows : [])) {
+        const nid = Number((r as any)?.noteId);
+        if (Number.isInteger(nid)) set.add(nid);
+      }
+      affectedNoteIds = Array.from(set.values());
+    } catch {}
+
     await prisma.$transaction([
       prisma.noteLabel.deleteMany({ where: { labelId } }),
       prisma.label.delete({ where: { id: labelId } })
     ]);
+
+    // Realtime: refresh label list in sidebars on other devices.
+    try {
+      notifyUser(user.id, 'labels-changed', { invalidateAll: true, reason: 'delete', id: Number(labelId) });
+    } catch {}
+
+    // Realtime: update per-note label chips (labels are per-user).
+    try {
+      if (affectedNoteIds.length) {
+        const remaining = await prisma.noteLabel.findMany({
+          where: { noteId: { in: affectedNoteIds }, label: { ownerId: user.id } } as any,
+          include: { label: true } as any,
+        });
+        const map = new Map<number, Array<{ id: number; name: string }>>();
+        for (const nl of (Array.isArray(remaining) ? remaining : [])) {
+          const nid = Number((nl as any)?.noteId);
+          const l = (nl as any)?.label;
+          if (!Number.isInteger(nid) || !l) continue;
+          const lid = Number(l?.id);
+          const lname = String(l?.name || '');
+          if (!Number.isInteger(lid) || !lname) continue;
+          const arr = map.get(nid) || [];
+          arr.push({ id: lid, name: lname });
+          map.set(nid, arr);
+        }
+        for (const nid of affectedNoteIds) {
+          notifyUser(user.id, 'note-labels-changed', { noteId: nid, labels: map.get(nid) || [] });
+        }
+      }
+    } catch {}
+
     res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: String(err) });
