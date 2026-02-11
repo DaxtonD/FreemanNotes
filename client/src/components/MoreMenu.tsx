@@ -75,7 +75,7 @@ export default function MoreMenu({
   onSetWidth?: (span: 1 | 2 | 3) => void;
 }) {
   const rootRef = useRef<HTMLDivElement | null>(null);
-  const [style, setStyle] = useState<React.CSSProperties>({ position: "fixed", visibility: "hidden", left: 0, top: 0, zIndex: 10000 });
+  const [style, setStyle] = useState<React.CSSProperties>({ position: "fixed", visibility: "hidden", left: 0, top: 0, zIndex: 10001 });
   const [isSheet, setIsSheet] = useState(false);
   const backIdRef = useRef<string>((() => {
     try { return `more-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`; } catch { return `more-${Math.random()}`; }
@@ -123,7 +123,7 @@ export default function MoreMenu({
         bottom: 8,
         top: 'auto',
         visibility: 'visible',
-        zIndex: 10000,
+        zIndex: 10001,
       });
       return;
     }
@@ -158,7 +158,7 @@ export default function MoreMenu({
       if (left + w > window.innerWidth - viewportPadding) left = Math.max(viewportPadding, window.innerWidth - w - viewportPadding);
       if (top < viewportPadding) top = viewportPadding;
       if (top + h > window.innerHeight - viewportPadding) top = Math.max(viewportPadding, window.innerHeight - h - viewportPadding);
-      setStyle({ position: 'fixed', left, top, visibility: 'visible', zIndex: 10000, width: `${w}px`, height: `${h}px` });
+      setStyle({ position: 'fixed', left, top, visibility: 'visible', zIndex: 10001, width: `${w}px`, height: `${h}px` });
       return;
     }
 
@@ -173,7 +173,7 @@ export default function MoreMenu({
       if (left + w > window.innerWidth - viewportPadding) left = Math.max(viewportPadding, window.innerWidth - w - viewportPadding);
       if (top < viewportPadding) top = viewportPadding;
       if (top + h > window.innerHeight - viewportPadding) top = Math.max(viewportPadding, window.innerHeight - h - viewportPadding);
-      setStyle({ position: 'fixed', left, top, visibility: 'visible', zIndex: 10000, width: `${w}px`, height: `${h}px` });
+      setStyle({ position: 'fixed', left, top, visibility: 'visible', zIndex: 10001, width: `${w}px`, height: `${h}px` });
     });
   }, [anchorRef, anchorPoint, itemsCount, isSheet]);
 
@@ -184,8 +184,10 @@ export default function MoreMenu({
       <div
         className="more-menu-backdrop"
         role="presentation"
-        onPointerDown={(e) => { try { e.preventDefault(); e.stopPropagation(); } catch {} onClose(); }}
-        onMouseDown={(e) => { try { e.preventDefault(); e.stopPropagation(); } catch {} onClose(); }}
+        onPointerDown={(e) => { try { e.preventDefault(); e.stopPropagation(); } catch {} }}
+        onMouseDown={(e) => { try { e.preventDefault(); e.stopPropagation(); } catch {} }}
+        onClick={(e) => { try { e.preventDefault(); e.stopPropagation(); } catch {} onClose(); }}
+        onContextMenu={(e) => { try { e.preventDefault(); e.stopPropagation(); } catch {} }}
       />
       <div
         ref={rootRef}

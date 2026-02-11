@@ -1960,7 +1960,7 @@ button.chip:focus{outline:2px solid rgba(255,255,255,0.18);outline-offset:2px;}
   position: fixed;
   inset: 0;
   background: rgba(0,0,0,0.42);
-  z-index: 9999;
+  z-index: 10000;
   touch-action: none;
 }
 :root[data-theme="light"] .more-menu-backdrop{ background: rgba(0,0,0,0.22); }
