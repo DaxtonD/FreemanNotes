@@ -1,17 +1,23 @@
 # Stage 1: build client
 FROM node:20-bookworm-slim AS builder
+
 # Link image to GitHub repository for GHCR permissions
 LABEL org.opencontainers.image.source="https://github.com/daxtond/freemannotes"
+
 WORKDIR /app
 COPY package.json package-lock.json* ./
+
 # Ensure postinstall scripts exist
 COPY scripts ./scripts
+
 RUN npm ci --production=false
+
 COPY . .
 RUN npm run build
 
 # Stage 2: production image
 FROM node:20-bookworm-slim AS runner
+
 WORKDIR /app
 ENV NODE_ENV=production
 
@@ -55,7 +61,7 @@ RUN apt-get update && \
     /opt/ocr-venv/bin/pip install --no-cache-dir paddlepaddle==2.6.2 && \
     /opt/ocr-venv/bin/pip install --no-cache-dir --no-deps paddleocr==2.7.0 && \
     /opt/ocr-venv/bin/pip install --no-cache-dir \
-        numpy Pillow==10.2.0 opencv-python-headless shapely scikit-image \
+        numpy==1.26.4 Pillow==10.2.0 opencv-python-headless shapely scikit-image \
         imgaug pyclipper lmdb rapidfuzz tqdm visualdl fire requests protobuf scipy && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
