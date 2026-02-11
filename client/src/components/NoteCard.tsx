@@ -42,7 +42,8 @@ type Note = {
   viewerColor?: string | null;
   viewerCollections?: Array<{ id: number; name: string; parentId: number | null }>;
   noteLabels?: Array<{ id: number; label?: { id: number; name: string } }>;
-  images?: Array<{ id: number; url: string }>
+  images?: Array<{ id: number; url?: string; ocrSearchText?: string | null; ocrText?: string | null; ocrStatus?: string | null }>
+  imagesCount?: number;
   cardSpan?: number;
 };
 
@@ -102,7 +103,11 @@ export default function NoteCard({
 
   React.useEffect(() => {
     try {
-      const next = (((note as any).images || []).map((i: any) => ({ id: Number(i.id), url: String(i.url) })));
+      const arr = (note as any).images;
+      if (!Array.isArray(arr)) return;
+      const next = arr
+        .filter((i: any) => i && typeof i.url === 'string' && String(i.url || '').length > 0)
+        .map((i: any) => ({ id: Number(i.id), url: String(i.url) }));
       setImages(next);
     } catch {}
   }, [note.id, (note as any).images]);
@@ -356,6 +361,34 @@ export default function NoteCard({
 
   const fileRef = useRef<HTMLInputElement | null>(null);
   const { token, user } = useAuth();
+
+  // Since `/api/notes` no longer ships full `images` arrays (to avoid huge payloads),
+  // fetch images per-note only when the note indicates it has images.
+  const didFetchImagesForNoteIdRef = React.useRef<number | null>(null);
+  React.useEffect(() => {
+    didFetchImagesForNoteIdRef.current = null;
+  }, [note.id]);
+  React.useEffect(() => {
+    const count = Number((note as any).imagesCount ?? 0);
+    const provided = (note as any).images;
+    if (Array.isArray(provided) && provided.some((i: any) => i && typeof i.url === 'string' && String(i.url || '').length > 0)) return; // parent already provided image URLs
+    if (!Number.isFinite(count) || count <= 0) return;
+    if (!token) return;
+    if (didFetchImagesForNoteIdRef.current === Number(note.id)) return;
+    didFetchImagesForNoteIdRef.current = Number(note.id);
+    (async () => {
+      try {
+        const res = await fetch(`/api/notes/${note.id}/images`, { headers: { Authorization: `Bearer ${token}` } });
+        if (!res.ok) return;
+        const data = await res.json();
+        const imgs = Array.isArray(data?.images) ? data.images : [];
+        const next = imgs
+          .filter((img: any) => img && typeof img.url === 'string')
+          .map((img: any) => ({ id: Number(img.id || Date.now()), url: String(img.url) }));
+        setImages(next);
+      } catch {}
+    })();
+  }, [note.id, (note as any).imagesCount, (note as any).images, token]);
   const disableNoteCardLinks = (() => {
     try {
       const stored = localStorage.getItem('prefs.disableNoteCardLinks');
@@ -664,7 +697,6 @@ export default function NoteCard({
     setLabels((note.noteLabels || []).map((nl:any) => nl.label).filter((l:any) => l && typeof l.id === 'number' && typeof l.name === 'string'));
   }, [note.noteLabels]);
   React.useEffect(() => { setTitle(note.title || ''); }, [note.title]);
-  React.useEffect(() => { setImages(((note as any).images || []).map((i:any)=>({ id:Number(i.id), url:String(i.url) }))); }, [(note as any).images]);
   // Keep collaborators in sync with server-provided data on note reloads
   React.useEffect(() => {
     try {
@@ -1534,7 +1566,7 @@ export default function NoteCard({
               onClick={() => { openEditor(); }}
               onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); }}
             >
-              <img src={img.url} alt="note image" />
+              <img src={img.url} alt="note image" loading="lazy" decoding="async" />
               {hiddenCount > 0 && idx === visible.length - 1 && (
                 <span className="note-image-moreOverlay" aria-label={`${hiddenCount} more images`}>+{hiddenCount} more</span>
               )}

@@ -27,9 +27,13 @@ services:
       - .env
     environment:
       - OCR_SERVICE_URL=http://ocr:8080/ocr
-      - UPLOADS_DIR=/app/uploads
+      # Store uploads (avatars + note images). In Unraid, set UPLOADS_VOLUME to a host path
+      # on the array (e.g. /mnt/user/...) to avoid using Docker's default data-root on cache.
+      - UPLOADS_DIR=${UPLOADS_DIR:-/app/uploads}
     volumes:
-      - uploads_data:/app/uploads
+      # If UPLOADS_VOLUME is an absolute path, this becomes a bind mount.
+      # If UPLOADS_VOLUME is a name (default: uploads_data), this becomes a named volume.
+      - ${UPLOADS_VOLUME:-uploads_data}:${UPLOADS_DIR:-/app/uploads}
     depends_on:
       - ocr
   ocr:

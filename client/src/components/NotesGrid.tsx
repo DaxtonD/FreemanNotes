@@ -23,7 +23,7 @@ import MobileCreateModal from "./MobileCreateModal";
 import { DEFAULT_SORT_CONFIG, type SortConfig } from '../sortTypes';
 
 type NoteLabelLite = { id: number; name: string };
-type NoteImageLite = { id: number; url: string };
+type NoteImageLite = { id: number; url?: string; ocrSearchText?: string | null; ocrText?: string | null; ocrStatus?: string | null };
 type ViewerCollectionLite = { id: number; name: string; parentId: number | null };
 
 const SwapNoteItem = React.memo(function SwapNoteItem({
@@ -479,10 +479,18 @@ export default function NotesGrid({
   function applyImagesToNote(noteId: number, images: NoteImageLite[]) {
     setNotes((s) => s.map((n) => {
       if (Number(n.id) !== Number(noteId)) return n;
+      const prevImages = Array.isArray((n as any).images) ? (n as any).images : [];
+      const prevById = new Map<number, any>(prevImages.map((img: any) => [Number(img?.id), img]));
       const nextImages = (Array.isArray(images) ? images : [])
-        .filter((img) => img && (typeof (img as any).url === 'string'))
-        .map((img: any) => ({ id: Number(img.id || Date.now()), url: String(img.url) }));
-      return { ...n, images: nextImages };
+        .filter((img) => img && (typeof (img as any).id === 'number' || Number.isFinite(Number((img as any).id))))
+        .map((img: any) => ({
+          id: Number(img.id || Date.now()),
+          url: (typeof img.url === 'string' ? String(img.url) : (prevById.get(Number(img.id))?.url)),
+          ocrSearchText: (img.ocrSearchText == null ? (prevById.get(Number(img.id))?.ocrSearchText ?? null) : String(img.ocrSearchText)),
+          ocrText: (img.ocrText == null ? (prevById.get(Number(img.id))?.ocrText ?? null) : String(img.ocrText)),
+          ocrStatus: (img.ocrStatus == null ? (prevById.get(Number(img.id))?.ocrStatus ?? null) : String(img.ocrStatus)),
+        }));
+      return { ...n, images: nextImages, imagesCount: nextImages.length };
     }));
   }
 

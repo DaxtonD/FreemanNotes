@@ -6,6 +6,9 @@ import { notifyUser } from "./events";
 import { scrapeLinkPreview } from "./linkPreview";
 import { createHash } from "crypto";
 import { enqueueNoteImageOcr } from "./ocr/ocrQueue";
+import { getUploadsDir } from './uploads';
+import * as fsp from 'fs/promises';
+import path from 'path';
 
 const router = Router();
 
@@ -68,6 +71,52 @@ function hashUrl(url: string): string {
   return createHash('sha256').update(String(url || '').trim()).digest('hex');
 }
 
+function isDataUrlImage(s: string): boolean {
+  return /^data:image\/[^;]+;base64,/i.test(String(s || ''));
+}
+
+function parseDataUrlImage(dataUrl: string): { mime: string; buffer: Buffer } | null {
+  const m = String(dataUrl || '').match(/^data:(image\/[^;]+);base64,(.+)$/i);
+  if (!m) return null;
+  try {
+    return { mime: String(m[1] || 'image/octet-stream'), buffer: Buffer.from(String(m[2] || ''), 'base64') };
+  } catch {
+    return null;
+  }
+}
+
+function extFromMime(mime: string): string {
+  const m = String(mime || '').toLowerCase();
+  if (m === 'image/jpeg') return 'jpg';
+  if (m === 'image/jpg') return 'jpg';
+  if (m === 'image/png') return 'png';
+  if (m === 'image/webp') return 'webp';
+  if (m === 'image/gif') return 'gif';
+  if (m === 'image/bmp') return 'bmp';
+  return 'bin';
+}
+
+async function persistNoteImageDataUrl(opts: { dataUrl: string; ownerId: number; noteId: number; imageId?: number }): Promise<string | null> {
+  try {
+    const parsed = parseDataUrlImage(opts.dataUrl);
+    if (!parsed) return null;
+    if (!parsed.buffer || parsed.buffer.length < 8) return null;
+
+    const sha = createHash('sha256').update(parsed.buffer).digest('hex');
+    const ext = extFromMime(parsed.mime);
+    const base = `${opts.imageId ? `${opts.imageId}-` : ''}${sha.slice(0, 16)}.${ext}`;
+    const rel = path.posix.join('notes', String(opts.ownerId), String(opts.noteId), base);
+
+    const uploadsDir = getUploadsDir();
+    const abs = path.join(uploadsDir, ...rel.split('/'));
+    await fsp.mkdir(path.dirname(abs), { recursive: true });
+    await fsp.writeFile(abs, parsed.buffer);
+    return `/uploads/${rel}`;
+  } catch {
+    return null;
+  }
+}
+
 function getJwtSecret() {
   const s = process.env.JWT_SECRET;
   if (!s) throw new Error("JWT_SECRET not set in environment");
@@ -107,7 +156,10 @@ router.get('/api/notes', async (req: Request, res: Response) => {
         collaborators: { include: { user: true } },
         owner: true,
         items: true,
-        images: true,
+        _count: { select: { images: true } },
+        // Include OCR fields for global search, but omit `url` to avoid huge payloads
+        // when legacy images are stored as base64 data URLs.
+        images: { select: { id: true, ocrStatus: true, ocrText: true, ocrSearchText: true, createdAt: true } },
         linkPreviews: { orderBy: { createdAt: 'asc' } },
           noteCollections: {
           where: { userId: user.id },
@@ -155,6 +207,7 @@ router.get('/api/notes', async (req: Request, res: Response) => {
         return {
           ...n,
           items: itemsFromDb,
+          imagesCount: (typeof (n as any)?._count?.images === 'number') ? Number((n as any)._count.images) : 0,
           viewerColor: (Array.isArray(n.notePrefs) && n.notePrefs[0]?.color) ? String(n.notePrefs[0].color) : null,
         viewerCollections,
           // Reminders are owner-only; collaborators should not see the owner's reminder state.
@@ -298,7 +351,15 @@ router.post('/api/notes/:id/images', async (req: Request, res: Response) => {
       const collab = await prisma.collaborator.findFirst({ where: { noteId: id, userId: user.id } });
       if (!collab) return res.status(403).json({ error: 'forbidden' });
     }
-    const img = await prisma.noteImage.create({ data: { noteId: id, url, ocrStatus: 'pending' } as any });
+
+    let storedUrl = url;
+    // If the client sent a base64 data URL (FileReader), persist it to disk and store a short /uploads URL instead.
+    if (isDataUrlImage(storedUrl)) {
+      const persisted = await persistNoteImageDataUrl({ dataUrl: storedUrl, ownerId: Number(note.ownerId), noteId: id });
+      if (persisted) storedUrl = persisted;
+    }
+
+    const img = await prisma.noteImage.create({ data: { noteId: id, url: storedUrl, ocrStatus: 'pending' } as any });
     // OCR runs asynchronously (never block this request).
     try { enqueueNoteImageOcr(Number((img as any).id)); } catch {}
     try {
@@ -352,7 +413,26 @@ router.get('/api/notes/:id/images', async (req: Request, res: Response) => {
       if (!collab) return res.status(403).json({ error: 'forbidden' });
     }
     const images = await prisma.noteImage.findMany({ where: { noteId: id }, orderBy: { createdAt: 'asc' } });
-    res.json({ images });
+
+    // Best-effort auto-migration: convert legacy data URLs to files under /uploads.
+    const migrated: any[] = [];
+    for (const img of (images as any[])) {
+      try {
+        const u = String((img as any).url || '');
+        if (isDataUrlImage(u)) {
+          const persisted = await persistNoteImageDataUrl({ dataUrl: u, ownerId: Number(note.ownerId), noteId: id, imageId: Number((img as any).id) });
+          if (persisted) {
+            try {
+              await (prisma as any).noteImage.update({ where: { id: Number((img as any).id) }, data: { url: persisted } });
+              (img as any).url = persisted;
+            } catch {}
+          }
+        }
+      } catch {}
+      migrated.push(img);
+    }
+
+    res.json({ images: migrated });
   } catch (err) {
     res.status(500).json({ error: String(err) });
   }

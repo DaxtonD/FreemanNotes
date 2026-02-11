@@ -152,11 +152,29 @@ docker compose up --build
 
 ### Persisting uploads (avatars, etc.)
 
-User-uploaded files are served under `/uploads` (e.g. avatars at `/uploads/users/{id}.jpg`). In Docker, you should persist this directory using a volume; otherwise files will be lost when the container is replaced.
+User-uploaded files are served under `/uploads` (e.g. avatars at `/uploads/users/{id}.jpg`). Note images uploaded from the UI are also persisted here (under `/uploads/notes/...`).
+
+In Docker, you should persist this directory using a volume; otherwise files will be lost when the container is replaced.
 
 - **UPLOADS_DIR**: Filesystem path where the server reads/writes uploads.
   - Default: `./uploads` (relative to the server working directory)
   - Compose default: `/app/uploads` (with a named volume mounted)
+
+#### Unraid (recommended): bind-mount uploads to the array
+
+Docker named volumes typically live under Docker's data-root (often on cache in Unraid). To avoid note images filling cache space, use a bind mount to a host path on the array.
+
+With the provided Compose file, set these in your `.env`:
+
+```
+# Container path
+UPLOADS_DIR=/app/uploads
+
+# Host path (example) -> store on array share
+UPLOADS_VOLUME=/mnt/user/freemannotes/uploads
+```
+
+Now `docker compose up --build` will mount that host directory into the container and all uploads (avatars + note images) will be stored there.
 
 Compose already includes an `uploads_data` named volume for the app service. When updating, avoid `docker compose down -v` unless you intentionally want to delete uploads.
 
