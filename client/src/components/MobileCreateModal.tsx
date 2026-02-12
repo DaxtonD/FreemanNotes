@@ -170,8 +170,16 @@ export default function MobileCreateModal({
     if (mode === 'checklist') {
       const firstUid = genUid();
       setItems([{ uid: firstUid, content: '', checked: false, indent: 0 }]);
-      setActiveChecklistRowKey(firstUid);
-      window.setTimeout(() => focusItem(0), 30);
+      // On open: ensure no checklist row starts focused/highlighted.
+      setActiveChecklistRowKey(null);
+      window.setTimeout(() => {
+        try {
+          const root = dialogRef.current as HTMLElement | null;
+          const active = document.activeElement as HTMLElement | null;
+          if (root && active && root.contains(active) && active.closest('.checklist-item')) active.blur();
+        } catch {}
+        try { document.getSelection()?.removeAllRanges(); } catch {}
+      }, 0);
     } else {
       setItems([]);
       setActiveChecklistRowKey(null);
@@ -940,11 +948,15 @@ export default function MobileCreateModal({
                           onFocus={(ed: any) => {
                             activeChecklistEditor.current = ed;
                             itemEditorRefs.current[idx] = ed;
-                            try { setActiveChecklistRowKey(it.uid); } catch {}
+                            try {
+                              // ChecklistItemRT calls `onFocus` once on mount to register refs.
+                              // Only treat it as an active/highlighted row when actually focused.
+                              if ((ed as any)?.isFocused) setActiveChecklistRowKey(it.uid);
+                            } catch {}
                             try { setChecklistToolbarTick(t => t + 1); } catch {}
                           }}
                           placeholder={''}
-                          autoFocus={idx === 0}
+                          autoFocus={false}
                         />
                       </div>
 

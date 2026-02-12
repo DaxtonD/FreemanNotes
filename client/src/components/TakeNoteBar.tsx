@@ -151,8 +151,12 @@ export default function TakeNoteBar({
 
     if (nextMode === 'checklist') {
       setItems((cur) => (cur && cur.length ? cur : [{ content: '', indent: 0 }]));
-      try { setActiveChecklistRowIdx(0); } catch {}
-      setTimeout(() => focusItem(0), 30);
+      // On open: ensure no checklist row starts focused/highlighted.
+      try { setActiveChecklistRowIdx(null); } catch {}
+      requestAnimationFrame(() => {
+        try { (document.activeElement as HTMLElement | null)?.blur?.(); } catch {}
+        try { document.getSelection()?.removeAllRanges(); } catch {}
+      });
     } else {
       try { setActiveChecklistRowIdx(null); } catch {}
       requestAnimationFrame(() => {
@@ -160,6 +164,24 @@ export default function TakeNoteBar({
       });
     }
   }, [openRequest?.nonce, openRequest?.mode, editor]);
+
+  // When opening checklist mode, clear any lingering focus/selection on items.
+  useEffect(() => {
+    if (!expanded) return;
+    if (mode !== 'checklist') return;
+    const id = window.setTimeout(() => {
+      try {
+        const root = rootRef.current as HTMLElement | null;
+        const active = document.activeElement as HTMLElement | null;
+        if (root && active && root.contains(active) && active.closest('.checklist-item')) {
+          active.blur();
+        }
+      } catch {}
+      try { document.getSelection()?.removeAllRanges(); } catch {}
+      try { setActiveChecklistRowIdx(null); } catch {}
+    }, 0);
+    return () => window.clearTimeout(id);
+  }, [expanded, mode]);
 
   // Treat the expanded create editor like a modal: disable background interactions
   // and hook the mobile Back button to close it instead of exiting.
@@ -668,7 +690,19 @@ export default function TakeNoteBar({
           <div
             className="checkbox-visual"
             onMouseDown={(e) => { e.stopPropagation(); }}
-            onClick={(e) => { e.stopPropagation(); ignoreNextDocClickRef.current = true; try { setAddToCurrentCollection(activeCollectionId != null); } catch {} setMode('checklist'); setItems([{ content: '', indent: 0 }]); setExpanded(true); focusItem(0); }}
+            onClick={(e) => {
+              e.stopPropagation();
+              ignoreNextDocClickRef.current = true;
+              try { setAddToCurrentCollection(activeCollectionId != null); } catch {}
+              setMode('checklist');
+              setItems([{ content: '', indent: 0 }]);
+              try { setActiveChecklistRowIdx(null); } catch {}
+              setExpanded(true);
+              requestAnimationFrame(() => {
+                try { (document.activeElement as HTMLElement | null)?.blur?.(); } catch {}
+                try { document.getSelection()?.removeAllRanges(); } catch {}
+              });
+            }}
             aria-label="Start checklist"
           >
             <svg viewBox="0 0 24 24" fill="none" aria-hidden focusable="false">
@@ -999,7 +1033,7 @@ export default function TakeNoteBar({
                 }
                 cleanupChecklistDrag();
               }}
-              style={{ display: 'flex', gap: 8, alignItems: 'center', marginLeft: (typeof it.indent === 'number' ? Number(it.indent) : 0) * 18 }}
+              style={{ display: 'flex', gap: 8, alignItems: 'flex-start', marginLeft: (typeof it.indent === 'number' ? Number(it.indent) : 0) * 18 }}
             >
               <div
                 className="drag-handle"
@@ -1080,7 +1114,7 @@ export default function TakeNoteBar({
                   } catch {}
                 }}
                 onDragEnd={() => { cleanupChecklistDrag(); }}
-                style={{ width: 20, cursor: 'grab', userSelect: 'none', WebkitUserSelect: 'none', MozUserSelect: 'none', msUserSelect: 'none' }}
+                style={{ cursor: 'grab', userSelect: 'none', WebkitUserSelect: 'none', MozUserSelect: 'none', msUserSelect: 'none' }}
                 aria-label="Drag to reorder"
                 title="Drag to reorder"
               >≡</div>
@@ -1118,11 +1152,15 @@ export default function TakeNoteBar({
                   onFocus={(ed: any) => {
                     activeChecklistEditor.current = ed;
                     itemEditorRefs.current[idx] = ed;
-                    try { setActiveChecklistRowIdx(idx); } catch {}
+                    try {
+                      // ChecklistItemRT calls `onFocus` once on mount to register refs.
+                      // Only treat it as an active/highlighted row when actually focused.
+                      if ((ed as any)?.isFocused) setActiveChecklistRowIdx(idx);
+                    } catch {}
                     setChecklistToolbarTick(t => t + 1);
                   }}
                   placeholder={''}
-                  autoFocus={idx === 0}
+                  autoFocus={false}
                 />
               </div>
               <button

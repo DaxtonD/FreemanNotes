@@ -120,6 +120,30 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
     };
   }, []);
 
+  // On open: ensure no checklist row starts focused/highlighted.
+  useEffect(() => {
+    try { setActiveRowKey(null); } catch {}
+    try { setAutoFocusIndex(null); } catch {}
+    const id = window.setTimeout(() => {
+      try {
+        const root = dialogRef.current as HTMLElement | null;
+        const active = document.activeElement as HTMLElement | null;
+        if (root && active && root.contains(active) && active.closest('.checklist-item')) {
+          active.blur();
+        }
+      } catch {}
+      try {
+        const ed: any = getCurrentChecklistEditor?.();
+        if (ed?.commands?.blur) ed.commands.blur();
+        else if (ed?.view?.dom) (ed.view.dom as HTMLElement).blur();
+      } catch {}
+      try { document.getSelection()?.removeAllRanges(); } catch {}
+      try { activeChecklistEditor.current = null; } catch {}
+      try { setToolbarTick((t) => t + 1); } catch {}
+    }, 0);
+    return () => window.clearTimeout(id);
+  }, []);
+
   const clientIdRef = useRef<string>((() => {
     try { return `c${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`; } catch { return `c${Math.random()}`; }
   })());
@@ -1875,7 +1899,11 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
                             onFocus={(ed) => {
                               activeChecklistEditor.current = ed;
                               itemEditorRefs.current[realIdx] = ed;
-                              try { setActiveRowKey(getKey(it)); } catch {}
+                              try {
+                                // ChecklistItemRT calls `onFocus` once on mount to register refs.
+                                // Only treat it as an active/highlighted row when actually focused.
+                                if ((ed as any)?.isFocused) setActiveRowKey(getKey(it));
+                              } catch {}
                               setToolbarTick(t => t + 1);
                               if (autoFocusIndex === realIdx) setAutoFocusIndex(null);
                             }}

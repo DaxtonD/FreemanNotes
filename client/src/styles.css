@@ -769,6 +769,15 @@ html.is-editor-modal-open .mobile-add-note{
 .rt-item { min-height: 22px; padding: 4px 6px; border-radius: 4px; background: transparent; color: inherit; }
 .rt-item p { margin: 0; font-size: var(--checklist-text-size); }
 
+/* Checklist rows: keep handle/checkbox/text aligned.
+   We keep rows `flex-start` so wrapped text stays top-left aligned, but remove
+   extra RT padding so single-line rows don't look vertically mis-centered. */
+.checklist-item .rt-item{
+  padding-top: 0;
+  padding-bottom: 0;
+  min-height: 0;
+}
+
 /*
   Checklist editor: match the note-card preview alignment.
   The editor's `.rt-item` padding makes the first line sit lower, which makes
@@ -799,12 +808,13 @@ html.is-editor-modal-open .mobile-add-note{
   background: transparent;
   margin-bottom: var(--checklist-gap);
   display:flex;
-  align-items:center;
+  /* Keep checkbox aligned to top-left of wrapped text (Google Keep-like). */
+  align-items:flex-start;
   gap:8px;
 }
-.image-dialog .checklist-item { align-items: center; }
-.image-dialog.checklist-editor .checklist-item { align-items: center; }
-.image-dialog.checklist-editor .checklist-item .drag-gutter { align-items: center; }
+.image-dialog .checklist-item { align-items: flex-start; }
+.image-dialog.checklist-editor .checklist-item { align-items: flex-start; }
+.image-dialog.checklist-editor .checklist-item .drag-gutter { align-items: flex-start; }
 .image-dialog .checklist-item.is-active { background: rgba(255,255,255,0.06); }
 :root[data-theme="light"] .image-dialog .checklist-item.is-active { background: rgba(0,0,0,0.06); }
 .take-note-expanded .checklist-item.is-active { background: rgba(255,255,255,0.06); }
@@ -818,13 +828,14 @@ html.is-editor-modal-open .mobile-add-note{
   .take-note-expanded .checklist-item:hover { background: rgba(255,255,255,0.06); }
   :root[data-theme="light"] .take-note-expanded .checklist-item:hover { background: rgba(0,0,0,0.06); }
 }
-.checklist-item .drag-gutter { display:flex; align-items:center; gap:8px; }
+.checklist-item .drag-gutter { display:flex; align-items:flex-start; gap:8px; }
 .checklist-item .drag-handle {
   opacity: 0.9;
   color: inherit;
   display:flex;
   align-items:center;
   justify-content:center;
+  position: relative;
   width: max(var(--checklist-drag-handle-width), var(--checklist-checkbox-size));
   min-width: max(var(--checklist-drag-handle-width), var(--checklist-checkbox-size));
   /*
@@ -832,12 +843,27 @@ html.is-editor-modal-open .mobile-add-note{
     On mobile we used to set this to 44px for touch targets, but that makes
     it impossible to tighten checklist spacing for unchecked items.
   */
-  height: auto;
-  min-height: max(var(--checklist-drag-handle-height), var(--checklist-checkbox-size));
-  padding: clamp(0px, calc(var(--checklist-gap) * 0.55), 10px) 0;
+  /* Keep handle visually aligned with checkbox; row padding controls spacing. */
+  height: var(--checklist-checkbox-size);
+  min-height: var(--checklist-checkbox-size);
+  padding: 0;
   line-height: 1;
   font-size: max(22px, var(--checklist-checkbox-size));
   margin-right:0;
+}
+
+/* Touch: keep a larger grab target without changing visual alignment. */
+@media (pointer: coarse) {
+  .checklist-item .drag-handle::before{
+    content: '';
+    position: absolute;
+    left: 0;
+    right: 0;
+    /* Expand only vertically to reach the touch target height. */
+    top: calc((var(--checklist-drag-handle-height) - var(--checklist-checkbox-size)) / -2);
+    bottom: calc((var(--checklist-drag-handle-height) - var(--checklist-checkbox-size)) / -2);
+    background: transparent;
+  }
 }
 .checklist-item .drag-gutter, .checklist-item .drag-handle{ touch-action:none; }
 .take-note-input{ padding:4px 6px; border-radius:4px; font-size: var(--checklist-text-size); resize: none; width:100%; min-height:22px; background: transparent; border: none; color: inherit; outline: none; font-family: inherit; }

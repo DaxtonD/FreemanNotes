@@ -206,15 +206,7 @@ export default function NoteCard({
     }
   }, [note.id, (note as any).viewerCollections]);
 
-  const isCoarsePointer = React.useMemo(() => {
-    try {
-      const mq = window.matchMedia;
-      return !!(mq && (mq('(pointer: coarse)').matches || mq('(any-pointer: coarse)').matches));
-    } catch {
-      return false;
-    }
-  }, []);
-  const previewRowAlignItems: React.CSSProperties['alignItems'] = isCoarsePointer ? 'center' : 'flex-start';
+  const previewRowAlignItems: React.CSSProperties['alignItems'] = 'flex-start';
 
   React.useEffect(() => {
     clearMetaAnimTimers();
@@ -559,6 +551,15 @@ export default function NoteCard({
   const suppressNextBodyClickRef = useRef(false);
   const [previewMenuIsSheet, setPreviewMenuIsSheet] = useState(false);
   const [urlModal, setUrlModal] = useState<{ previewId: number; initialUrl: string } | null>(null);
+
+  const isCoarsePointer = React.useMemo(() => {
+    try {
+      const mq = window.matchMedia;
+      return !!(mq && (mq('(pointer: coarse)').matches || mq('(any-pointer: coarse)').matches));
+    } catch {
+      return false;
+    }
+  }, []);
 
   function isMoreMenuLongPressExcluded(target: HTMLElement | null): boolean {
     try {
