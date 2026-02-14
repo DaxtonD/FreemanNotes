@@ -15,6 +15,13 @@ if [ -n "$PUID" ] && [ -n "$PGID" ] && command -v gosu >/dev/null 2>&1; then
   echo "Applying PUID/PGID: ${PUID}:${PGID}"
   mkdir -p "$UPLOADS_PATH" || true
   chown -R "$PUID:$PGID" "$UPLOADS_PATH" 2>/dev/null || true
+  # Ensure optional runtime prisma generate can update generated client files.
+  if [ -d /app/node_modules/.prisma ]; then
+    chown -R "$PUID:$PGID" /app/node_modules/.prisma 2>/dev/null || true
+  fi
+  if [ -d /app/node_modules/@prisma ]; then
+    chown -R "$PUID:$PGID" /app/node_modules/@prisma 2>/dev/null || true
+  fi
 
   echo "Starting docker entrypoint: set DATABASE_URL if needed and ensure DB schema"
 

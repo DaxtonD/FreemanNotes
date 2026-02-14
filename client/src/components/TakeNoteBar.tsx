@@ -796,28 +796,38 @@ export default function TakeNoteBar({
   if (!expanded) {
     return (
       <div ref={rootRef}>
-        <div
-          className="take-note-bar"
-          role="button"
-          tabIndex={0}
-          onMouseDown={(e) => { try { e.preventDefault(); } catch {} try { e.stopPropagation(); } catch {} ignoreNextDocClickRef.current = true; try { setAddToCurrentCollection(activeCollectionId != null); } catch {} setMode('text'); setExpanded(true); }}
-          onClick={(e) => { try { e.preventDefault(); } catch {} try { e.stopPropagation(); } catch {} ignoreNextDocClickRef.current = true; try { setAddToCurrentCollection(activeCollectionId != null); } catch {} setMode('text'); setExpanded(true); }}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' || e.key === ' ') {
-              e.preventDefault();
+        <div className="take-note-bar" role="group" aria-label="Create new note or checklist">
+          <button
+            type="button"
+            className="take-note-action"
+            onMouseDown={(e) => { try { e.preventDefault(); } catch {} try { e.stopPropagation(); } catch {} }}
+            onClick={(e) => {
+              try { e.preventDefault(); } catch {}
+              try { e.stopPropagation(); } catch {}
               ignoreNextDocClickRef.current = true;
               try { setAddToCurrentCollection(activeCollectionId != null); } catch {}
               setMode('text');
               setExpanded(true);
-            }
-          }}
-        >
-          <div style={{ flex: 1, padding: '10px 12px' }}>Create a new note</div>
-          <div
-            className="checkbox-visual"
-            onMouseDown={(e) => { e.stopPropagation(); }}
+            }}
+            aria-label="Click to create a new note"
+          >
+            <span className="take-note-action__icon" aria-hidden>
+              <svg viewBox="0 0 24 24" fill="none" focusable="false">
+                <path d="M6 3h8l4 4v14H6z" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" />
+                <path d="M14 3v4h4" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" />
+                <path d="M9 12h6M9 16h6" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            </span>
+            <span className="take-note-action__text">Create a new note</span>
+          </button>
+
+          <button
+            type="button"
+            className="take-note-action"
+            onMouseDown={(e) => { try { e.preventDefault(); } catch {} try { e.stopPropagation(); } catch {} }}
             onClick={(e) => {
-              e.stopPropagation();
+              try { e.preventDefault(); } catch {}
+              try { e.stopPropagation(); } catch {}
               ignoreNextDocClickRef.current = true;
               try { setAddToCurrentCollection(activeCollectionId != null); } catch {}
               setMode('checklist');
@@ -835,12 +845,17 @@ export default function TakeNoteBar({
                 } catch {}
               });
             }}
-            aria-label="Start checklist"
+            aria-label="Click to create a new checklist"
           >
-            <svg viewBox="0 0 24 24" fill="none" aria-hidden focusable="false">
-              <path d="M20 6L9 17l-5-5" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-          </div>
+            <span className="take-note-action__icon" aria-hidden>
+              <svg viewBox="0 0 24 24" fill="none" focusable="false">
+                <rect x="4" y="4" width="16" height="16" rx="3" stroke="currentColor" />
+                <path d="M8 9h8M8 13h8M8 17h5" stroke="currentColor" strokeLinecap="round" />
+                <path d="M6.5 13.5l1.5 1.5 2.5-2.5" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            </span>
+            <span className="take-note-action__text">Create a new checklist</span>
+          </button>
         </div>
       </div>
     );

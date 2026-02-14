@@ -12,6 +12,7 @@ export default function AuthGate({
   selectedCollaboratorId,
   searchQuery,
   sortConfig,
+  viewMode,
   onClearAllFilters,
   onSetSelectedLabelIds,
   onSetSelectedCollaboratorId,
@@ -26,6 +27,7 @@ export default function AuthGate({
   selectedCollaboratorId?: number | null;
   searchQuery?: string;
   sortConfig?: SortConfig;
+  viewMode?: 'cards' | 'list-1' | 'list-2';
   onClearAllFilters?: () => void;
   onSetSelectedLabelIds?: (ids: number[]) => void;
   onSetSelectedCollaboratorId?: (id: number | null) => void;
@@ -54,6 +56,7 @@ export default function AuthGate({
       selectedCollaboratorId={selectedCollaboratorId ?? null}
       searchQuery={searchQuery}
       sortConfig={sortConfig}
+      viewMode={viewMode}
       onClearAllFilters={onClearAllFilters}
       onSetSelectedLabelIds={onSetSelectedLabelIds}
       onSetSelectedCollaboratorId={onSetSelectedCollaboratorId}

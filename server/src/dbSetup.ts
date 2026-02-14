@@ -41,6 +41,16 @@ function generateClientWithRetries(attempts = 3, delayMs = 1000) {
   }
 }
 
+function shouldGeneratePrismaClient() {
+  const isProd = process.env.NODE_ENV === 'production';
+  const forceGenerate = /^1|true$/i.test(String(process.env.FORCE_PRISMA_GENERATE || ''));
+  if (forceGenerate) return true;
+  // In production images we already generate Prisma client at build time.
+  // Re-generating at runtime as a non-root UID can fail on node_modules ownership.
+  if (isProd && hasGeneratedClient()) return false;
+  return true;
+}
+
 export async function ensureDatabaseReady() {
   // ensure DATABASE_URL is present if set in .env
   if (!process.env.DATABASE_URL) buildDatabaseUrlFromEnvFile();
@@ -55,14 +65,28 @@ export async function ensureDatabaseReady() {
       // ignore - script exits 0 when DATABASE_URL present
     }
 
-    if (hasGeneratedClient()) {
-      console.log('Prisma client exists; regenerating to ensure it matches schema...');
+    const hasClient = hasGeneratedClient();
+    if (hasClient) {
+      console.log('Prisma client exists.');
     }
-    generateClientWithRetries();
+
+    if (shouldGeneratePrismaClient()) {
+      if (hasClient) console.log('Regenerating Prisma client to ensure it matches schema...');
+      else console.log('Prisma client missing; generating...');
+      generateClientWithRetries();
+    } else {
+      console.log('Skipping prisma generate in production (using build-time generated client). Set FORCE_PRISMA_GENERATE=1 to override.');
+    }
   } catch (genErr) {
-    console.error('Failed to generate Prisma client:', genErr);
-    // If generation fails, we can't safely continue using Prisma
-    throw genErr;
+    const msg = String((genErr as any)?.message || genErr || '');
+    const isEacces = /EACCES|permission denied/i.test(msg);
+    if (isEacces && hasGeneratedClient()) {
+      console.warn('Prisma generate hit a permissions error, but an existing generated client is available. Continuing startup with existing client.');
+    } else {
+      console.error('Failed to generate Prisma client:', genErr);
+      // If generation fails and no usable client exists, we can't safely continue.
+      throw genErr;
+    }
   }
 
   // Now attempt to apply migrations or push schema and fallback if needed

@@ -79,6 +79,7 @@ export default function NotesGrid({
   selectedCollaboratorId = null,
   searchQuery = '',
   sortConfig = DEFAULT_SORT_CONFIG,
+  viewMode = 'cards',
   onClearAllFilters,
   onSetSelectedLabelIds,
   onSetSelectedCollaboratorId,
@@ -93,6 +94,7 @@ export default function NotesGrid({
   selectedCollaboratorId?: number | null;
   searchQuery?: string;
   sortConfig?: SortConfig;
+  viewMode?: 'cards' | 'list-1' | 'list-2';
   onClearAllFilters?: () => void;
   onSetSelectedLabelIds?: (ids: number[]) => void;
   onSetSelectedCollaboratorId?: (id: number | null) => void;
@@ -3082,8 +3084,16 @@ export default function NotesGrid({
     }
   }
 
+  const isListView = viewMode === 'list-1' || viewMode === 'list-2';
+  const gridViewClass = isListView
+    ? ` notes-grid--list ${viewMode === 'list-2' ? 'notes-grid--list-2' : 'notes-grid--list-1'}`
+    : ' notes-grid--cards';
+  const notesAreaViewClass = isListView
+    ? ` notes-area--list ${viewMode === 'list-2' ? 'notes-area--list-2' : 'notes-area--list-1'}`
+    : '';
+
   return (
-    <section className={`notes-area${mobileAddOpen ? ' notes-area--mobile-add-open' : ''}`}>
+    <section className={`notes-area${mobileAddOpen ? ' notes-area--mobile-add-open' : ''}${notesAreaViewClass}`}>
       <div className="take-note-sticky">
         <TakeNoteBar onCreated={load} openRequest={{ nonce: takeNoteOpenNonce, mode: takeNoteOpenMode }} activeCollection={activeCollection} />
 
@@ -3208,7 +3218,7 @@ export default function NotesGrid({
               {pinnedGroups.map((g) => (
                 <div key={g.key}>
                   {g.title && g.key !== 'all' && <h5 className="section-title" style={{ marginTop: 10, marginBottom: 6, color: 'var(--muted)' }}>{g.title}</h5>}
-                  <div className="notes-grid notes-grid--swap" ref={pinnedGridRef}>
+                  <div className={`notes-grid notes-grid--swap${gridViewClass}`} ref={pinnedGridRef}>
                     {g.notes.map((n) => {
                       const span = spanForNote(n);
                       const setItemRef = (el: HTMLElement | null, noteId: number) => {
@@ -3238,7 +3248,7 @@ export default function NotesGrid({
             {otherGroups.map((g) => (
               <div key={g.key}>
                 {g.title && g.key !== 'all' && <h5 className="section-title" style={{ marginTop: 10, marginBottom: 6, color: 'var(--muted)' }}>{g.title}</h5>}
-                <div className="notes-grid notes-grid--swap" ref={othersGridRef}>
+                <div className={`notes-grid notes-grid--swap${gridViewClass}`} ref={othersGridRef}>
                   {g.notes.map((n) => {
                     const span = spanForNote(n);
                     const setItemRef = (el: HTMLElement | null, noteId: number) => {
@@ -3266,7 +3276,7 @@ export default function NotesGrid({
           <DragOverlay>
             {activeSwapNote ? (
               <div
-                className="note-drag-ghost"
+                className={`note-drag-ghost${isListView ? ' note-drag-ghost--list' : ''}`}
                 style={{
                   width: swapOverlayRect ? `${swapOverlayRect.width}px` : (() => {
                     const s = spanForNote(activeSwapNote);
@@ -3290,7 +3300,7 @@ export default function NotesGrid({
                   {g.title && g.key !== 'all' && (
                     <h5 className="section-title" style={{ marginTop: 10, marginBottom: 6, color: 'var(--muted)' }}>{g.title}</h5>
                   )}
-                  <div className={"notes-grid" + (manualDragActive ? " notes-grid--manual" : "")} ref={pinnedGridRef}>
+                  <div className={`notes-grid${manualDragActive ? ' notes-grid--manual' : ''}${gridViewClass}`} ref={pinnedGridRef}>
                     {(keepRearrangeEnabled && rearrangeSection === 'pinned' && rearrangeRenderIds.length)
                       ? rearrangeRenderIds.map((key, idx) => {
                           if (key === 'spacer') {
@@ -3413,7 +3423,7 @@ export default function NotesGrid({
                 {g.title && g.key !== 'all' && (
                   <h5 className="section-title" style={{ marginTop: 10, marginBottom: 6, color: 'var(--muted)' }}>{g.title}</h5>
                 )}
-                <div className={"notes-grid" + (manualDragActive ? " notes-grid--manual" : "")} ref={othersGridRef}>
+                <div className={`notes-grid${manualDragActive ? ' notes-grid--manual' : ''}${gridViewClass}`} ref={othersGridRef}>
                   {(keepRearrangeEnabled && rearrangeSection === 'others' && rearrangeRenderIds.length)
                     ? rearrangeRenderIds.map((key, idx) => {
                         if (key === 'spacer') {
@@ -3545,7 +3555,7 @@ export default function NotesGrid({
             height: `${rearrangeBaseRectRef.current.height}px`,
           } as any}
         >
-          <div className="note-rearrange-overlay-inner">
+          <div className={`note-rearrange-overlay-inner${isListView ? ' note-rearrange-overlay-inner--list' : ''}`}>
             <NoteCard note={activeRearrangeNote} onChange={handleNoteChange} />
           </div>
         </div>,

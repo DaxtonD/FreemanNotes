@@ -36,6 +36,16 @@ function AppShell(): JSX.Element {
 	const [sidebarDrawerOpen, setSidebarDrawerOpen] = React.useState(false);
 	const [isPhone, setIsPhone] = React.useState(false);
 	const [searchQuery, setSearchQuery] = React.useState('');
+	const [viewMode, setViewMode] = React.useState<'cards' | 'list-1' | 'list-2'>(() => {
+		try {
+			const raw = String(localStorage.getItem('prefs.viewMode') || '').toLowerCase();
+			if (raw === 'list-2') return 'list-2';
+			if (raw === 'list' || raw === 'list-1') return 'list-1';
+			return 'cards';
+		} catch {
+			return 'cards';
+		}
+	});
 	const [sortConfig, setSortConfig] = React.useState<SortConfig>(DEFAULT_SORT_CONFIG);
 	const selectedCollectionId = collectionStack.length ? Number(collectionStack[collectionStack.length - 1].id) : null;
 
@@ -103,6 +113,10 @@ function AppShell(): JSX.Element {
 		setSelectedLabelIds((s) => s.includes(id) ? s.filter(x => x !== id) : [...s, id]);
 	};
 	const clearLabels = () => setSelectedLabelIds([]);
+
+	React.useEffect(() => {
+		try { localStorage.setItem('prefs.viewMode', viewMode); } catch {}
+	}, [viewMode]);
 
 	React.useEffect(() => {
 		function updatePhoneBucket() {
@@ -490,6 +504,8 @@ function AppShell(): JSX.Element {
 				}}
 				searchQuery={searchQuery}
 				onSearchChange={setSearchQuery}
+				viewMode={viewMode}
+				onToggleViewMode={() => setViewMode((m) => (m === 'cards' ? 'list-1' : (m === 'list-1' ? 'list-2' : 'cards')))}
 			/>
 			<div className="app-body">
 				{!isPhone && (
@@ -520,6 +536,7 @@ function AppShell(): JSX.Element {
 						onSetCollectionStack={setCollectionStack}
 						onSetSearchQuery={setSearchQuery}
 						onSortConfigChange={setSortConfig}
+						viewMode={viewMode}
 					/>
 				</main>
 			</div>

@@ -87,6 +87,7 @@ export default function NoteCard({
   const noteRef = useRef<HTMLElement | null>(null);
   const bodyRef = useRef<HTMLDivElement | null>(null);
   const imagesWrapRef = useRef<HTMLDivElement | null>(null);
+  const imagesToggleRef = useRef<HTMLDivElement | null>(null);
   const snapRafRef = useRef<number | null>(null);
   const lastSnapUnitRef = useRef<number | null>(null);
   const lastSnapBaseRef = useRef<number | null>(null);
@@ -100,6 +101,8 @@ export default function NoteCard({
   const [images, setImages] = useState<Array<{ id:number; url:string }>>((note.images as any) || []);
   const [thumbsPerRow, setThumbsPerRow] = useState<number>(3);
   const [imagesExpanded, setImagesExpanded] = React.useState<boolean>(() => !!(note as any).viewerImagesExpanded);
+  const [imagesExpandDirection, setImagesExpandDirection] = React.useState<'up' | 'down'>('up');
+  const [imagesDownTop, setImagesDownTop] = React.useState<number>(0);
   const [noteItems, setNoteItems] = useState<any[]>(note.items || []);
   const [title, setTitle] = useState<string>(note.title || '');
 
@@ -477,6 +480,68 @@ export default function NoteCard({
       window.removeEventListener('notes-grid:recalc', compute as any);
     };
   }, [imagesExpanded]);
+
+  React.useEffect(() => {
+    if (!imagesExpanded) return;
+    const computeDirection = () => {
+      try {
+        const card = noteRef.current as HTMLElement | null;
+        const toggle = imagesToggleRef.current as HTMLElement | null;
+        if (!card || !toggle) return;
+
+        const toggleRect = toggle.getBoundingClientRect();
+        const topReserve = (() => {
+          // Sticky header + take-note region safety so expanded images aren't hidden behind them.
+          const header = document.querySelector('.app-header') as HTMLElement | null;
+          const take = document.querySelector('.take-note-sticky') as HTMLElement | null;
+          const hb = header ? Math.max(0, Math.ceil(header.getBoundingClientRect().bottom)) : 56;
+          const tb = take ? Math.max(0, Math.ceil(take.getBoundingClientRect().bottom)) : 64;
+          return Math.max(hb, tb) + 8;
+        })();
+
+        const availableAbove = Math.max(0, toggleRect.top - topReserve);
+        const availableBelow = Math.max(0, window.innerHeight - toggleRect.bottom - 12);
+        const desired = (() => {
+          const countFromNote = Number((note as any).imagesCount ?? 0);
+          const count = Number.isFinite(countFromNote) && countFromNote > 0
+            ? countFromNote
+            : (Array.isArray(images) ? images.length : 0);
+          const perRow = Math.max(1, Number(thumbsPerRow || 0) || 3);
+          const rows = Math.max(1, Math.ceil(Math.max(1, count) / perRow));
+          const css = getComputedStyle(document.documentElement);
+          const thumbRaw = css.getPropertyValue('--image-thumb-size') || '';
+          const thumbW = Math.max(24, parseInt(String(thumbRaw).trim(), 10) || 96);
+          const GAP = 6;
+          const padY = 16;
+          const estimated = rows * thumbW + Math.max(0, rows - 1) * GAP + padY;
+          return Math.min(260, Math.max(84, estimated));
+        })();
+
+        const shouldExpandDown = availableAbove < (desired + 8) && availableBelow >= Math.min(desired, availableAbove + 80);
+        setImagesExpandDirection(shouldExpandDown ? 'down' : 'up');
+
+        if (shouldExpandDown) {
+          const nextTop = Math.max(8, Math.round(toggle.offsetTop + toggle.offsetHeight + 8));
+          setImagesDownTop(nextTop);
+        }
+      } catch {}
+    };
+
+    computeDirection();
+    window.addEventListener('resize', computeDirection);
+    window.addEventListener('scroll', computeDirection, true);
+    window.addEventListener('notes-grid:recalc', computeDirection as any);
+    try { window.visualViewport?.addEventListener('resize', computeDirection as any); } catch {}
+    try { window.visualViewport?.addEventListener('scroll', computeDirection as any); } catch {}
+
+    return () => {
+      window.removeEventListener('resize', computeDirection);
+      window.removeEventListener('scroll', computeDirection, true);
+      window.removeEventListener('notes-grid:recalc', computeDirection as any);
+      try { window.visualViewport?.removeEventListener('resize', computeDirection as any); } catch {}
+      try { window.visualViewport?.removeEventListener('scroll', computeDirection as any); } catch {}
+    };
+  }, [imagesExpanded, images.length, thumbsPerRow, note.id, (note as any).imagesCount]);
 
   const fileRef = useRef<HTMLInputElement | null>(null);
   const { token, user } = useAuth();
@@ -1349,7 +1414,7 @@ export default function NoteCard({
     return (
     <article
       ref={(el) => { noteRef.current = el as HTMLElement | null; }}
-      className={`note-card${expandedMeta ? ' is-meta-expanded' : ''}${labels.length > 0 ? ' has-labels' : ''}${viewerCollections.length > 0 ? ' has-collections' : ''}${(noteItems && noteItems.length > 0) ? ' has-checklist' : ''}`}
+      className={`note-card${expandedMeta ? ' is-meta-expanded' : ''}${imagesExpanded ? ' is-images-expanded' : ''}${labels.length > 0 ? ' has-labels' : ''}${viewerCollections.length > 0 ? ' has-collections' : ''}${(noteItems && noteItems.length > 0) ? ' has-checklist' : ''}`}
       style={styleVars}
       {...(!title ? (dragHandleAttributes || {}) : {})}
       {...(!title ? (() => {
@@ -1400,34 +1465,44 @@ export default function NoteCard({
         );
       })()}
 
-      {title && (
-        <div
-          className="note-title"
-          {...(dragHandleAttributes || {})}
-          {...(() => {
-            const ls: any = dragHandleListeners || {};
-            const { onKeyDown: _dragKeyDown, ...rest } = ls;
-            return rest;
-          })()}
-          style={{ cursor: 'pointer' }}
-          onClick={() => { openEditor(); }}
-          role="button"
-          tabIndex={0}
-          onKeyDown={(e) => {
-            try {
-              const dragKeyDown = (dragHandleListeners as any)?.onKeyDown;
-              if (typeof dragKeyDown === 'function') dragKeyDown(e);
-            } catch {}
-            if ((e as any).defaultPrevented) return;
-            if (e.key === 'Enter' || e.key === ' ') {
-              e.preventDefault();
-              openEditor();
+      <div
+        className={`note-title${!String(title || '').trim() ? ' note-title--empty' : ''}`}
+        {...(dragHandleAttributes || {})}
+        {...(() => {
+          const ls: any = dragHandleListeners || {};
+          const { onKeyDown: _dragKeyDown, ...rest } = ls;
+          return rest;
+        })()}
+        style={{ cursor: 'pointer' }}
+        onPointerDown={maybeBeginMoreMenuLongPress}
+        onPointerUp={() => { clearBodyLongPress(); }}
+        onPointerCancel={() => { clearBodyLongPress(); }}
+        onPointerMove={maybeCancelMoreMenuLongPressOnMove}
+        onClick={() => {
+          try {
+            if (suppressNextBodyClickRef.current) {
+              suppressNextBodyClickRef.current = false;
+              return;
             }
-          }}
-        >
-          {title}
-        </div>
-      )}
+          } catch {}
+          openEditor();
+        }}
+        role="button"
+        tabIndex={0}
+        onKeyDown={(e) => {
+          try {
+            const dragKeyDown = (dragHandleListeners as any)?.onKeyDown;
+            if (typeof dragKeyDown === 'function') dragKeyDown(e);
+          } catch {}
+          if ((e as any).defaultPrevented) return;
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            openEditor();
+          }
+        }}
+      >
+        {!String(title || '').trim() ? 'Add a title....' : title}
+      </div>
 
       {(() => {
         const hasAnyMeta = (chipParticipants.length > 0) || (labels.length > 0) || (viewerCollections.length > 0);
@@ -1736,6 +1811,7 @@ export default function NoteCard({
           <>
             <div
               className="note-images-toggle"
+              ref={imagesToggleRef}
               onPointerDown={maybeBeginMoreMenuLongPress}
               onPointerUp={() => { clearBodyLongPress(); }}
               onPointerCancel={() => { clearBodyLongPress(); }}
@@ -1759,15 +1835,17 @@ export default function NoteCard({
                 style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
               >
                 <FontAwesomeIcon icon={faImage} className="meta-fa-icon" />
-                <span>{`+${count} image${count === 1 ? '' : 's'}`}</span>
+                <span className="chip-images-count">+{count}</span>
+                <span className="chip-images-label">image{count === 1 ? '' : 's'}</span>
               </button>
             </div>
 
             {imagesExpanded && (
               (images && images.length > 0) ? (
                 <div
-                  className="note-images"
+                  className={`note-images${imagesExpandDirection === 'down' ? ' note-images--expand-down' : ''}`}
                   ref={imagesWrapRef}
+                  style={imagesExpandDirection === 'down' ? ({ top: `${imagesDownTop}px`, bottom: 'auto' } as React.CSSProperties) : undefined}
                   onPointerDown={maybeBeginMoreMenuLongPress}
                   onPointerUp={() => { clearBodyLongPress(); }}
                   onPointerCancel={() => { clearBodyLongPress(); }}
@@ -1812,7 +1890,13 @@ export default function NoteCard({
                   })()}
                 </div>
               ) : (
-                <div className="note-images note-images--loading" style={{ marginTop: 10, opacity: 0.75 }}>
+                <div
+                  className={`note-images note-images--loading${imagesExpandDirection === 'down' ? ' note-images--expand-down' : ''}`}
+                  style={imagesExpandDirection === 'down'
+                    ? ({ top: `${imagesDownTop}px`, bottom: 'auto', opacity: 0.75 } as React.CSSProperties)
+                    : ({ marginTop: 10, opacity: 0.75 } as React.CSSProperties)
+                  }
+                >
                   Loading images…
                 </div>
               )

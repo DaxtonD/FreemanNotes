@@ -9,6 +9,19 @@ Adheres to Semantic Versioning (MAJOR.MINOR.PATCH).
 ### Added
 - 
 
+## [0.6.7] - 2026-02-14
+
+### Changed
+- Added a 3-state view cycle in the header: card view, 1x1 list view, and 2x1 list view.
+- Refined list layouts to use a title-first header with compact metadata chips and hover-revealed action icons.
+- Updated drag previews in list modes to show only the visible title row while reordering.
+
+### Fixed
+- List views no longer show note body previews or leave empty white space under titles.
+- Image preview expansion now chooses up/down direction based on available viewport space and image count, improving visibility near the top of the screen.
+- Expanded image popups now render above neighboring cards via elevated stacking.
+- Docker startup no longer fails on Prisma runtime regeneration permissions (`EACCES`) when running with `PUID/PGID`; production startup now safely uses build-time generated Prisma client by default.
+
 ## [0.6.6] - 2026-02-13
 
 ### Added
