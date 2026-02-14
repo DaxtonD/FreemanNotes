@@ -81,8 +81,25 @@
 *{box-sizing:border-box}
 html,body,#root{height:100%;margin:0;font-family:var(--app-font-family)}
 
+/* Shared orange accent used in preferences controls and title focus ring */
+:root{ --prefs-accent: rgb(255,96,1); }
 /* Preferences sliders: replace purple with orange */
-.prefs-dialog input[type="range"]{ accent-color: rgb(255,96,1); }
+.prefs-dialog input[type="range"]{ accent-color: var(--prefs-accent); }
+
+.note-title-input{
+  border-radius: 8px;
+  padding: 4px 8px;
+  margin: -4px -8px;
+  outline: none;
+}
+
+.note-title-input:focus{
+  outline: 2px solid var(--prefs-accent);
+}
+
+.note-title-input.note-title-input-missing{
+  outline: 2px solid var(--prefs-accent);
+}
 
 body{
   background:var(--bg);
@@ -1044,6 +1061,8 @@ html.is-editor-modal-open .mobile-add-note{
   overflow: visible;
   transition: transform 300ms cubic-bezier(.2,.9,.2,1), opacity 260ms ease;
   will-change: transform, opacity;
+  --note-images-bottom: 56px;
+  --note-images-toggle-height: 42px;
 }
 .note-card.is-meta-expanded{ z-index: 10050; }
 .notes-grid > div:has(.note-card.is-meta-expanded){ position: relative; z-index: 10050; }
@@ -1531,8 +1550,10 @@ button.chip:focus{outline:2px solid rgba(255,255,255,0.18);outline-offset:2px;}
   flex-wrap:wrap;
   gap:6px;
   max-width: 100%;
+  position: relative;
+  z-index: 31;
 }
-.chip.chip--images{ max-width: 100%; }
+.chip.chip--images{ max-width: 100%; position: relative; z-index: 32; }
 
 .note-card .note-images{
   margin-top:10px;
@@ -1540,6 +1561,18 @@ button.chip:focus{outline:2px solid rgba(255,255,255,0.18);outline-offset:2px;}
   flex-wrap:wrap;
   gap:6px;
   max-width: 100%;
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: calc(var(--note-images-bottom) + var(--note-images-toggle-height));
+  z-index: 26;
+  max-height: min(40vh, 260px);
+  overflow: auto;
+  padding: 8px;
+  border-radius: 10px;
+  border: 1px solid rgba(255,255,255,0.12);
+  background: color-mix(in oklab, var(--card) 92%, black 8%);
+  box-shadow: 0 12px 24px rgba(0,0,0,0.35);
 }
 .note-card.has-labels .note-images{ margin-bottom: 0; }
 .note-card .note-images .note-image{
@@ -1566,6 +1599,11 @@ button.chip:focus{outline:2px solid rgba(255,255,255,0.18);outline-offset:2px;}
   color: #fff;
   background: rgba(0,0,0,0.55);
   backdrop-filter: blur(2px);
+}
+:root[data-theme="light"] .note-card .note-images{
+  border-color: rgba(0,0,0,0.14);
+  background: color-mix(in oklab, var(--card) 96%, white 4%);
+  box-shadow: 0 10px 18px rgba(0,0,0,0.12);
 }
 
 /* Editor (modal) image group */
@@ -1665,6 +1703,12 @@ button.chip:focus{outline:2px solid rgba(255,255,255,0.18);outline-offset:2px;}
 /* Image dialog */
 .image-dialog-backdrop{
   position:fixed;inset:0;background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;z-index:200;
+}
+.image-dialog-backdrop.editor-backdrop{
+  background: rgba(0,0,0,0.82);
+}
+:root[data-theme="light"] .image-dialog-backdrop.editor-backdrop{
+  background: rgba(245,247,250,0.98);
 }
 .image-dialog{
   width: min(420px, calc(var(--note-card-width) + 120px));
@@ -1964,15 +2008,97 @@ button.chip:focus{outline:2px solid rgba(255,255,255,0.18);outline-offset:2px;}
 .prefs-dialog, .prefs-dialog * {
   font-family: var(--app-font-family) !important;
 }
+
+.prefs-photo-input{
+  color: var(--muted);
+  font-size: 13px;
+  max-width: 100%;
+}
+.prefs-photo-input::file-selector-button,
+.prefs-photo-input::-webkit-file-upload-button{
+  appearance: none;
+  -webkit-appearance: none;
+  margin-right: 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(255,255,255,0.14);
+  background: rgba(255,255,255,0.08);
+  color: inherit;
+  padding: 6px 12px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+:root[data-theme="light"] .prefs-photo-input::file-selector-button,
+:root[data-theme="light"] .prefs-photo-input::-webkit-file-upload-button{
+  border-color: rgba(0,0,0,0.14);
+  background: rgba(0,0,0,0.06);
+}
+.prefs-photo-input:disabled::file-selector-button,
+.prefs-photo-input:disabled::-webkit-file-upload-button{
+  opacity: 0.65;
+  cursor: default;
+}
+
 .image-url-input{width:100%;padding:8px;border-radius:6px;border:1px solid rgba(255,255,255,0.04);background:#1c1c1c;color:#fff}
 :root[data-theme="light"] .image-url-input{ background:#f7f7f9; color:#000; border:1px solid rgba(0,0,0,0.1); }
 .dialog-header{display:flex;align-items:center;justify-content:space-between}
 /* dialog body (scrollable) and footer (sticky) */
 .dialog-body{ padding:12px; overflow:auto; flex:1 1 auto; }
 .image-dialog .dialog-body{
-  /* Ensure sticky title/toolbar can sit flush (no scroll-through gap). */
-  padding: 0 12px 12px;
+  /* Scroll is handled by a dedicated editor area so bottom docks can remain visible. */
+  padding: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
   background: var(--editor-surface, var(--card));
+}
+.image-dialog.editor-dialog .editor-scroll-area{
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: 0 12px 12px;
+  margin-bottom: 0;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  background: var(--editor-surface, var(--card));
+}
+.image-dialog.editor-dialog .editor-images.editor-images-dock{
+  flex: 0 0 auto;
+  position: sticky;
+  bottom: 0;
+  margin: 0;
+  align-self: stretch;
+  padding: 8px 12px 10px;
+  border-top: 1px solid rgba(255,255,255,0.06);
+  background: var(--editor-surface, var(--card));
+  z-index: 46;
+}
+:root[data-theme="light"] .image-dialog.editor-dialog .editor-images.editor-images-dock{
+  border-top-color: rgba(0,0,0,0.08);
+}
+.image-dialog.editor-dialog .editor-images.editor-images-dock .editor-images-grid{
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: calc(100% + 8px);
+  max-height: var(--editor-images-panel-height, min(40dvh, 340px));
+  overflow: auto;
+  margin-top: 0 !important;
+  background: var(--editor-surface, var(--card));
+  border: 1px solid rgba(255,255,255,0.10);
+  border-radius: 12px;
+  padding: 10px;
+  box-shadow: 0 14px 26px rgba(0,0,0,0.35);
+}
+:root[data-theme="light"] .image-dialog.editor-dialog .editor-images.editor-images-dock .editor-images-grid{
+  border-color: rgba(0,0,0,0.12);
+  box-shadow: 0 10px 24px rgba(0,0,0,0.12);
+}
+
+/* When expanded, keep dropdown fixed at bottom and reserve space in body above it. */
+.image-dialog.editor-dialog.images-open .editor-scroll-area{
+  margin-bottom: calc(8px + var(--editor-images-panel-height, min(40dvh, 340px)));
 }
 .dialog-footer{ padding:12px; border-top:1px solid rgba(255,255,255,0.03); display:flex; gap:8px; align-items:center; }
 :root[data-theme="light"] .dialog-footer{ border-top:1px solid rgba(0,0,0,0.06); }
@@ -2387,6 +2513,176 @@ button.chip:focus{outline:2px solid rgba(255,255,255,0.18);outline-offset:2px;}
 .image-dialog .dialog-header .tiny {
   color: inherit;
 }
+
+/* Mobile/PWA auth dialogs (separate from editor modal behavior). */
+.auth-mobile-backdrop{
+  position: fixed;
+  inset: 0;
+  z-index: 260;
+  background: var(--modal-backdrop);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: calc(8px + env(safe-area-inset-top)) 8px 8px;
+}
+.auth-mobile-sheet{
+  width: min(560px, calc(100vw - 16px));
+  max-height: min(88dvh, 760px);
+  background: var(--card);
+  color: var(--text);
+  border-radius: 14px;
+  border: 1px solid rgba(255,255,255,0.06);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+:root[data-theme="light"] .auth-mobile-sheet{
+  border-color: rgba(0,0,0,0.08);
+}
+.auth-mobile-header{
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 14px;
+  border-bottom: 1px solid rgba(255,255,255,0.08);
+}
+:root[data-theme="light"] .auth-mobile-header{
+  border-bottom-color: rgba(0,0,0,0.08);
+}
+.auth-mobile-body{
+  padding: 12px 14px calc(14px + env(safe-area-inset-bottom));
+  overflow: auto;
+}
+.auth-mobile-actions{
+  position: sticky;
+  bottom: 0;
+  background: var(--card);
+  padding-top: 8px;
+}
+
+/* Avatar crop modal */
+.avatar-crop-backdrop{
+  z-index: 280;
+}
+.avatar-crop-dialog{
+  width: min(520px, 96vw);
+}
+.avatar-crop-body{
+  display: grid;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.avatar-crop-frame{
+  position: relative;
+  width: min(72vw, 320px);
+  height: min(72vw, 320px);
+  max-width: 100%;
+  margin: 0 auto;
+  border-radius: 14px;
+  overflow: hidden;
+  background: rgba(0,0,0,0.35);
+  border: 1px solid rgba(255,255,255,0.12);
+  touch-action: none;
+  user-select: none;
+}
+:root[data-theme="light"] .avatar-crop-frame{
+  border-color: rgba(0,0,0,0.12);
+  background: rgba(0,0,0,0.06);
+}
+.avatar-crop-mask{
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  box-shadow: inset 0 0 0 2px rgba(255,255,255,0.65);
+}
+:root[data-theme="light"] .avatar-crop-mask{
+  box-shadow: inset 0 0 0 2px rgba(0,0,0,0.5);
+}
+.avatar-crop-zoom-row{
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 10px;
+  color: var(--muted);
+}
+.avatar-crop-zoom-row input[type="range"]{
+  width: 100%;
+}
+
+@media (pointer: coarse) and (max-width: 720px) {
+  .auth-mobile-backdrop{
+    align-items: flex-start;
+    justify-content: center;
+    padding: calc(6px + env(safe-area-inset-top)) 6px 6px;
+  }
+  .auth-mobile-sheet{
+    width: calc(100vw - 12px);
+    max-height: min(86dvh, 680px);
+    border-radius: 12px;
+  }
+  .auth-mobile-header{
+    padding-top: 10px;
+  }
+  .avatar-crop-frame{
+    width: min(86vw, 360px);
+    height: min(86vw, 360px);
+  }
+}
+
+/* PWA/mobile editor rework: true fullscreen shell with fixed top tools + bottom image dock. */
+@media (pointer: coarse) and (max-width: 920px), (display-mode: standalone) and (pointer: coarse) {
+  .image-dialog-backdrop{ padding: 0; align-items: stretch; justify-content: stretch; }
+  .editor-dialog{
+    width: 100vw !important;
+    height: 100dvh;
+    max-height: none !important;
+    border-radius: 0;
+    padding: 0;
+    border: none;
+    overscroll-behavior: contain;
+    backface-visibility: hidden;
+    transform: translateZ(0);
+  }
+
+  /* Checklist mobile stability: avoid sticky/footer repaint jitter while scrolling. */
+  .image-dialog.checklist-editor.editor-dialog{
+    transform: none;
+    backface-visibility: visible;
+    contain: paint;
+  }
+  .image-dialog.checklist-editor .dialog-footer{
+    position: relative;
+    bottom: auto;
+    z-index: 52;
+  }
+  .image-dialog.checklist-editor .dialog-footer .note-actions{
+    transform: translateZ(0);
+    backface-visibility: hidden;
+  }
+  .image-dialog.checklist-editor .editor-scroll-area{
+    contain: paint;
+    overscroll-behavior-y: contain;
+    background: var(--editor-surface, var(--card));
+  }
+
+  .editor-dialog .dialog-header strong{ display: none; }
+
+  .editor-dialog .dialog-body{ padding: 0; }
+  .image-dialog.editor-dialog .editor-scroll-area{
+    padding: 0 12px 8px;
+    overscroll-behavior: contain;
+    background: var(--editor-surface, var(--card));
+  }
+
+  .image-dialog.editor-dialog{
+    --editor-images-panel-height: min(36dvh, 320px);
+  }
+
+  .image-dialog.editor-dialog .editor-images.editor-images-dock{
+    padding: 8px 12px calc(8px + env(safe-area-inset-bottom));
+  }
+
+}
 /* preferences dialog header and close button inherit text color */
 .prefs-dialog .icon-close,
 .prefs-dialog .icon-close:hover,
@@ -2411,6 +2707,68 @@ button.chip:focus{outline:2px solid rgba(255,255,255,0.18);outline-offset:2px;}
 .note-card:hover .note-actions .tiny{
   transform: translateY(-2px) scale(1.08);
   opacity:1;
+}
+
+.lightbox-controls{
+  position: absolute;
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
+  padding: 8px;
+  border-radius: 14px;
+  background: rgba(0,0,0,0.42);
+  border: 1px solid rgba(255,255,255,0.22);
+  backdrop-filter: blur(3px);
+  -webkit-backdrop-filter: blur(3px);
+  box-shadow: 0 6px 18px rgba(0,0,0,0.35);
+  z-index: 12;
+}
+.lightbox-controls-left{ top: 12px; left: 12px; }
+.lightbox-controls-right{ top: 12px; right: 12px; }
+
+.lightbox-control-btn{
+  color: #ffffff !important;
+  background: rgba(0,0,0,0.62) !important;
+  border: 1px solid rgba(255,255,255,0.55) !important;
+  font-weight: 700;
+}
+
+.lightbox-close-btn{
+  min-height: 44px;
+  min-width: 104px;
+  padding: 10px 14px;
+  font-weight: 800;
+  letter-spacing: 0.2px;
+  color: #ffffff !important;
+  background: #d32f2f !important;
+  border: 2px solid rgba(255,255,255,0.92) !important;
+  border-radius: 999px !important;
+  box-shadow: 0 8px 20px rgba(0,0,0,0.45), 0 0 0 3px rgba(0,0,0,0.30);
+}
+.lightbox-close-btn:hover,
+.lightbox-close-btn:focus-visible{
+  background: #b71c1c !important;
+  outline: 3px solid rgba(255,255,255,0.95);
+  outline-offset: 2px;
+}
+:root[data-theme="light"] .lightbox-controls{
+  background: rgba(255,255,255,0.74);
+  border-color: rgba(0,0,0,0.24);
+  box-shadow: 0 6px 16px rgba(0,0,0,0.20);
+}
+:root[data-theme="light"] .lightbox-control-btn{
+  color: #111 !important;
+  background: rgba(255,255,255,0.92) !important;
+  border-color: rgba(0,0,0,0.35) !important;
+}
+:root[data-theme="light"] .lightbox-close-btn{
+  border-color: rgba(0,0,0,0.85) !important;
+  box-shadow: 0 8px 20px rgba(0,0,0,0.25), 0 0 0 3px rgba(255,255,255,0.75);
+}
+
+@media (pointer: coarse) {
+  .lightbox-controls{ padding: 10px; gap: 10px; }
+  .lightbox-control-btn{ min-height: 42px; min-width: 42px; }
 }
 
 /* Protected footer region for actions (edge-to-edge, solid, and hidden until hover) */
@@ -2634,7 +2992,7 @@ button.chip:focus{outline:2px solid rgba(255,255,255,0.18);outline-offset:2px;}
 
   /* Let cards grow naturally to fit label chips. */
   .note-card,
-  .note-card.has-labels{ padding-bottom: 12px !important; }
+  .note-card.has-labels{ padding-bottom: 12px !important; --note-images-bottom: 12px; }
   .label-chips{
     position: static;
     left: auto;
@@ -2662,7 +3020,7 @@ button.chip:focus{outline:2px solid rgba(255,255,255,0.18);outline-offset:2px;}
 }
 @media (pointer: coarse), (any-pointer: coarse), (hover: none), (any-hover: none) and (max-width: 560px) {
   .note-card,
-  .note-card.has-labels{ padding-bottom: 10px !important; }
+  .note-card.has-labels{ padding-bottom: 10px !important; --note-images-bottom: 10px; }
   .label-chips{ margin-top: 8px; }
 }
 

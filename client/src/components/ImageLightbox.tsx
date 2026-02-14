@@ -6,8 +6,12 @@ export default function ImageLightbox({ url, onClose }: { url: string; onClose: 
   const [mode, setMode] = React.useState<'fit' | 'zoom'>('fit');
   const [scale, setScale] = React.useState<number>(1);
   const [offset, setOffset] = React.useState<{ x: number; y: number }>({ x: 0, y: 0 });
+  const [dragging, setDragging] = React.useState<boolean>(false);
   const draggingRef = React.useRef<boolean>(false);
+  const dragPointerIdRef = React.useRef<number | null>(null);
   const lastPosRef = React.useRef<{ x: number; y: number } | null>(null);
+  const pointersRef = React.useRef<Map<number, { x: number; y: number }>>(new Map());
+  const pinchRef = React.useRef<{ startDistance: number; startScale: number } | null>(null);
 
   React.useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
@@ -52,21 +56,86 @@ export default function ImageLightbox({ url, onClose }: { url: string; onClose: 
     setOffset((prev) => clampOffset(prev.x, prev.y, next));
   };
 
-  const onMouseDown: React.MouseEventHandler<HTMLDivElement> = (e) => {
-    if (mode !== 'zoom') { return; }
-    if (e.button !== 0) return; // left button only
+  const onPointerDown: React.PointerEventHandler<HTMLDivElement> = (e) => {
+    if (mode !== 'zoom') return;
+    const t = e.target as HTMLElement | null;
+    if (t && t.closest('button')) return;
+    if (e.pointerType === 'touch') {
+      pointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      try { (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId); } catch {}
+      if (pointersRef.current.size >= 2) {
+        const pts = Array.from(pointersRef.current.values());
+        const dx = pts[0].x - pts[1].x;
+        const dy = pts[0].y - pts[1].y;
+        const d = Math.hypot(dx, dy);
+        pinchRef.current = { startDistance: Math.max(1, d), startScale: scale };
+        draggingRef.current = false;
+        setDragging(false);
+        dragPointerIdRef.current = null;
+        lastPosRef.current = null;
+        return;
+      }
+    }
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    dragPointerIdRef.current = e.pointerId;
     draggingRef.current = true;
+    setDragging(true);
     lastPosRef.current = { x: e.clientX, y: e.clientY };
+    try { (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId); } catch {}
   };
-  const onMouseMove: React.MouseEventHandler<HTMLDivElement> = (e) => {
-    if (!draggingRef.current || mode !== 'zoom') return;
-    const last = lastPosRef.current; if (!last) return;
+
+  const onPointerMove: React.PointerEventHandler<HTMLDivElement> = (e) => {
+    if (mode !== 'zoom') return;
+    if (e.pointerType === 'touch') {
+      pointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (pointersRef.current.size >= 2) {
+        e.preventDefault();
+        const pts = Array.from(pointersRef.current.values());
+        const dx = pts[0].x - pts[1].x;
+        const dy = pts[0].y - pts[1].y;
+        const d = Math.max(1, Math.hypot(dx, dy));
+        const start = pinchRef.current || { startDistance: d, startScale: scale };
+        if (!pinchRef.current) pinchRef.current = start;
+        const next = clamp(start.startScale * (d / Math.max(1, start.startDistance)), 1, 6);
+        setScale(next);
+        setOffset((prev) => clampOffset(prev.x, prev.y, next));
+        return;
+      }
+      // pinch ended; refresh baseline for one-finger drag
+      pinchRef.current = null;
+    }
+    if (!draggingRef.current) return;
+    if (dragPointerIdRef.current != null && e.pointerId !== dragPointerIdRef.current) return;
+    if (e.pointerType === 'mouse' && (e.buttons & 1) !== 1) {
+      draggingRef.current = false;
+      setDragging(false);
+      dragPointerIdRef.current = null;
+      lastPosRef.current = null;
+      return;
+    }
+    const last = lastPosRef.current;
+    if (!last) return;
     const dx = e.clientX - last.x;
     const dy = e.clientY - last.y;
     lastPosRef.current = { x: e.clientX, y: e.clientY };
     setOffset((prev) => clampOffset(prev.x + dx, prev.y + dy));
   };
-  const endDrag = () => { draggingRef.current = false; lastPosRef.current = null; };
+
+  const endDrag = React.useCallback(() => {
+    draggingRef.current = false;
+    setDragging(false);
+    dragPointerIdRef.current = null;
+    lastPosRef.current = null;
+    pinchRef.current = null;
+  }, []);
+
+  const onPointerUpOrCancel: React.PointerEventHandler<HTMLDivElement> = (e) => {
+    try { pointersRef.current.delete(e.pointerId); } catch {}
+    if (pointersRef.current.size < 2) pinchRef.current = null;
+    endDrag();
+  };
 
   const content = (
     <div
@@ -77,35 +146,43 @@ export default function ImageLightbox({ url, onClose }: { url: string; onClose: 
       <div
         className="lightbox-content"
         ref={contentRef}
-        onClick={(e) => { e.stopPropagation(); toggleZoom(); }}
+        onClick={(e) => {
+          e.stopPropagation();
+          if (mode === 'fit') toggleZoom();
+        }}
         onWheel={onWheel}
-        onMouseDown={onMouseDown}
-        onMouseMove={onMouseMove}
-        onMouseUp={endDrag}
-        onMouseLeave={endDrag}
-        style={{ width: '96vw', height: '92vh', position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: mode === 'fit' ? 'zoom-in' : (draggingRef.current ? 'grabbing' : 'grab') }}
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={onPointerUpOrCancel}
+        onPointerCancel={onPointerUpOrCancel}
+        onPointerLeave={(e) => {
+          if (e.pointerType === 'mouse') endDrag();
+        }}
+        style={{ width: '96vw', height: '92vh', position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: mode === 'fit' ? 'zoom-in' : (dragging ? 'grabbing' : 'grab') }}
       >
         <img
           src={url}
           alt="full view"
-          style={{ width: '100%', height: '100%', objectFit: 'contain', borderRadius: 8, display: 'block', transform: `translate(${offset.x}px, ${offset.y}px) scale(${scale})`, transition: draggingRef.current ? 'none' : 'transform 120ms ease' }}
+          draggable={false}
+          style={{ width: '100%', height: '100%', objectFit: 'contain', borderRadius: 8, display: 'block', transform: `translate(${offset.x}px, ${offset.y}px) scale(${scale})`, transition: dragging ? 'none' : 'transform 120ms ease', userSelect: 'none', WebkitUserSelect: 'none', touchAction: 'none' }}
         />
         {/* Controls: show in zoom mode */}
         {mode === 'zoom' && (
-          <div style={{ position: 'absolute', top: 10, left: 10, display: 'flex', gap: 8 }} onClick={(e) => e.stopPropagation()}>
-            <button className="btn" aria-label="Zoom in" onClick={() => { const next = clamp(scale * 1.12, 1, 6); setScale(next); setOffset((prev) => clampOffset(prev.x, prev.y, next)); }}>＋</button>
-            <button className="btn" aria-label="Zoom out" onClick={() => { const next = clamp(scale / 1.12, 1, 6); setScale(next); setOffset((prev) => clampOffset(prev.x, prev.y, next)); }}>－</button>
-            <button className="btn" aria-label="Reset" onClick={() => { setScale(1); setOffset({ x: 0, y: 0 }); setMode('fit'); }}>Reset</button>
+          <div className="lightbox-controls lightbox-controls-left" onClick={(e) => e.stopPropagation()}>
+            <button className="btn lightbox-control-btn" aria-label="Zoom in" onClick={() => { const next = clamp(scale * 1.12, 1, 6); setScale(next); setOffset((prev) => clampOffset(prev.x, prev.y, next)); }}>＋</button>
+            <button className="btn lightbox-control-btn" aria-label="Zoom out" onClick={() => { const next = clamp(scale / 1.12, 1, 6); setScale(next); setOffset((prev) => clampOffset(prev.x, prev.y, next)); }}>－</button>
+            <button className="btn lightbox-control-btn" aria-label="Reset" onClick={() => { setScale(1); setOffset({ x: 0, y: 0 }); setMode('fit'); }}>Reset</button>
           </div>
         )}
-        <button
-          className="btn"
-          onClick={(e) => { e.stopPropagation(); onClose(); }}
-          style={{ position: 'absolute', top: 10, right: 10 }}
-          aria-label="Close"
-        >
-          Close
-        </button>
+        <div className="lightbox-controls lightbox-controls-right" onClick={(e) => e.stopPropagation()}>
+          <button
+            className="btn lightbox-control-btn lightbox-close-btn"
+            onClick={(e) => { e.stopPropagation(); onClose(); }}
+            aria-label="Close"
+          >
+            ✕ Close
+          </button>
+        </div>
       </div>
     </div>
   );

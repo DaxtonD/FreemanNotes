@@ -61,6 +61,7 @@ export default function MobileCreateModal({
   const [saving, setSaving] = React.useState(false);
 
   const rootRef = React.useRef<HTMLDivElement | null>(null);
+  const titleInputRef = React.useRef<HTMLInputElement | null>(null);
   const moreBtnRef = React.useRef<HTMLButtonElement | null>(null);
   const [showMore, setShowMore] = React.useState(false);
 
@@ -183,13 +184,24 @@ export default function MobileCreateModal({
     } else {
       setItems([]);
       setActiveChecklistRowKey(null);
-      requestAnimationFrame(() => {
-        try { editor?.commands.focus('end'); } catch {}
-      });
     }
 
     try { editor?.commands.clearContent(); } catch {}
   }, [open, mode, editor]);
+
+  React.useEffect(() => {
+    if (!open) return;
+    const id = window.setTimeout(() => {
+      const input = titleInputRef.current;
+      if (!input) return;
+      try {
+        input.focus();
+        const len = input.value.length;
+        input.setSelectionRange(len, len);
+      } catch {}
+    }, 0);
+    return () => window.clearTimeout(id);
+  }, [open, mode]);
 
   React.useEffect(() => {
     if (!bg) setTextColor(undefined);
@@ -713,6 +725,8 @@ export default function MobileCreateModal({
               <div className="rt-sticky-header">
                 <div style={{ display: 'flex', gap: 12, marginBottom: 8 }}>
                   <input
+                    className="note-title-input"
+                    ref={titleInputRef}
                     placeholder="Title"
                     value={title}
                     onChange={(e) => setTitle(e.target.value)}
@@ -745,6 +759,8 @@ export default function MobileCreateModal({
               <div className="rt-sticky-header">
                 <div style={{ display: 'flex', gap: 12, marginBottom: 8 }}>
                   <input
+                    className="note-title-input"
+                    ref={titleInputRef}
                     placeholder="Title"
                     value={title}
                     onChange={(e) => setTitle(e.target.value)}

@@ -318,6 +318,14 @@ export default function RichTextEditor({ note, onClose, onSaved, noteBg, onImage
     editorProps: { attributes: { class: 'rt-editor' } },
   });
 
+  React.useEffect(() => {
+    if (!editor) return;
+    const id = window.setTimeout(() => {
+      try { editor.chain().focus('end').run(); } catch {}
+    }, 0);
+    return () => window.clearTimeout(id);
+  }, [editor, note.id]);
+
   function toggleMarkAcrossLine(mark: 'bold' | 'italic' | 'underline') {
     if (!editor) return;
     const sel: any = editor.state.selection;
@@ -714,19 +722,21 @@ export default function RichTextEditor({ note, onClose, onSaved, noteBg, onImage
   }
 
   const dialog = (
-    <div className="image-dialog-backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget) { handleClose(); } }}>
-      <div className={`image-dialog editor-dialog${maximized ? ' maximized' : ''}`} role="dialog" aria-modal style={{ width: maximized ? '96vw' : 'min(1000px, 86vw)', ...dialogStyle }}>
+    <div className="image-dialog-backdrop editor-backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget) { handleClose(); } }}>
+      <div className={`image-dialog editor-dialog${maximized ? ' maximized' : ''}${imagesOpen ? ' images-open' : ''}`} role="dialog" aria-modal style={{ width: maximized ? '96vw' : 'min(1000px, 86vw)', ...dialogStyle }}>
         <div className="dialog-header">
-          <strong>Edit note</strong>
+          <strong aria-hidden="true" />
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
             <button className="tiny toggle-maximize" onClick={() => setMaximized(m => !m)} aria-label="Toggle maximize" title="Toggle maximize">⤢</button>
             <button className="icon-close" onClick={handleClose}>✕</button>
           </div>
         </div>
         <div className="dialog-body">
+          <div className="editor-scroll-area">
           <div className="rt-sticky-header">
             <div style={{ display: 'flex', gap: 12, marginBottom: 8 }}>
               <input
+                className={`note-title-input${!String(title || '').trim() ? ' note-title-input-missing' : ''}`}
                 placeholder="Title"
                 value={title}
                 onChange={(e) => { setTitle(e.target.value); try { markDirty(); } catch {} }}
@@ -892,8 +902,10 @@ export default function RichTextEditor({ note, onClose, onSaved, noteBg, onImage
             document.body
           )}
 
+          </div>
+
           {images && images.length > 0 && (
-            <div className="editor-images" style={{ marginTop: 10 }}>
+            <div className="editor-images editor-images-dock">
               <button
                 type="button"
                 className="btn editor-images-toggle"

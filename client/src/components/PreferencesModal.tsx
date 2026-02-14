@@ -4,6 +4,7 @@ declare const __APP_VERSION__: string;
 import { useAuth } from '../authContext';
 import SettingsModal from './SettingsModal';
 import UserManagementModal from './UserManagementModal';
+import AvatarCropModal from './AvatarCropModal';
 import { useTheme } from '../themeContext';
 import { usePwaInstall } from '../lib/pwaInstall';
 import { ensurePushSubscribed, getPushClientStatus, sendTestPush, showLocalTestNotification, type PushClientStatus } from '../lib/pushNotifications';
@@ -526,6 +527,7 @@ export default function PreferencesModal({ onClose }: { onClose: () => void }) {
   const [showInvite, setShowInvite] = useState(false);
   const [showUserMgmt, setShowUserMgmt] = useState(false);
   const [photoPreviewUrl, setPhotoPreviewUrl] = useState<string | null>(null);
+  const [cropSourceUrl, setCropSourceUrl] = useState<string | null>(null);
   const [photoUploading, setPhotoUploading] = useState(false);
   // activeSection declared above so Back handler can reference it.
   const [pushStatus, setPushStatus] = useState<PushClientStatus | null>(null);
@@ -549,47 +551,48 @@ export default function PreferencesModal({ onClose }: { onClose: () => void }) {
   }, [activeSection]);
   async function onPhotoSelected(file: File | null) {
     try {
-      // Local preview immediately
-      setPhotoPreviewUrl((prev) => {
-        try { if (prev) URL.revokeObjectURL(prev); } catch {}
-        return file ? URL.createObjectURL(file) : null;
-      });
-
       if (!file) return;
-      setPhotoUploading(true);
-      const dataUrl = await fileToDataUrl(file);
-      await (auth?.uploadPhoto?.(dataUrl));
-      // After upload, prefer server URL (auth.user.userImageUrl) and release local object URL.
-      setPhotoPreviewUrl((prev) => {
+      const nextUrl = URL.createObjectURL(file);
+      setCropSourceUrl((prev) => {
+        try { if (prev) URL.revokeObjectURL(prev); } catch {}
+        return nextUrl;
+      });
+    } catch (err) {
+      console.error('Failed to prepare photo', err);
+      window.alert('Failed to open photo');
+      setCropSourceUrl((prev) => {
         try { if (prev) URL.revokeObjectURL(prev); } catch {}
         return null;
       });
+    }
+  }
+
+  async function onApplyCroppedPhoto(dataUrl: string) {
+    try {
+      setPhotoPreviewUrl(dataUrl);
+      setPhotoUploading(true);
+      await (auth?.uploadPhoto?.(dataUrl));
+      // After upload, prefer server URL (auth.user.userImageUrl).
+      setPhotoPreviewUrl(null);
     } catch (err) {
       console.error('Failed to upload photo', err);
       window.alert('Failed to upload photo');
-      // If upload fails, drop preview so we don't mislead.
-      setPhotoPreviewUrl((prev) => {
+      setPhotoPreviewUrl(null);
+    } finally {
+      setPhotoUploading(false);
+      setCropSourceUrl((prev) => {
         try { if (prev) URL.revokeObjectURL(prev); } catch {}
         return null;
       });
-    } finally {
-      setPhotoUploading(false);
     }
-  }
-  function fileToDataUrl(file: File): Promise<string> {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(String(reader.result || ''));
-      reader.onerror = (e) => reject(e);
-      reader.readAsDataURL(file);
-    });
   }
 
   React.useEffect(() => {
     return () => {
       try { if (photoPreviewUrl) URL.revokeObjectURL(photoPreviewUrl); } catch {}
+      try { if (cropSourceUrl) URL.revokeObjectURL(cropSourceUrl); } catch {}
     };
-  }, [photoPreviewUrl]);
+  }, [photoPreviewUrl, cropSourceUrl]);
   return (
     <div className={`image-dialog-backdrop prefs-backdrop${isPhone ? ' phone' : ''}`}>
       <div className={`prefs-dialog${isPhone ? ' phone' : ''}`} role="dialog" aria-modal aria-label="Preferences">
@@ -929,6 +932,30 @@ export default function PreferencesModal({ onClose }: { onClose: () => void }) {
               {!isPhone && <button className="btn" type="button" onClick={() => setActiveSection(null)} aria-label="Back">← Back</button>}
               <div style={{ height: 8 }} />
               <h4>Appearance</h4>
+
+              <div style={{ marginBottom: 16 }}>
+                <h5 style={{ margin: 0, color: 'var(--muted)' }}>Profile Photo</h5>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+                  { photoPreviewUrl ? (
+                    <img src={photoPreviewUrl} alt="Profile preview" style={{ width: 55, height: 55, borderRadius: '50%', objectFit: 'cover' }} />
+                  ) : (auth?.user as any)?.userImageUrl ? (
+                    <img src={(auth?.user as any).userImageUrl} alt="Profile" style={{ width: 55, height: 55, borderRadius: '50%', objectFit: 'cover' }} />
+                  ) : (
+                    <div className="avatar" style={{ width: 55, height: 55, borderRadius: '50%', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
+                      {((auth?.user as any)?.name || (auth?.user as any)?.email || 'U')[0]}
+                    </div>
+                  )}
+                  <input
+                    className="prefs-photo-input"
+                    type="file"
+                    accept="image/*"
+                    disabled={photoUploading}
+                    onChange={(e) => onPhotoSelected(e.target.files?.[0] || null)}
+                  />
+                  {photoUploading && <div style={{ color: 'var(--muted)', fontSize: 13 }}>Uploading…</div>}
+                </div>
+              </div>
+
               {isPhone ? (
                 <>
                   <div className="prefs-list" role="list" aria-label="Appearance preferences">
@@ -943,14 +970,8 @@ export default function PreferencesModal({ onClose }: { onClose: () => void }) {
                   </div>
                   <div style={{ height: 14 }} />
                 </>
-              ) : (
-                <>
-                  <div style={{ marginBottom: 14, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                    <button className="btn" type="button" onClick={() => setActiveSection('appearance-card')}>Note Card Preferences</button>
-                    <button className="btn" type="button" onClick={() => setActiveSection('appearance-editor')}>Note Editor Preferences</button>
-                  </div>
-                </>
-              )}
+              ) : null}
+
               <div style={{ marginBottom: 16 }}>
                 <h5 style={{ margin: 0, color: 'var(--muted)' }}>Theme</h5>
                 <div style={{ display: 'flex', gap: 12, alignItems: 'center', justifyContent: 'flex-start' }}>
@@ -996,27 +1017,7 @@ export default function PreferencesModal({ onClose }: { onClose: () => void }) {
                   </button>
                 </div>
               </div>
-              <div style={{ marginBottom: 16 }}>
-                <h5 style={{ margin: 0, color: 'var(--muted)' }}>Profile Photo</h5>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                  { photoPreviewUrl ? (
-                    <img src={photoPreviewUrl} alt="Profile preview" style={{ width: 55, height: 55, borderRadius: '50%', objectFit: 'cover' }} />
-                  ) : (auth?.user as any)?.userImageUrl ? (
-                    <img src={(auth?.user as any).userImageUrl} alt="Profile" style={{ width: 55, height: 55, borderRadius: '50%', objectFit: 'cover' }} />
-                  ) : (
-                    <div className="avatar" style={{ width: 55, height: 55, borderRadius: '50%', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
-                      {((auth?.user as any)?.name || (auth?.user as any)?.email || 'U')[0]}
-                    </div>
-                  )}
-                  <input
-                    type="file"
-                    accept="image/*"
-                    disabled={photoUploading}
-                    onChange={(e) => onPhotoSelected(e.target.files?.[0] || null)}
-                  />
-                  {photoUploading && <div style={{ color: 'var(--muted)', fontSize: 13 }}>Uploading…</div>}
-                </div>
-              </div>
+
               {!isPhone && (
                 <div style={{ display: 'block' }}>
                   <div style={{ marginBottom: 16 }}>
@@ -1314,6 +1315,18 @@ export default function PreferencesModal({ onClose }: { onClose: () => void }) {
       </div>
       {showUserMgmt && <UserManagementModal onClose={() => setShowUserMgmt(false)} />}
       {showInvite && <SettingsModal onClose={() => setShowInvite(false)} />}
+      <AvatarCropModal
+        open={!!cropSourceUrl}
+        imageSrc={cropSourceUrl}
+        title="Crop profile photo"
+        onCancel={() => {
+          setCropSourceUrl((prev) => {
+            try { if (prev) URL.revokeObjectURL(prev); } catch {}
+            return null;
+          });
+        }}
+        onApply={onApplyCroppedPhoto}
+      />
     </div>
   );
 }

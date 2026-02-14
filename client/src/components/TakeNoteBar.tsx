@@ -131,6 +131,7 @@ export default function TakeNoteBar({
 
   const ignoreNextDocClickRef = useRef(false);
   const lastExternalOpenRef = useRef(0);
+  const titleInputRef = useRef<HTMLInputElement | null>(null);
 
   const activeCollectionId = (activeCollection && Number.isFinite(Number(activeCollection.id))) ? Number(activeCollection.id) : null;
   const activeCollectionPath = (activeCollection && typeof activeCollection.path === 'string') ? String(activeCollection.path) : '';
@@ -154,16 +155,54 @@ export default function TakeNoteBar({
       // On open: ensure no checklist row starts focused/highlighted.
       try { setActiveChecklistRowIdx(null); } catch {}
       requestAnimationFrame(() => {
-        try { (document.activeElement as HTMLElement | null)?.blur?.(); } catch {}
-        try { document.getSelection()?.removeAllRanges(); } catch {}
+        try {
+          const active = document.activeElement as HTMLElement | null;
+          if (active && active.closest('.checklist-item')) active.blur();
+        } catch {}
+        try {
+          const active = document.activeElement as HTMLElement | null;
+          if (active && active.closest('.checklist-item')) document.getSelection()?.removeAllRanges();
+        } catch {}
       });
     } else {
       try { setActiveChecklistRowIdx(null); } catch {}
-      requestAnimationFrame(() => {
-        try { editor?.commands.focus('end'); } catch {}
-      });
     }
   }, [openRequest?.nonce, openRequest?.mode, editor]);
+
+  useEffect(() => {
+    if (!expanded) return;
+    let attempts = 0;
+    let timer: number | null = null;
+    const tryFocusTitle = () => {
+      if (!expanded) return;
+      const input = titleInputRef.current;
+      if (!input) {
+        if (attempts < 8) {
+          attempts += 1;
+          timer = window.setTimeout(tryFocusTitle, 30);
+        }
+        return;
+      }
+
+      const active = document.activeElement as HTMLElement | null;
+      const activeInChecklistRow = !!(active && active.closest('.checklist-item'));
+      if (!activeInChecklistRow) {
+        try {
+          input.focus();
+          const len = input.value.length;
+          input.setSelectionRange(len, len);
+        } catch {}
+      }
+
+      if (document.activeElement !== input && attempts < 8) {
+        attempts += 1;
+        timer = window.setTimeout(tryFocusTitle, 30);
+      }
+    };
+
+    timer = window.setTimeout(tryFocusTitle, 0);
+    return () => { if (timer != null) window.clearTimeout(timer); };
+  }, [expanded, mode]);
 
   // When opening checklist mode, clear any lingering focus/selection on items.
   useEffect(() => {
@@ -175,10 +214,18 @@ export default function TakeNoteBar({
         const active = document.activeElement as HTMLElement | null;
         if (root && active && root.contains(active) && active.closest('.checklist-item')) {
           active.blur();
+          try { document.getSelection()?.removeAllRanges(); } catch {}
         }
       } catch {}
-      try { document.getSelection()?.removeAllRanges(); } catch {}
       try { setActiveChecklistRowIdx(null); } catch {}
+      const input = titleInputRef.current;
+      if (input) {
+        try {
+          input.focus();
+          const len = input.value.length;
+          input.setSelectionRange(len, len);
+        } catch {}
+      }
     }, 0);
     return () => window.clearTimeout(id);
   }, [expanded, mode]);
@@ -778,8 +825,14 @@ export default function TakeNoteBar({
               try { setActiveChecklistRowIdx(null); } catch {}
               setExpanded(true);
               requestAnimationFrame(() => {
-                try { (document.activeElement as HTMLElement | null)?.blur?.(); } catch {}
-                try { document.getSelection()?.removeAllRanges(); } catch {}
+                try {
+                  const active = document.activeElement as HTMLElement | null;
+                  if (active && active.closest('.checklist-item')) active.blur();
+                } catch {}
+                try {
+                  const active = document.activeElement as HTMLElement | null;
+                  if (active && active.closest('.checklist-item')) document.getSelection()?.removeAllRanges();
+                } catch {}
               });
             }}
             aria-label="Start checklist"
@@ -821,7 +874,7 @@ export default function TakeNoteBar({
         <div>
           <div className="rt-sticky-header">
             <div style={{ display: 'flex', justifyContent: 'flex-start' }}>
-              <input placeholder="Title" value={title} onChange={e => setTitle(e.target.value)} style={{ fontSize: 18, fontWeight: 600, border: 'none', background: 'transparent', color: 'inherit' }} />
+              <input className="note-title-input" autoFocus ref={titleInputRef} placeholder="Title" value={title} onChange={e => setTitle(e.target.value)} style={{ fontSize: 18, fontWeight: 600, border: 'none', background: 'transparent', color: 'inherit' }} />
             </div>
 
             <div className="rt-toolbar" style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center', marginTop: 8, marginBottom: 0, overflowX: 'auto' }}>
@@ -913,7 +966,7 @@ export default function TakeNoteBar({
         <div>
           <div className="rt-sticky-header">
             <div style={{ display: 'flex', justifyContent: 'flex-start' }}>
-              <input placeholder="Title" value={title} onChange={e => setTitle(e.target.value)} style={{ fontSize: 18, fontWeight: 600, border: 'none', background: 'transparent', color: 'inherit' }} />
+              <input className="note-title-input" autoFocus ref={titleInputRef} placeholder="Title" value={title} onChange={e => setTitle(e.target.value)} style={{ fontSize: 18, fontWeight: 600, border: 'none', background: 'transparent', color: 'inherit' }} />
             </div>
 
             <div
