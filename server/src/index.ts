@@ -48,6 +48,7 @@ try {
 async function start() {
   const isDev = process.env.NODE_ENV !== "production";
   const clientRoot = path.resolve(__dirname, "..", "..", "client");
+  let routesRegistered = false;
 
   // Attempt Prisma connection on startup
   try {
@@ -234,8 +235,49 @@ async function start() {
     } catch (err) {
       console.warn('Push routes not available:', err);
     }
+
+    routesRegistered = true;
   } catch (err) {
     console.warn("Startup DB initialization warning:", err);
+    // Keep API surface available even if DB bootstrap failed, so clients get
+    // proper API errors (e.g. 500) instead of route-level 404 responses.
+    if (!routesRegistered) {
+      try {
+        const authRouter = (await import("./auth")).default;
+        app.use(authRouter);
+        console.log("Auth routes registered (fallback)");
+      } catch (e) {
+        console.warn("Auth routes not available (fallback):", e);
+      }
+      try {
+        const notesRouter = (await import("./notes")).default;
+        app.use(notesRouter);
+        console.log("Notes routes registered (fallback)");
+      } catch (e) {
+        console.warn("Notes routes not available (fallback):", e);
+      }
+      try {
+        const collectionsRouter = (await import("./collections")).default;
+        app.use(collectionsRouter);
+        console.log("Collections routes registered (fallback)");
+      } catch (e) {
+        console.warn("Collections routes not available (fallback):", e);
+      }
+      try {
+        const adminUsersRouter = (await import("./adminUsers")).default;
+        app.use(adminUsersRouter);
+        console.log("Admin users routes registered (fallback)");
+      } catch (e) {
+        console.warn("Admin users routes not available (fallback):", e);
+      }
+      try {
+        const pushRouter = (await import('./push')).default;
+        app.use(pushRouter);
+        console.log('Push routes registered (fallback)');
+      } catch (e) {
+        console.warn('Push routes not available (fallback):', e);
+      }
+    }
   }
 
   if (isDev) {

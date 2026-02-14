@@ -62,11 +62,30 @@ function applySavedPrefs() {
 
 applySavedPrefs();
 
-// Service worker: unregister legacy SWs but keep/register our minimal /sw.js.
+function applyStandaloneFlag() {
+	try {
+		const nav: any = navigator as any;
+		const standalone = (!!window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) || nav?.standalone === true;
+		document.documentElement.setAttribute('data-standalone', standalone ? 'true' : 'false');
+	} catch {}
+}
+
+applyStandaloneFlag();
+window.addEventListener('pageshow', applyStandaloneFlag);
+document.addEventListener('visibilitychange', () => {
+	if (!document.hidden) applyStandaloneFlag();
+});
+
+// Service worker: Safari/iOS-hardened registration path.
 try {
-	if ('serviceWorker' in navigator) {
+	if ('serviceWorker' in navigator && window.isSecureContext) {
 		(async () => {
 			try {
+				await new Promise<void>((resolve) => {
+					if (document.readyState === 'complete') return resolve();
+					window.addEventListener('load', () => resolve(), { once: true });
+				});
+
 				const regs = await navigator.serviceWorker.getRegistrations();
 				let hasOur = false;
 				for (const reg of regs) {
@@ -75,8 +94,36 @@ try {
 					if (isOur) { hasOur = true; continue; }
 					try { await reg.unregister(); } catch {}
 				}
-				if (!hasOur) {
-					try { await navigator.serviceWorker.register('/sw.js', { scope: '/' }); } catch {}
+
+				const reg = hasOur
+					? (await navigator.serviceWorker.getRegistration('/')) || null
+					: await navigator.serviceWorker.register('/sw.js', { scope: '/', updateViaCache: 'none' });
+
+				if (reg) {
+					try { await reg.update(); } catch {}
+
+					if (reg.waiting) {
+						try { reg.waiting.postMessage({ type: 'SKIP_WAITING' }); } catch {}
+					}
+
+					reg.addEventListener('updatefound', () => {
+						const worker = reg.installing;
+						if (!worker) return;
+						worker.addEventListener('statechange', () => {
+							if (worker.state === 'installed' && navigator.serviceWorker.controller) {
+								try { worker.postMessage({ type: 'SKIP_WAITING' }); } catch {}
+							}
+						});
+					});
+
+					const reloadKey = 'freemannotes.sw.reloadOnce';
+					navigator.serviceWorker.addEventListener('controllerchange', () => {
+						try {
+							if (sessionStorage.getItem(reloadKey)) return;
+							sessionStorage.setItem(reloadKey, '1');
+							window.location.reload();
+						} catch {}
+					});
 				}
 			} catch {}
 		})();
