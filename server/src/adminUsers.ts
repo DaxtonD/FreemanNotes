@@ -8,6 +8,10 @@ import path from 'path';
 
 const router = Router();
 
+type UserNoteStatsRow = { userId: number; notesCount: number; bytes: number };
+type UserBytesRow = { userId: number; bytes: number };
+type UserImageStatsRow = { userId: number; imagesCount: number; bytes: number };
+
 function getJwtSecret() {
   const s = process.env.JWT_SECRET;
   if (!s) throw new Error("JWT_SECRET not set in environment");
@@ -218,7 +222,7 @@ router.get("/api/admin/users", async (req: Request, res: Response) => {
     if (userIds.length > 0) {
       const idsCsv = userIds.join(',');
 
-      const noteStats = await prisma.$queryRawUnsafe<Array<{ userId: number; notesCount: number; bytes: number }>>(
+      const noteStats = (await prisma.$queryRawUnsafe(
         `
         SELECT
           n.ownerId AS userId,
@@ -237,9 +241,9 @@ router.get("/api/admin/users", async (req: Request, res: Response) => {
         WHERE n.ownerId IN (${idsCsv})
         GROUP BY n.ownerId
         `
-      );
+      )) as UserNoteStatsRow[];
 
-      const itemStats = await prisma.$queryRawUnsafe<Array<{ userId: number; bytes: number }>>(
+      const itemStats = (await prisma.$queryRawUnsafe(
         `
         SELECT
           n.ownerId AS userId,
@@ -249,9 +253,9 @@ router.get("/api/admin/users", async (req: Request, res: Response) => {
         WHERE n.ownerId IN (${idsCsv})
         GROUP BY n.ownerId
         `
-      );
+      )) as UserBytesRow[];
 
-      const imageStats = await prisma.$queryRawUnsafe<Array<{ userId: number; imagesCount: number; bytes: number }>>(
+      const imageStats = (await prisma.$queryRawUnsafe(
         `
         SELECT
           n.ownerId AS userId,
@@ -270,9 +274,9 @@ router.get("/api/admin/users", async (req: Request, res: Response) => {
         WHERE n.ownerId IN (${idsCsv})
         GROUP BY n.ownerId
         `
-      );
+      )) as UserImageStatsRow[];
 
-      const linkPreviewStats = await prisma.$queryRawUnsafe<Array<{ userId: number; bytes: number }>>(
+      const linkPreviewStats = (await prisma.$queryRawUnsafe(
         `
         SELECT
           n.ownerId AS userId,
@@ -289,7 +293,7 @@ router.get("/api/admin/users", async (req: Request, res: Response) => {
         WHERE n.ownerId IN (${idsCsv})
         GROUP BY n.ownerId
         `
-      );
+      )) as UserBytesRow[];
 
       for (const id of userIds) {
         statsByUserId.set(id, { notesCount: 0, imagesCount: 0, dbStorageBytes: 0, filesystemBytes: 0, storageBytes: 0 });
