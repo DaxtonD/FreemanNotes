@@ -237,8 +237,8 @@ export default function UserManagementModal({ onClose }: { onClose: () => void }
 
   if (!canAdmin) {
     return (
-      <div className="image-dialog-backdrop" onClick={() => onClose()}>
-        <div className="image-dialog" role="dialog" aria-modal onClick={(e) => e.stopPropagation()}>
+      <div className={`image-dialog-backdrop${isPhoneLike ? ' phone' : ''}`} onClick={() => onClose()}>
+        <div className={`image-dialog${isPhoneLike ? ' phone user-mgmt-phone' : ''}`} role="dialog" aria-modal onClick={(e) => e.stopPropagation()}>
           <div className="dialog-header">
             <strong>User management</strong>
             <button className="icon-close" onClick={onClose} aria-label="Close">✕</button>
@@ -252,8 +252,8 @@ export default function UserManagementModal({ onClose }: { onClose: () => void }
   }
 
   return (
-    <div className="image-dialog-backdrop" onClick={() => onClose()}>
-      <div className="image-dialog user-mgmt" role="dialog" aria-modal onClick={(e) => e.stopPropagation()}>
+    <div className={`image-dialog-backdrop${isPhoneLike ? ' phone' : ''}`} onClick={() => onClose()}>
+      <div className={`image-dialog user-mgmt${isPhoneLike ? ' phone user-mgmt-phone' : ''}`} role="dialog" aria-modal onClick={(e) => e.stopPropagation()}>
         <div className="dialog-header">
           <strong>User management</strong>
           <button className="icon-close" onClick={onClose} aria-label="Close">✕</button>

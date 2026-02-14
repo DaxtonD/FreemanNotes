@@ -10,7 +10,7 @@ import MoreMenu from "./MoreMenu";
 import MoveToCollectionModal from "./MoveToCollectionModal";
 import UrlEntryModal from "./UrlEntryModal";
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faPalette, faUsers, faTag, faFolder, faImage, faUser } from '@fortawesome/free-solid-svg-icons';
+import { faPalette, faUsers, faTag, faFolder, faImage, faUser, faNoteSticky, faListCheck } from '@fortawesome/free-solid-svg-icons';
 import LabelsDialog from "./LabelsDialog";
 import ColorPalette from "./ColorPalette";
 import ImageDialog from "./ImageDialog";
@@ -311,9 +311,22 @@ export default function NoteCard({
   }, [expandedMeta]);
 
   const openEditor = React.useCallback(() => {
+    try { setExpandedMeta(null); } catch {}
+    try { setImagesExpanded(false); } catch {}
     if (note.type === 'CHECKLIST' || (note.items && note.items.length)) setShowEditor(true);
     else setShowTextEditor(true);
   }, [note.type, note.items]);
+
+  React.useEffect(() => {
+    const onAnyEditorOpen = () => {
+      try { setExpandedMeta(null); } catch {}
+      try { setImagesExpanded(false); } catch {}
+    };
+    window.addEventListener('freemannotes:editor-modal-open', onAnyEditorOpen as any);
+    return () => {
+      window.removeEventListener('freemannotes:editor-modal-open', onAnyEditorOpen as any);
+    };
+  }, []);
 
   const lastOpenRequestRef = React.useRef<number>(0);
   React.useEffect(() => {
@@ -1411,6 +1424,8 @@ export default function NoteCard({
       styleVars['--checkbox-checked-mark'] = contrastColorForBackground(normalizedBg);
     }
 
+    const isChecklistType = note.type === 'CHECKLIST' || (noteItems && noteItems.length > 0);
+
     return (
     <article
       ref={(el) => { noteRef.current = el as HTMLElement | null; }}
@@ -1501,7 +1516,10 @@ export default function NoteCard({
           }
         }}
       >
-        {!String(title || '').trim() ? 'Add a title....' : title}
+        <span className={`note-type-icon${isChecklistType ? ' is-checklist' : ' is-note'}`} aria-hidden>
+          <FontAwesomeIcon icon={isChecklistType ? faListCheck : faNoteSticky} />
+        </span>
+        <span className="note-title-text">{!String(title || '').trim() ? 'Add a title....' : title}</span>
       </div>
 
       {(() => {
@@ -1738,8 +1756,9 @@ export default function NoteCard({
                   <button
                     className={`note-checkbox ${it.checked ? 'checked' : ''}`}
                     type="button"
-                    onClick={(e) => { e.stopPropagation(); toggleItemChecked(it.id, !it.checked); }}
+                    onClick={(e) => { e.stopPropagation(); }}
                     aria-pressed={!!it.checked}
+                    aria-disabled="true"
                     style={{ background: 'var(--checkbox-bg)', border: '2px solid var(--checkbox-border)', color: 'var(--checkbox-stroke)' }}
                   >
                     {it.checked && (
@@ -1774,8 +1793,9 @@ export default function NoteCard({
                     <button
                       className={`note-checkbox ${it.checked ? 'checked' : ''}`}
                       type="button"
-                      onClick={(e) => { e.stopPropagation(); toggleItemChecked(it.id, !it.checked); }}
+                      onClick={(e) => { e.stopPropagation(); }}
                       aria-pressed={!!it.checked}
+                      aria-disabled="true"
                       style={{ background: 'var(--checkbox-bg)', border: '2px solid var(--checkbox-border)', color: 'var(--checkbox-stroke)' }}
                     >
                       {it.checked && (

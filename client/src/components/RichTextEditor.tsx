@@ -318,14 +318,6 @@ export default function RichTextEditor({ note, onClose, onSaved, noteBg, onImage
     editorProps: { attributes: { class: 'rt-editor' } },
   });
 
-  React.useEffect(() => {
-    if (!editor) return;
-    const id = window.setTimeout(() => {
-      try { editor.chain().focus('end').run(); } catch {}
-    }, 0);
-    return () => window.clearTimeout(id);
-  }, [editor, note.id]);
-
   function toggleMarkAcrossLine(mark: 'bold' | 'italic' | 'underline') {
     if (!editor) return;
     const sel: any = editor.state.selection;
