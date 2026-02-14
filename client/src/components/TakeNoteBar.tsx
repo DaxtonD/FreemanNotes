@@ -233,6 +233,10 @@ export default function TakeNoteBar({
   const draggingIdx = useRef<number | null>(null);
   const [checklistDragging, setChecklistDragging] = useState<number | null>(null);
   const [checklistHoverIndex, setChecklistHoverIndex] = useState<number | null>(null);
+  const [checklistHoverEdge, setChecklistHoverEdge] = useState<'top' | 'bottom' | null>(null);
+  const [checklistHiddenDragChildIndices, setChecklistHiddenDragChildIndices] = useState<number[]>([]);
+  const checklistHiddenDragChildSet = React.useMemo(() => new Set(checklistHiddenDragChildIndices), [checklistHiddenDragChildIndices]);
+  const checklistHiddenDragChildSetRef = useRef<Set<number>>(new Set());
   const checklistGhostRef = useRef<HTMLDivElement | null>(null);
   const checklistDocDragOverRef = useRef<((e: DragEvent) => void) | null>(null);
   const checklistDragOffsetRef = useRef<{ x: number; y: number } | null>(null);
@@ -257,6 +261,10 @@ export default function TakeNoteBar({
   const [showImageDialog, setShowImageDialog] = useState(false);
   const [imageUrl, setImageUrl] = useState<string | null>(null);
   const [selectedCollaborators, setSelectedCollaborators] = useState<Array<{id:number;email:string}>>([]);
+
+  useEffect(() => {
+    checklistHiddenDragChildSetRef.current = new Set(checklistHiddenDragChildIndices);
+  }, [checklistHiddenDragChildIndices]);
 
   const overlayStateRef = useRef({
     showPalette: false,
@@ -320,6 +328,9 @@ export default function TakeNoteBar({
     try { draggingIdx.current = null; } catch {}
     try { setChecklistDragging(null); } catch {}
     try { setChecklistHoverIndex(null); } catch {}
+    try { setChecklistHoverEdge(null); } catch {}
+    try { setChecklistHiddenDragChildIndices([]); } catch {}
+    try { checklistHiddenDragChildSetRef.current = new Set(); } catch {}
 
     // After a drag, clear focus/selection so no item stays highlighted.
     try { setActiveChecklistRowIdx(null); } catch {}
@@ -545,6 +556,74 @@ export default function TakeNoteBar({
       const ed = itemEditorRefs.current[idx];
       try { ed && ed.chain().focus().run(); } catch {}
     }, 30);
+  }
+
+  function getChecklistBlockRange(list: Array<{ content: string; indent?: number; checked?: boolean }>, idx: number) {
+    const start = idx;
+    const baseIndent = Number(list[idx]?.indent || 0);
+    let end = idx + 1;
+    while (end < list.length && Number(list[end]?.indent || 0) > baseIndent) end++;
+    return [start, end] as const;
+  }
+
+  function moveChecklistBlock(
+    srcStart: number,
+    srcEnd: number,
+    dstIndex: number,
+    indentDelta: number = 0,
+  ) {
+    setItems((s) => {
+      const copy = [...s];
+      const block = copy.slice(srcStart, srcEnd).map((it) => ({
+        ...it,
+        indent: Math.max(0, Number((it as any).indent || 0) + Number(indentDelta || 0)),
+      }));
+      copy.splice(srcStart, srcEnd - srcStart);
+      let insertAt = dstIndex;
+      if (insertAt > srcStart) insertAt = insertAt - (srcEnd - srcStart);
+      if (insertAt < 0) insertAt = 0;
+      if (insertAt > copy.length) insertAt = copy.length;
+      copy.splice(insertAt, 0, ...block);
+      return copy;
+    });
+  }
+
+  function vibrateDragStart(ms: number = 10) {
+    try {
+      if (typeof navigator !== 'undefined' && typeof navigator.vibrate === 'function') {
+        navigator.vibrate(Math.max(1, Number(ms || 10)));
+      }
+    } catch {}
+  }
+
+  function getChecklistHitTestEdge(inputY: number, rect: { top: number; bottom: number }, multilineDeadZone: boolean): 'top' | 'bottom' | null {
+    const h = Math.max(1, Number(rect.bottom - rect.top));
+    const rel = Math.max(0, Math.min(1, (Number(inputY || 0) - Number(rect.top)) / h));
+    if (multilineDeadZone) {
+      if (rel < 0.4) return 'top';
+      if (rel > 0.6) return 'bottom';
+      return null;
+    }
+    return rel < 0.5 ? 'top' : 'bottom';
+  }
+
+  function getChecklistShiftClass(idx: number): '' | 'shift-up' | 'shift-down' {
+    if (checklistDragging == null || checklistHoverIndex == null) return '';
+    if (checklistHiddenDragChildSet.has(idx)) return '';
+    const current = items as any[];
+    if (!current.length) return '';
+    const [sStart, sEnd] = getChecklistBlockRange(current as any, checklistDragging);
+    const useSingleDragShift = checklistHiddenDragChildSet.size > 0;
+    const dragStart = checklistDragging;
+    const dragEnd = useSingleDragShift ? Math.min(current.length, checklistDragging + 1) : sEnd;
+    if (idx >= dragStart && idx < dragEnd) return '';
+    if (checklistDragging < checklistHoverIndex) {
+      return (idx > (dragEnd - 1) && idx <= checklistHoverIndex) ? 'shift-up' : '';
+    }
+    if (checklistDragging > checklistHoverIndex) {
+      return (idx >= checklistHoverIndex && idx < dragStart) ? 'shift-down' : '';
+    }
+    return '';
   }
 
   async function save() {
@@ -909,14 +988,10 @@ export default function TakeNoteBar({
                 const start = checklistDragStartRef.current;
                 const dx = start ? ((e.clientX || 0) - start.x) : 0;
                 if (Math.abs(dx) >= CHECKLIST_DRAG.indentPx) {
-                  setItems((s) => s.map((it, i) => {
-                    if (i !== src) return it;
-                    const curIndent = (typeof it.indent === 'number' ? Number(it.indent) : 0);
-                    const nextIndent = dx > 0
-                      ? Math.min(CHECKLIST_DRAG.maxIndent, curIndent + 1)
-                      : Math.max(0, curIndent - 1);
-                    return { ...it, indent: nextIndent };
-                  }));
+                  const current = items;
+                  const [bStart, bEnd] = getChecklistBlockRange(current as any, src);
+                  const delta = dx > 0 ? 1 : -1;
+                  moveChecklistBlock(bStart, bEnd, bStart, delta);
                 }
                 cleanupChecklistDrag();
                 return;
@@ -925,12 +1000,24 @@ export default function TakeNoteBar({
               // Vertical reorder fallback: use current hover index.
               const dst = (typeof checklistHoverIndex === 'number' ? checklistHoverIndex : src);
               if (dst >= 0 && dst !== src) {
-                setItems((s) => {
-                  const copy = [...s];
-                  const [moved] = copy.splice(src, 1);
-                  copy.splice(dst, 0, moved);
-                  return copy;
-                });
+                const current = items;
+                const [sStart, sEnd] = getChecklistBlockRange(current as any, src);
+                const dstIndex = Math.max(0, Math.min(current.length, dst + (checklistHoverEdge === 'bottom' ? 1 : 0)));
+                if (!(dstIndex >= sStart && dstIndex < sEnd)) {
+                  const len = Math.max(0, sEnd - sStart);
+                  const firstIndent = Number((current as any)?.[sStart]?.indent || 0);
+                  let insertAt = dstIndex;
+                  if (insertAt > sStart) insertAt = insertAt - len;
+                  if (insertAt < 0) insertAt = 0;
+                  const baseWithout = (current as any[]).slice();
+                  baseWithout.splice(sStart, len);
+                  const forceTopLevel = insertAt <= 0;
+                  const prevIndent = insertAt > 0 ? Number(baseWithout?.[insertAt - 1]?.indent || 0) : 0;
+                  const nextIndent = insertAt < baseWithout.length ? Number(baseWithout?.[insertAt]?.indent || 0) : 0;
+                  const desiredIndent = forceTopLevel ? 0 : (nextIndent > prevIndent ? nextIndent : prevIndent);
+                  const indentDelta = desiredIndent - firstIndent;
+                  moveChecklistBlock(sStart, sEnd, dstIndex, indentDelta);
+                }
               }
               cleanupChecklistDrag();
             }}
@@ -955,13 +1042,16 @@ export default function TakeNoteBar({
           {items.map((it, idx) => (
             <div
               key={idx}
-              className={`checklist-item${activeChecklistRowIdx === idx ? ' is-active' : ''}${(checklistDragging != null && checklistHoverIndex != null && checklistDragging !== idx)
-                ? (idx > checklistDragging && idx <= checklistHoverIndex ? ' shift-up' : (idx < checklistDragging && idx >= checklistHoverIndex ? ' shift-down' : ''))
-                : ''}`}
+              className={`checklist-item${activeChecklistRowIdx === idx ? ' is-active' : ''}${(() => {
+                const c = getChecklistShiftClass(idx);
+                return c ? ` ${c}` : '';
+              })()}${checklistHiddenDragChildSet.has(idx) ? ' drag-hidden-child' : ''}`}
+              data-item-idx={idx}
               onDragOver={(e) => {
                 e.preventDefault();
                 if (checklistDragging == null) return;
                 if (checklistDragDirectionRef.current === 'horizontal') return;
+                if (checklistGhostRef.current) return;
                 const target = e.currentTarget as HTMLElement;
                 const rect = target.getBoundingClientRect();
 
@@ -970,26 +1060,23 @@ export default function TakeNoteBar({
                 checklistRafRef.current = requestAnimationFrame(() => {
                   if (checklistDragging == null) return;
                   let shouldHover = false;
+                  let hitEdge: 'top' | 'bottom' | null = null;
                   try {
-                    const ghost = checklistGhostRef.current ? checklistGhostRef.current.getBoundingClientRect() : null;
-                    if (ghost) {
-                      const overlap = Math.max(0, Math.min(ghost.bottom, rect.bottom) - Math.max(ghost.top, rect.top));
-                      const frac = overlap / (rect.height || 1);
-                      const y = (e as unknown as React.DragEvent<HTMLElement>).clientY || 0;
-                      const movingDown = y > (checklistLastDragYRef.current || y);
-                      checklistLastDragYRef.current = y;
-                      const thresh = movingDown ? 0.55 : 0.35;
-                      shouldHover = frac >= thresh;
-                    } else {
-                      // Fallback: midpoint-based hover
-                      const y = (e as unknown as React.DragEvent<HTMLElement>).clientY || 0;
-                      shouldHover = y >= rect.top && y <= rect.bottom;
-                    }
+                    const y = (e as unknown as React.DragEvent<HTMLElement>).clientY || 0;
+                    shouldHover = y >= rect.top && y <= rect.bottom;
+                    const rowH = Math.max(1, rect.bottom - rect.top);
+                    const minH = 22;
+                    const multiline = rowH > (minH * 1.35);
+                    hitEdge = getChecklistHitTestEdge(y, rect, multiline);
                   } catch {}
 
-                  if (shouldHover) {
+                  if (shouldHover && hitEdge) {
                     try { if (checklistClearHoverTimeoutRef.current) { clearTimeout(checklistClearHoverTimeoutRef.current); checklistClearHoverTimeoutRef.current = null; } } catch {}
                     try { setChecklistHoverIndex((prev) => (prev === idx ? prev : idx)); } catch {}
+                    try { setChecklistHoverEdge(hitEdge); } catch {}
+                  } else if (shouldHover && !hitEdge) {
+                    // dead zone: keep current hover to avoid oscillation
+                    return;
                   } else {
                     if (checklistHoverIndex === idx && checklistClearHoverTimeoutRef.current === null) {
                       checklistClearHoverTimeoutRef.current = window.setTimeout(() => {
@@ -1024,12 +1111,24 @@ export default function TakeNoteBar({
                 }
 
                 if (src >= 0 && src !== dst) {
-                  setItems(s => {
-                    const copy = [...s];
-                    const [moved] = copy.splice(src, 1);
-                    copy.splice(dst, 0, moved);
-                    return copy;
-                  });
+                  const current = items;
+                  const [sStart, sEnd] = getChecklistBlockRange(current as any, src);
+                  const dstIndex = Math.max(0, Math.min(current.length, dst + (checklistHoverEdge === 'bottom' ? 1 : 0)));
+                  if (!(dstIndex >= sStart && dstIndex < sEnd)) {
+                    const len = Math.max(0, sEnd - sStart);
+                    const firstIndent = Number((current as any)?.[sStart]?.indent || 0);
+                    let insertAt = dstIndex;
+                    if (insertAt > sStart) insertAt = insertAt - len;
+                    if (insertAt < 0) insertAt = 0;
+                    const baseWithout = (current as any[]).slice();
+                    baseWithout.splice(sStart, len);
+                    const forceTopLevel = insertAt <= 0;
+                    const prevIndent = insertAt > 0 ? Number(baseWithout?.[insertAt - 1]?.indent || 0) : 0;
+                    const nextIndent = insertAt < baseWithout.length ? Number(baseWithout?.[insertAt]?.indent || 0) : 0;
+                    const desiredIndent = forceTopLevel ? 0 : (nextIndent > prevIndent ? nextIndent : prevIndent);
+                    const indentDelta = desiredIndent - firstIndent;
+                    moveChecklistBlock(sStart, sEnd, dstIndex, indentDelta);
+                  }
                 }
                 cleanupChecklistDrag();
               }}
@@ -1039,6 +1138,7 @@ export default function TakeNoteBar({
                 className="drag-handle"
                 draggable
                 onDragStart={(e) => {
+                  vibrateDragStart(10);
                   draggingIdx.current = idx;
                   try { e.dataTransfer.effectAllowed = 'move'; } catch {}
                   try { e.dataTransfer.dropEffect = 'move'; } catch {}
@@ -1051,6 +1151,32 @@ export default function TakeNoteBar({
                     const rect = row.getBoundingClientRect();
                     const offsetX = (e.clientX || 0) - rect.left;
                     const offsetY = (e.clientY || 0) - rect.top;
+                    const current = items as any[];
+                    const [sStart, sEnd] = getChecklistBlockRange(current as any, idx);
+                    const childIdxs: number[] = [];
+                    for (let i = sStart + 1; i < sEnd; i++) childIdxs.push(i);
+                    setChecklistHiddenDragChildIndices(childIdxs);
+                    checklistHiddenDragChildSetRef.current = new Set(childIdxs);
+
+                    let blockHeight = Math.max(1, rect.height);
+                    try {
+                      const rows = Array.from((rootRef.current?.querySelectorAll('.checklist-item[data-item-idx]') || [])) as HTMLElement[];
+                      let top = Number.POSITIVE_INFINITY;
+                      let bottom = Number.NEGATIVE_INFINITY;
+                      for (const el of rows) {
+                        const realIdx = Number(el.getAttribute('data-item-idx'));
+                        if (!Number.isFinite(realIdx)) continue;
+                        if (realIdx >= sStart && realIdx < sEnd) {
+                          const rr = el.getBoundingClientRect();
+                          top = Math.min(top, rr.top);
+                          bottom = Math.max(bottom, rr.bottom);
+                        }
+                      }
+                      if (Number.isFinite(top) && Number.isFinite(bottom) && bottom > top) {
+                        blockHeight = Math.max(1, Math.round(bottom - top));
+                      }
+                    } catch {}
+
                     checklistDragOffsetRef.current = { x: offsetX, y: offsetY };
                     checklistDragStartRef.current = { x: (e.clientX || 0), y: (e.clientY || 0) };
                     checklistDragDirectionRef.current = null;
@@ -1073,6 +1199,7 @@ export default function TakeNoteBar({
                     // Initialize dragging state after drag image is set to avoid drag-start flicker.
                     try { setChecklistDragging(idx); } catch {}
                     try { setChecklistHoverIndex(idx); } catch {}
+                    try { setChecklistHoverEdge('top'); } catch {}
                     setTimeout(() => { try { row.classList.add('drag-source'); } catch {} }, 0);
 
                     // Hide browser-native drag image; our ghost provides the visuals.
@@ -1080,7 +1207,7 @@ export default function TakeNoteBar({
                       const timg = transparentDragImgRef.current;
                       if (timg && e.dataTransfer) e.dataTransfer.setDragImage(timg, 0, 0);
                     } catch {}
-                    try { (rootRef.current as any)?.style?.setProperty?.('--checklist-item-shift', `${Math.round(rect.height)}px`); } catch {}
+                    try { (rootRef.current as any)?.style?.setProperty?.('--checklist-item-shift', `${Math.round(blockHeight)}px`); } catch {}
                     try { (rootRef.current as HTMLElement | null)?.classList?.add?.('is-dragging'); } catch {}
 
                     const onDocDragOver = (ev: DragEvent) => {
@@ -1100,6 +1227,43 @@ export default function TakeNoteBar({
                         if (checklistDragDirectionRef.current === 'vertical') {
                           checklistGhostRef.current.style.left = checklistSourceLeftRef.current + 'px';
                           checklistGhostRef.current.style.top = ((ev.clientY || 0) - off.y) + 'px';
+                          try {
+                            const rows = Array.from((rootRef.current?.querySelectorAll('.checklist-item[data-item-idx]') || [])) as HTMLElement[];
+                            if (rows.length) {
+                              const ghostRect = checklistGhostRef.current.getBoundingClientRect();
+                              const ghostCenterY = (ghostRect.top + ghostRect.bottom) / 2;
+                              const movingDown = ghostCenterY >= (checklistLastDragYRef.current || ghostCenterY);
+                              checklistLastDragYRef.current = ghostCenterY;
+                              const gh = Math.max(1, ghostRect.bottom - ghostRect.top);
+                              const refY = movingDown
+                                ? (ghostRect.bottom - gh * 0.25)
+                                : (ghostRect.top + gh * 0.25);
+
+                              let chosen: number | null = null;
+                              let chosenEdge: 'top' | 'bottom' | null = null;
+                              const src = draggingIdx.current;
+                              const hidden = checklistHiddenDragChildSetRef.current;
+                              const minRowH = 22;
+                              for (let i = 0; i < rows.length; i++) {
+                                const realIdx = Number(rows[i].getAttribute('data-item-idx'));
+                                if (!Number.isFinite(realIdx)) continue;
+                                if (typeof src === 'number' && realIdx === src) continue;
+                                if (hidden.has(realIdx)) continue;
+                                const r = rows[i].getBoundingClientRect();
+                                const rowH = Math.max(1, r.bottom - r.top);
+                                const edge = getChecklistHitTestEdge(refY, r, rowH > (minRowH * 1.35));
+                                if (edge == null) continue;
+                                const centerY = (r.top + r.bottom) / 2;
+                                if (refY < centerY) { chosen = realIdx; chosenEdge = edge; break; }
+                                chosen = realIdx;
+                                chosenEdge = edge;
+                              }
+                              if (chosen != null && chosenEdge) {
+                                setChecklistHoverIndex((prev) => (prev === chosen ? prev : chosen));
+                                setChecklistHoverEdge((prev) => (prev === chosenEdge ? prev : chosenEdge));
+                              }
+                            }
+                          } catch {}
                         } else if (checklistDragDirectionRef.current === 'horizontal') {
                           checklistGhostRef.current.style.left = ((ev.clientX || 0) - off.x) + 'px';
                           checklistGhostRef.current.style.top = ((start?.y || checklistSourceTopRef.current) - off.y) + 'px';
@@ -1114,7 +1278,7 @@ export default function TakeNoteBar({
                   } catch {}
                 }}
                 onDragEnd={() => { cleanupChecklistDrag(); }}
-                style={{ cursor: 'grab', userSelect: 'none', WebkitUserSelect: 'none', MozUserSelect: 'none', msUserSelect: 'none' }}
+                style={{ cursor: 'grab', userSelect: 'none', WebkitUserSelect: 'none', MozUserSelect: 'none', msUserSelect: 'none', touchAction: 'none', WebkitTapHighlightColor: 'transparent' }}
                 aria-label="Drag to reorder"
                 title="Drag to reorder"
               >≡</div>

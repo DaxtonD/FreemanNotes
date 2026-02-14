@@ -424,7 +424,7 @@ export default function MobileCreateModal({
     return [start, end] as const;
   }
 
-  function moveBlock(srcStart: number, srcEnd: number, dstIndex: number) {
+  function moveBlock(srcStart: number, srcEnd: number, dstIndex: number, indentDelta: number = 0) {
     setItems((s) => {
       const copy = [...(s || [])];
       const block = copy.slice(srcStart, srcEnd);
@@ -433,7 +433,8 @@ export default function MobileCreateModal({
       if (insertAt > srcStart) insertAt = insertAt - (srcEnd - srcStart);
       if (insertAt < 0) insertAt = 0;
       if (insertAt > copy.length) insertAt = copy.length;
-      copy.splice(insertAt, 0, ...block);
+      const moved = block.map((it) => ({ ...it, indent: Math.max(0, Number(it.indent || 0) + Number(indentDelta || 0)) }));
+      copy.splice(insertAt, 0, ...moved);
       return copy;
     });
   }
@@ -832,14 +833,18 @@ export default function MobileCreateModal({
                             if (nodes.length) {
                               let chosenDomIdx: number | null = null;
                               const ghostRect = ghostRef.current ? ghostRef.current.getBoundingClientRect() : { top: e.clientY - 10, bottom: e.clientY + 10 } as any;
-                              const movingDown = e.clientY > (lastPointerYRef.current || e.clientY);
-                              lastPointerYRef.current = e.clientY;
-                              const overlapThreshold = movingDown ? DRAG.ghostOverlapDownPct : DRAG.ghostOverlapUpPct;
+                              const ghostCenterY = ((ghostRect.top + ghostRect.bottom) / 2);
+                              const movingDown = ghostCenterY >= (lastPointerYRef.current || ghostCenterY);
+                              lastPointerYRef.current = ghostCenterY;
+                              const ghostH = Math.max(1, (ghostRect.bottom - ghostRect.top));
+                              const refY = movingDown
+                                ? (ghostRect.bottom - ghostH * 0.25)
+                                : (ghostRect.top + ghostH * 0.25);
                               for (let i = 0; i < nodes.length; i++) {
                                 const r = nodes[i].getBoundingClientRect();
-                                const overlap = Math.max(0, Math.min(ghostRect.bottom, r.bottom) - Math.max(ghostRect.top, r.top));
-                                const frac = overlap / (r.height || 1);
-                                if (frac >= overlapThreshold) { chosenDomIdx = i; break; }
+                                const centerY = (r.top + r.bottom) / 2;
+                                if (refY < centerY) { chosenDomIdx = i; break; }
+                                chosenDomIdx = i;
                               }
                               if (chosenDomIdx != null && chosenDomIdx !== hoverIndex) setHoverIndex(chosenDomIdx);
                             }
@@ -899,7 +904,19 @@ export default function MobileCreateModal({
                             const [sStart, sEnd] = getBlockRange(current, srcIdx);
                             if (hoverIndex !== null) {
                               const dstIdx = srcIdx < hoverIndex ? hoverIndex + 1 : hoverIndex;
-                              if (!(dstIdx >= sStart && dstIdx < sEnd)) moveBlock(sStart, sEnd, dstIdx);
+                              if (!(dstIdx >= sStart && dstIdx < sEnd)) {
+                                const len = Math.max(0, sEnd - sStart);
+                                const firstIndent = Number(current?.[sStart]?.indent || 0);
+                                let insertAt = dstIdx;
+                                if (insertAt > sStart) insertAt = insertAt - len;
+                                const baseWithout = current.slice();
+                                baseWithout.splice(sStart, len);
+                                const prevIndent = insertAt > 0 ? Number(baseWithout?.[insertAt - 1]?.indent || 0) : 0;
+                                const nextIndent = insertAt < baseWithout.length ? Number(baseWithout?.[insertAt]?.indent || 0) : 0;
+                                const desiredIndent = nextIndent > prevIndent ? nextIndent : prevIndent;
+                                const indentDelta = desiredIndent - firstIndent;
+                                moveBlock(sStart, sEnd, dstIdx, indentDelta);
+                              }
                             }
                           }
                           dragDirectionRef.current = null;

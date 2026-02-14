@@ -854,14 +854,36 @@ html.is-editor-modal-open .mobile-add-note{
 
 /* Touch: keep a larger grab target without changing visual alignment. */
 @media (pointer: coarse) {
+  .image-dialog .checklist-item,
+  .image-dialog.checklist-editor .checklist-item,
+  .take-note-expanded .checklist-item {
+    align-items: center;
+  }
+  .image-dialog .checklist-item .drag-gutter,
+  .image-dialog.checklist-editor .checklist-item .drag-gutter,
+  .take-note-expanded .checklist-item .drag-gutter {
+    align-items: center;
+  }
+  .image-dialog .checklist-item .checkbox-visual,
+  .image-dialog.checklist-editor .checklist-item .checkbox-visual,
+  .take-note-expanded .checklist-item .checkbox-visual {
+    align-self: center;
+  }
+  .checklist-item .drag-handle{
+    width: max(30px, var(--checklist-drag-handle-width), var(--checklist-checkbox-size));
+    min-width: max(30px, var(--checklist-drag-handle-width), var(--checklist-checkbox-size));
+    height: max(30px, var(--checklist-checkbox-size));
+    min-height: max(30px, var(--checklist-checkbox-size));
+    font-size: max(24px, var(--checklist-checkbox-size));
+  }
   .checklist-item .drag-handle::before{
     content: '';
     position: absolute;
-    left: 0;
-    right: 0;
-    /* Expand only vertically to reach the touch target height. */
-    top: calc((var(--checklist-drag-handle-height) - var(--checklist-checkbox-size)) / -2);
-    bottom: calc((var(--checklist-drag-handle-height) - var(--checklist-checkbox-size)) / -2);
+    left: -10px;
+    right: -10px;
+    /* Expand both directions for easier drag initiation on PWA/mobile. */
+    top: calc((max(44px, var(--checklist-drag-handle-height)) - var(--checklist-checkbox-size)) / -2);
+    bottom: calc((max(44px, var(--checklist-drag-handle-height)) - var(--checklist-checkbox-size)) / -2);
     background: transparent;
   }
 }
@@ -930,10 +952,33 @@ html.is-editor-modal-open .mobile-add-note{
 .checklist-item{
   transition: transform 140ms cubic-bezier(.22,.95,.3,1), opacity 120ms ease, background-color 160ms ease;
   -webkit-transition: transform 140ms cubic-bezier(.22,.95,.3,1), opacity 120ms ease, background-color 160ms ease;
-  will-change: transform, background-color;
+  contain: layout;
+  will-change: transform;
 }
 .checklist-item.dragging{ opacity: 0.7; transform: scale(0.985); }
 
+/* Debug isolation mode (ChecklistEditor only): render rows statically during drag. */
+.image-dialog.checklist-editor.dnd-debug-static .checklist-item {
+  transition: transform 110ms ease-out !important;
+  -webkit-transition: transform 110ms ease-out !important;
+  transform: none !important;
+  will-change: transform !important;
+}
+
+/* In debug mode, still animate neighbor shifts at the exact hover-trigger moment. */
+.image-dialog.checklist-editor.dnd-debug-static .checklist-item.shift-up {
+  transform: translateY(calc(-1 * var(--checklist-item-shift))) !important;
+}
+
+.image-dialog.checklist-editor.dnd-debug-static .checklist-item.shift-down {
+  transform: translateY(var(--checklist-item-shift)) !important;
+}
+
+.image-dialog.checklist-editor.dnd-debug-static .checklist-ghost {
+  transition: none !important;
+}
+
+/* Debug move-direction cue for checklist drag isolation */
 /* floating ghost clone used during drag to hover over other items */
 .checklist-ghost {
   box-shadow: 0 10px 30px rgba(0,0,0,0.5);
@@ -949,6 +994,20 @@ html.is-editor-modal-open .mobile-add-note{
 .image-dialog{ --checklist-item-shift: 44px; }
 .image-dialog.is-dragging .checklist-item{ will-change: transform; }
 
+/* Checklist drag: prevent editor-native drop caret/indicator artifacts. */
+.image-dialog.checklist-editor.is-dragging .ProseMirror-dropcursor{
+  display: none !important;
+}
+.image-dialog.checklist-editor.is-dragging .checklist-item .rt-item,
+.image-dialog.checklist-editor.is-dragging .checklist-item .ProseMirror{
+  pointer-events: none;
+}
+
+.image-dialog.checklist-editor.drop-settle-no-anim .checklist-item {
+  transition: none !important;
+  -webkit-transition: none !important;
+}
+
 /* Slightly smaller checkmark stroke inside the full editor so it doesn't appear oversized */
 .image-dialog .checkbox-visual svg path,
 .image-dialog .note-checkbox svg path {
@@ -958,6 +1017,7 @@ html.is-editor-modal-open .mobile-add-note{
 /* hide original element while dragging so the ghost appears above neighbors */
 /* use opacity so embedded editors can't override visibility */
 .checklist-item.drag-source { opacity: 0; pointer-events: none; }
+.checklist-item.drag-hidden-child { opacity: 0; pointer-events: none; }
 
 /* up/down controls for mobile-friendly reorder */
 .move-controls{ display:flex; gap:6px; }

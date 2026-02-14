@@ -15,6 +15,9 @@ import MoreMenu from './MoreMenu';
 import * as Y from 'yjs';
 import { WebsocketProvider } from 'y-websocket';
 import UrlEntryModal from './UrlEntryModal';
+import { draggable, dropTargetForElements } from '@atlaskit/pragmatic-drag-and-drop/element/adapter';
+import { setCustomNativeDragPreview } from '@atlaskit/pragmatic-drag-and-drop/element/set-custom-native-drag-preview';
+import { preserveOffsetOnSource } from '@atlaskit/pragmatic-drag-and-drop/element/preserve-offset-on-source';
 
 export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImagesUpdated, onColorChanged, onCollaboratorsChanged, moreMenu }:
   {
@@ -172,6 +175,9 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
   const [completedOpen, setCompletedOpen] = useState(true);
   const [dragging, setDragging] = useState<number | null>(null);
   const [hoverIndex, setHoverIndex] = useState<number | null>(null);
+  const [hoverEdge, setHoverEdge] = useState<'top' | 'bottom' | null>(null);
+  const hoverIndexRef = useRef<number | null>(null);
+  const hoverEdgeRef = useRef<'top' | 'bottom' | null>(null);
   const itemRefs = useRef<Array<HTMLTextAreaElement | null>>([]);
   const [autoFocusIndex, setAutoFocusIndex] = useState<number | null>(null);
   const [activeRowKey, setActiveRowKey] = useState<string | number | null>(null);
@@ -562,9 +568,27 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
   const dragStartRef = useRef<{ x: number; y: number } | null>(null);
   const dragDirectionRef = useRef<'vertical' | 'horizontal' | null>(null);
   const sourceLeftRef = useRef<number>(0);
+  const frozenUncheckedCentersRef = useRef<Map<number, number>>(new Map());
+  const frozenUncheckedRectsRef = useRef<Map<number, { top: number; bottom: number }>>(new Map());
+  const frozenMinRowHeightRef = useRef<number>(0);
+  const dragProbeYRef = useRef<number | null>(null);
+  const dragMoveDirRef = useRef<'up' | 'down' | null>(null);
+  const dragDirOpposeAccumRef = useRef<number>(0);
+  const dragDirFlippedRef = useRef<boolean>(false);
+  const settleNoAnimRafRef = useRef<number | null>(null);
+  const dragDebugLastRef = useRef<{ activeIndex: number | null; overIndex: number | null; mode: string } | null>(null);
+  const desktopDragIntentRef = useRef<{ mode: 'pending' | 'vertical' | 'indent' | 'unindent'; startX: number; startY: number; src: number | null }>({
+    mode: 'pending',
+    startX: 0,
+    startY: 0,
+    src: null,
+  });
+  const desktopDragPrevYRef = useRef<number>(0);
   const nestedPendingRef = useRef<{ parentId: number | null; makeNested: boolean }>({ parentId: null, makeNested: false });
   const pointerTrackRef = useRef<{ active: boolean; startX: number; startY: number; idx: number | null; draggedId?: number | null; pointerId?: number } | null>(null);
   const [previewItems, setPreviewItems] = useState<Array<any> | null>(null);
+  const [hiddenDragChildIndices, setHiddenDragChildIndices] = useState<number[]>([]);
+  const hiddenDragChildSet = React.useMemo(() => new Set(hiddenDragChildIndices), [hiddenDragChildIndices]);
   const isCoarsePointer = React.useMemo(() => {
     try {
       return typeof window !== 'undefined' && !!window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
@@ -600,6 +624,267 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
       directionLockPx: 6,
     } as const;
   }, [isCoarsePointer]);
+  const DND_DEBUG = React.useMemo(() => ({
+    staticVisuals: true,
+    logHover: true,
+    simpleVerticalReorder: false,
+    collisionMode: 'overlap' as 'closestCenter' | 'pointerWithin' | 'overlap',
+    coverTriggerPct: 90,
+    multilineEdgeMinTriggerPct: 90,
+  }), []);
+  React.useEffect(() => {
+    hoverIndexRef.current = hoverIndex;
+  }, [hoverIndex]);
+
+  React.useEffect(() => {
+    hoverEdgeRef.current = hoverEdge;
+  }, [hoverEdge]);
+
+  function vibrateDragStart(ms: number = 10) {
+    try {
+      if (typeof navigator !== 'undefined' && typeof navigator.vibrate === 'function') {
+        navigator.vibrate(Math.max(1, Number(ms || 10)));
+      }
+    } catch {}
+  }
+
+  function getHitTestEdge(inputY: number, rect: { top: number; bottom: number }, multilineDeadZone: boolean): 'top' | 'bottom' | null {
+    const h = Math.max(1, Number(rect.bottom - rect.top));
+    const rel = Math.max(0, Math.min(1, (Number(inputY || 0) - Number(rect.top)) / h));
+    if (multilineDeadZone) {
+      if (rel < 0.4) return 'top';
+      if (rel > 0.6) return 'bottom';
+      return null;
+    }
+    return rel < 0.5 ? 'top' : 'bottom';
+  }
+
+  React.useEffect(() => {
+    // Desktop checklist drag is now driven by Atlassian Pragmatic DnD.
+    // Keep mobile/coarse pointer on the existing pointer-driven path.
+    if (isCoarsePointer) return;
+    const root = dialogRef.current as HTMLElement | null;
+    if (!root) return;
+
+    let activeSrc: number | null = null;
+    const cleanups: Array<() => void> = [];
+    const rows = Array.from(root.querySelectorAll('.checklist-item[data-real-idx]')) as HTMLElement[];
+
+    for (const row of rows) {
+      const realIdx = Number(row.getAttribute('data-real-idx'));
+      if (!Number.isFinite(realIdx) || realIdx < 0) continue;
+      const dragHandle = (row.querySelector('.drag-gutter') as HTMLElement | null) || row;
+
+      cleanups.push(draggable({
+        element: row,
+        dragHandle,
+        getInitialData: () => ({ type: 'checklist-row', realIdx }),
+        onGenerateDragPreview: ({ nativeSetDragImage, location, source }: any) => {
+          setCustomNativeDragPreview({
+            nativeSetDragImage,
+            getOffset: preserveOffsetOnSource({
+              element: source.element,
+              input: location.current.input,
+            }),
+            render: ({ container }) => {
+              // Hide native preview; we render our own ghost only for vertical drags.
+              const n = document.createElement('div');
+              n.style.width = '1px';
+              n.style.height = '1px';
+              n.style.opacity = '0';
+              n.style.pointerEvents = 'none';
+              container.appendChild(n);
+              return () => {
+                try { container.innerHTML = ''; } catch {}
+              };
+            },
+          });
+        },
+        onDragStart: ({ location }: any) => {
+          activeSrc = realIdx;
+          vibrateDragStart(10);
+          dragDirectionRef.current = null;
+          try {
+            const r = row.getBoundingClientRect();
+            const input = location?.current?.input;
+            const pointerX = Number(input?.clientX ?? (r.left + 8));
+            const pointerY = Number(input?.clientY ?? (r.top + 8));
+            desktopDragIntentRef.current = { mode: 'pending', startX: pointerX, startY: pointerY, src: realIdx };
+            desktopDragPrevYRef.current = pointerY;
+          } catch {}
+        },
+        onDrag: ({ location }: any) => {
+          const input = location?.current?.input;
+          const pointerX = Number(input?.clientX ?? 0);
+          const pointerY = Number(input?.clientY ?? 0);
+          const gesture = desktopDragIntentRef.current;
+
+          if (gesture?.mode === 'pending') {
+            const dx = pointerX - Number(gesture.startX || 0);
+            const dy = pointerY - Number(gesture.startY || 0);
+            const rightInitiated = dx > DRAG.indentPx && Math.abs(dx) > (Math.abs(dy) + 2);
+            const leftInitiated = dx < -DRAG.indentPx && Math.abs(dx) > (Math.abs(dy) + 2);
+
+            if (rightInitiated) {
+              desktopDragIntentRef.current = { ...gesture, mode: 'indent' };
+              indentBlockRight(realIdx);
+              setDragging(null);
+              setHoverIndex(null);
+              setHoverEdge(null);
+              return;
+            }
+
+            if (leftInitiated) {
+              desktopDragIntentRef.current = { ...gesture, mode: 'unindent' };
+              unindentBlockLeft(realIdx);
+              setDragging(null);
+              setHoverIndex(null);
+              setHoverEdge(null);
+              return;
+            }
+
+            if (Math.abs(dy) > 2) {
+              desktopDragIntentRef.current = { ...gesture, mode: 'vertical' };
+              dragDirectionRef.current = 'vertical';
+              const groupHeight = createDesktopParentGhost(row, realIdx, pointerX, pointerY);
+              const root2 = dialogRef.current as HTMLElement | null;
+              if (root2) {
+                root2.style.setProperty('--checklist-item-shift', `${Math.round(Math.max(1, groupHeight))}px`);
+                root2.classList.add('is-dragging');
+              }
+              captureFrozenUncheckedCenters(previewItems ?? items);
+              setDragging(realIdx);
+              setHoverIndex(realIdx);
+              setHoverEdge('top');
+            }
+          }
+
+          if (desktopDragIntentRef.current.mode !== 'vertical') return;
+
+          const g = ghostRef.current;
+          if (!g) return;
+          const top = pointerY - Number(dragOffsetRef.current?.y || 0);
+          g.style.left = `${Math.round(sourceLeftRef.current)}px`;
+          g.style.top = `${Math.round(top)}px`;
+
+          // Group-based hitbox: hover uses full lifted block center.
+          const root2 = dialogRef.current as HTMLElement | null;
+          const nodes = Array.from((root2 ? root2.querySelectorAll('.checklist-item[data-real-idx]:not(.drag-hidden-child)') : document.querySelectorAll('.image-dialog .checklist-item[data-real-idx]:not(.drag-hidden-child)'))) as HTMLElement[];
+          if (nodes.length) {
+            const grect = g.getBoundingClientRect();
+            const probeY = (grect.top + grect.bottom) / 2;
+            const src = activeSrc;
+            let candidate: { idx: number; dist: number; edge: 'top' | 'bottom' } | null = null;
+            for (const n of nodes) {
+              const ridx = Number(n.getAttribute('data-real-idx'));
+              if (!Number.isFinite(ridx)) continue;
+              if (typeof src === 'number' && ridx === src) continue;
+              const r = n.getBoundingClientRect();
+              const c = (r.top + r.bottom) / 2;
+              const d = Math.abs(probeY - c);
+              const edge: 'top' | 'bottom' = probeY >= c ? 'bottom' : 'top';
+              if (!candidate || d < candidate.dist) {
+                candidate = { idx: ridx, dist: d, edge };
+              }
+            }
+            if (candidate) {
+              setHoverIndex(candidate.idx);
+              setHoverEdge(candidate.edge);
+            }
+          }
+          desktopDragPrevYRef.current = pointerY;
+        },
+        onDrop: () => {
+          const src = activeSrc;
+          const dstHover = hoverIndexRef.current;
+          const dstEdge = hoverEdgeRef.current;
+          const gesture = desktopDragIntentRef.current;
+          let pendingVerticalMove = false;
+
+          if (gesture?.mode === 'indent' || gesture?.mode === 'unindent' || gesture?.mode === 'pending') {
+            endDragCleanup();
+            activeSrc = null;
+            desktopDragIntentRef.current = { mode: 'pending', startX: 0, startY: 0, src: null };
+            return;
+          }
+
+          if (typeof src === 'number' && typeof dstHover === 'number' && src !== dstHover) {
+            const current = items;
+            const [sStart, sEnd] = getBlockRange(current, src);
+            const dstRealIdx = Math.max(0, Math.min(current.length, dstHover + (dstEdge === 'bottom' ? 1 : 0)));
+            if (!(dstRealIdx >= sStart && dstRealIdx < sEnd)) {
+              const targetIndent = computeDropTargetIndent(current, sStart, sEnd, dstRealIdx);
+              const firstIndent = Number(current?.[sStart]?.indent || 0);
+              const blockLen = Math.max(0, sEnd - sStart);
+              if (targetIndent > 0) {
+                // Dropped into a child group: flatten moved rows to same child indent.
+                moveBlockY(sStart, sEnd, dstRealIdx, 0, targetIndent);
+              } else if (blockLen === 1 && firstIndent > 0) {
+                // A single child moved into top-level context must become top-level.
+                moveBlockY(sStart, sEnd, dstRealIdx, 0, 0);
+              } else {
+                // Top-level move: preserve internal structure, but clamp to allowed levels.
+                moveBlockY(sStart, sEnd, dstRealIdx, 0, null);
+              }
+              pendingVerticalMove = true;
+            }
+          }
+          if (pendingVerticalMove) applyDropSettleNoAnim();
+          endDragCleanup();
+          activeSrc = null;
+          desktopDragIntentRef.current = { mode: 'pending', startX: 0, startY: 0, src: null };
+        },
+      }) as any);
+
+      cleanups.push(dropTargetForElements({
+        element: row,
+        canDrop: ({ source }: any) => {
+          const t = (source?.data as any)?.type;
+          return t === 'checklist-row';
+        },
+        getDropEffect: () => 'move',
+        getData: () => ({ type: 'checklist-row-target', realIdx }),
+        onDragEnter: ({ location, self }: any) => {
+          if (desktopDragIntentRef.current.mode !== 'vertical') return;
+          const inputY = Number(location?.current?.input?.clientY || 0);
+          const r = (self?.element as HTMLElement | null)?.getBoundingClientRect?.();
+          if (!r) return;
+          const minH = Math.max(22, Number(frozenMinRowHeightRef.current || 22));
+          const edge = getHitTestEdge(inputY, r, Math.max(1, r.bottom - r.top) > minH * 1.35);
+          if (!edge) return;
+          setHoverIndex(realIdx);
+          setHoverEdge(edge);
+        },
+        onDrag: ({ location, self }: any) => {
+          if (desktopDragIntentRef.current.mode !== 'vertical') return;
+          const inputY = Number(location?.current?.input?.clientY || 0);
+          const r = (self?.element as HTMLElement | null)?.getBoundingClientRect?.();
+          if (!r) return;
+          const minH = Math.max(22, Number(frozenMinRowHeightRef.current || 22));
+          const edge = getHitTestEdge(inputY, r, Math.max(1, r.bottom - r.top) > minH * 1.35);
+          if (!edge) return;
+          setHoverIndex(realIdx);
+          setHoverEdge(edge);
+        },
+      }) as any);
+    }
+
+    // Keep cursor as an allowed move target even when hovering row gaps.
+    cleanups.push(dropTargetForElements({
+      element: root,
+      canDrop: ({ source }: any) => {
+        const t = (source?.data as any)?.type;
+        return t === 'checklist-row';
+      },
+      getDropEffect: () => 'move',
+    }) as any);
+
+    return () => {
+      for (const c of cleanups) {
+        try { c(); } catch {}
+      }
+    };
+  }, [isCoarsePointer, items, previewItems]);
   const lastPointerYRef = useRef<number>(0);
   const lastDragYRef = useRef<number>(0);
   const genUid = React.useCallback(() => `u${Date.now().toString(36)}${Math.random().toString(36).slice(2,8)}`, []);
@@ -861,18 +1146,22 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
   function shiftClassForIndex(realIdx: number, list: any[]) {
     if (dragDirectionRef.current !== 'vertical') return '';
     if (dragging === null) return '';
-    const [sStart, sEnd] = getBlockRange(list, dragging);
+    if (hiddenDragChildSet.has(realIdx)) return '';
+    const useSingleDragShift = hiddenDragChildSet.size > 0;
+    const sStart = dragging;
+    const sEnd = useSingleDragShift ? Math.min(list.length, dragging + 1) : getBlockRange(list, dragging)[1];
     if (hoverIndex === null) return '';
+    const dstOriginal = hoverIndex + (hoverEdge === 'bottom' ? 1 : 0);
     // Do not apply shift to items inside the dragged block
     if (realIdx >= sStart && realIdx < sEnd) return '';
-    // Dragging down: neighbors between the block end and hover index shift up
-    if (dragging < hoverIndex) {
-      if (realIdx > (sEnd - 1) && realIdx <= hoverIndex) return 'shift-up';
+    // Dragging down: neighbors between source end and destination shift up.
+    if (dstOriginal > sEnd) {
+      if (realIdx >= sEnd && realIdx < dstOriginal) return 'shift-up';
       return '';
     }
-    // Dragging up: neighbors between hover index and block start shift down
-    if (dragging > hoverIndex) {
-      if (realIdx >= hoverIndex && realIdx < sStart) return 'shift-down';
+    // Dragging up: neighbors between destination and source start shift down.
+    if (dstOriginal < sStart) {
+      if (realIdx >= dstOriginal && realIdx < sStart) return 'shift-down';
       return '';
     }
     return '';
@@ -909,6 +1198,129 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
   function domToRealIndexUnchecked(domIdx: number, list: any[]): number {
     const order = getUncheckedOrderIndices(list);
     return (domIdx >= 0 && domIdx < order.length) ? order[domIdx] : -1;
+  }
+
+  function captureFrozenUncheckedCenters(list: any[]) {
+    try {
+      const root = dialogRef.current as HTMLElement | null;
+      const nodes = Array.from((root ? root.querySelectorAll('.checklist-item:not(.completed)') : document.querySelectorAll('.image-dialog .checklist-item:not(.completed)'))) as HTMLElement[];
+      const m = new Map<number, number>();
+      const rects = new Map<number, { top: number; bottom: number }>();
+      let minH = Number.POSITIVE_INFINITY;
+      for (let i = 0; i < nodes.length; i++) {
+        const realIdx = domToRealIndexUnchecked(i, list);
+        if (realIdx < 0) continue;
+        const r = nodes[i].getBoundingClientRect();
+        m.set(realIdx, (r.top + r.bottom) / 2);
+        rects.set(realIdx, { top: r.top, bottom: r.bottom });
+        const h = Math.max(1, r.bottom - r.top);
+        if (h < minH) minH = h;
+      }
+      frozenUncheckedCentersRef.current = m;
+      frozenUncheckedRectsRef.current = rects;
+      frozenMinRowHeightRef.current = Number.isFinite(minH) ? minH : 0;
+    } catch {
+      frozenUncheckedCentersRef.current = new Map<number, number>();
+      frozenUncheckedRectsRef.current = new Map<number, { top: number; bottom: number }>();
+      frozenMinRowHeightRef.current = 0;
+    }
+  }
+
+  function getFrozenUncheckedRect(realIdx: number, fallback?: { top: number; bottom: number } | null): { top: number; bottom: number } | null {
+    return frozenUncheckedRectsRef.current.get(realIdx) || fallback || null;
+  }
+
+  function updateMovingDown(probeY: number, fallbackMovingDown: boolean): boolean {
+    const prevProbeY = dragProbeYRef.current;
+    dragProbeYRef.current = probeY;
+    if (typeof prevProbeY !== 'number') {
+      dragMoveDirRef.current = fallbackMovingDown ? 'down' : 'up';
+      dragDirOpposeAccumRef.current = 0;
+      return fallbackMovingDown;
+    }
+    const dy = probeY - prevProbeY;
+    const DEADZONE_PX = 1.5;
+    const REVERSE_PX = 8;
+    if (!dragMoveDirRef.current) {
+      if (dy > DEADZONE_PX) dragMoveDirRef.current = 'down';
+      else if (dy < -DEADZONE_PX) dragMoveDirRef.current = 'up';
+      else dragMoveDirRef.current = fallbackMovingDown ? 'down' : 'up';
+      dragDirOpposeAccumRef.current = 0;
+      dragDirFlippedRef.current = false;
+      return dragMoveDirRef.current === 'down';
+    }
+
+    if (dragMoveDirRef.current === 'down') {
+      if (dy < -DEADZONE_PX) {
+        dragDirOpposeAccumRef.current += (-dy);
+        if (dragDirOpposeAccumRef.current >= REVERSE_PX) {
+          dragMoveDirRef.current = 'up';
+          dragDirOpposeAccumRef.current = 0;
+          dragDirFlippedRef.current = true;
+        }
+      } else if (dy > DEADZONE_PX) {
+        dragDirOpposeAccumRef.current = 0;
+      }
+    } else {
+      if (dy > DEADZONE_PX) {
+        dragDirOpposeAccumRef.current += dy;
+        if (dragDirOpposeAccumRef.current >= REVERSE_PX) {
+          dragMoveDirRef.current = 'down';
+          dragDirOpposeAccumRef.current = 0;
+          dragDirFlippedRef.current = true;
+        }
+      } else if (dy < -DEADZONE_PX) {
+        dragDirOpposeAccumRef.current = 0;
+      }
+    }
+    return dragMoveDirRef.current === 'down';
+  }
+
+  function consumeDragDirFlip(): boolean {
+    const flipped = !!dragDirFlippedRef.current;
+    dragDirFlippedRef.current = false;
+    return flipped;
+  }
+
+  function getVerticalCoverPct(ghostRect: { top: number; bottom: number } | null, targetRect: { top: number; bottom: number } | null): number | null {
+    if (!ghostRect || !targetRect) return null;
+    const overlap = Math.max(0, Math.min(ghostRect.bottom, targetRect.bottom) - Math.max(ghostRect.top, targetRect.top));
+    const h = Math.max(1, targetRect.bottom - targetRect.top);
+    const pct = (overlap / h) * 100;
+    return Math.max(0, Math.min(100, pct));
+  }
+
+  function getGhostCoverPct(ghostRect: { top: number; bottom: number } | null, targetRect: { top: number; bottom: number } | null): number | null {
+    if (!ghostRect || !targetRect) return null;
+    const overlap = Math.max(0, Math.min(ghostRect.bottom, targetRect.bottom) - Math.max(ghostRect.top, targetRect.top));
+    const ghostH = Math.max(1, ghostRect.bottom - ghostRect.top);
+    const targetH = Math.max(1, targetRect.bottom - targetRect.top);
+    const h = Math.max(1, Math.min(ghostH, targetH));
+    const pct = (overlap / h) * 100;
+    return Math.max(0, Math.min(100, pct));
+  }
+
+
+  function logDragHoverState(mode: string, activeIndex: number | null, overIndex: number | null, list: any[], coverPct: number | null = null, triggerPct: number | null = null) {
+    if (!DND_DEBUG.logHover) return;
+    const last = dragDebugLastRef.current;
+    if (last && last.mode === mode && last.activeIndex === activeIndex && last.overIndex === overIndex) return;
+    dragDebugLastRef.current = { mode, activeIndex, overIndex };
+    const active = (typeof activeIndex === 'number' && activeIndex >= 0) ? list[activeIndex] : null;
+    const over = (typeof overIndex === 'number' && overIndex >= 0) ? list[overIndex] : null;
+    const activeId = (active && (typeof active.id === 'number' ? active.id : active.uid)) ?? null;
+    const overId = (over && (typeof over.id === 'number' ? over.id : over.uid)) ?? null;
+    try {
+      console.debug('[ChecklistEditor DnD]', {
+        mode,
+        active: { id: activeId },
+        over: { id: overId },
+        activeIndex,
+        overIndex,
+        coverPct,
+        triggerPct,
+      });
+    } catch {}
   }
 
   function updateItem(idx: number, content: string) {
@@ -1034,7 +1446,7 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
     yarr.insert(dst, [elem]);
   }
 
-  function moveBlockY(srcStart: number, srcEnd: number, dstIndex: number) {
+  function moveBlockY(srcStart: number, srcEnd: number, dstIndex: number, indentDelta: number = 0, forceIndent: number | null = null) {
     const yarr = yarrayRef.current; if (!yarr) return;
     // Clamp ranges to current Y.Array length to avoid out-of-bounds when preview/state diverge
     const start = Math.max(0, Math.min(srcStart, yarr.length));
@@ -1057,8 +1469,116 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
       });
     }
     yarr.delete(start, len);
-    const clones = vals.map(v => { const m = new Y.Map<any>(); if (typeof v.id === 'number') m.set('id', v.id); if (v.uid) m.set('uid', v.uid); m.set('content', v.content); m.set('checked', v.checked); m.set('indent', v.indent); return m; });
+    const clones = vals.map(v => {
+      const m = new Y.Map<any>();
+      if (typeof v.id === 'number') m.set('id', v.id);
+      if (v.uid) m.set('uid', v.uid);
+      m.set('content', v.content);
+      m.set('checked', v.checked);
+      const nextIndent = (forceIndent == null)
+        ? (Number(v.indent || 0) + Number(indentDelta || 0))
+        : Number(forceIndent || 0);
+      m.set('indent', Math.max(0, Math.min(1, nextIndent)));
+      return m;
+    });
     yarr.insert(insertAt, clones as any);
+  }
+
+  function computeDropTargetIndent(list: any[], srcStart: number, srcEnd: number, dstIndex: number): 0 | 1 {
+    try {
+      const len = Math.max(0, srcEnd - srcStart);
+      if (len <= 0) return 0;
+      let insertAt = Math.max(0, Math.min(dstIndex, list.length));
+      if (insertAt > srcStart) insertAt = insertAt - len;
+      // Rule: first visible row can never be a child.
+      if (insertAt <= 0) return 0;
+      const baseWithout = list.slice();
+      baseWithout.splice(srcStart, len);
+      const prevIndent = insertAt > 0 ? Number(baseWithout?.[insertAt - 1]?.indent || 0) : 0;
+      const nextIndent = insertAt < baseWithout.length ? Number(baseWithout?.[insertAt]?.indent || 0) : 0;
+      const desiredIndent = (prevIndent > 0 || nextIndent > 0) ? 1 : 0;
+      return desiredIndent;
+    } catch {
+      return 0;
+    }
+  }
+
+  function indentBlockRight(src: number) {
+    const current = items;
+    if (src <= 0 || src >= current.length) return;
+    const [sStart, sEnd] = getBlockRange(current, src);
+
+    // Parent is the nearest previous top-level row.
+    let parentIdx = -1;
+    for (let j = sStart - 1; j >= 0; j--) {
+      if (Number(current[j]?.indent || 0) === 0) { parentIdx = j; break; }
+    }
+    if (parentIdx < 0) return;
+
+    const parentIndent = Number(current[parentIdx]?.indent || 0);
+    let insertAfter = parentIdx + 1;
+    while (insertAfter < current.length && Number(current[insertAfter]?.indent || 0) > parentIndent) insertAfter++;
+
+    moveBlockY(sStart, sEnd, insertAfter, 0, Math.min(1, parentIndent + 1));
+  }
+
+  function unindentBlockLeft(src: number) {
+    const current = items;
+    if (src < 0 || src >= current.length) return;
+    const [sStart, sEnd] = getBlockRange(current, src);
+    const firstIndent = Number(current[sStart]?.indent || 0);
+    if (firstIndent <= 0) return;
+    moveBlockY(sStart, sEnd, sStart, 0, 0);
+  }
+
+  function createDesktopParentGhost(row: HTMLElement, src: number, pointerX: number, pointerY: number): number {
+    const current = items;
+    const [sStart, sEnd] = getBlockRange(current, src);
+    const firstRect = row.getBoundingClientRect();
+    const root = dialogRef.current as HTMLElement | null;
+    const allRows = Array.from((root ? root.querySelectorAll('.checklist-item[data-real-idx]') : document.querySelectorAll('.image-dialog .checklist-item[data-real-idx]'))) as HTMLElement[];
+    let lastBottom = firstRect.bottom;
+    for (const el of allRows) {
+      const ridx = Number(el.getAttribute('data-real-idx'));
+      if (Number.isFinite(ridx) && ridx >= sStart && ridx < sEnd) {
+        const rr = el.getBoundingClientRect();
+        if (rr.bottom > lastBottom) lastBottom = rr.bottom;
+      }
+    }
+    const childIdxs: number[] = [];
+    for (let i = sStart + 1; i < sEnd; i++) childIdxs.push(i);
+    setHiddenDragChildIndices(childIdxs);
+
+    const lastRect = { bottom: lastBottom };
+    const groupHeight = Math.max(1, Math.round(lastRect.bottom - firstRect.top));
+
+    dragOffsetRef.current = { x: Math.max(0, pointerX - firstRect.left), y: Math.max(0, pointerY - firstRect.top) };
+    sourceLeftRef.current = firstRect.left;
+
+    const ghost = document.createElement('div');
+    ghost.classList.add('checklist-ghost');
+    ghost.style.position = 'fixed';
+    ghost.style.left = `${Math.round(sourceLeftRef.current)}px`;
+    ghost.style.top = `${Math.round(pointerY - dragOffsetRef.current.y)}px`;
+    ghost.style.width = `${Math.round(firstRect.width)}px`;
+    ghost.style.pointerEvents = 'none';
+    ghost.style.zIndex = '9999';
+    ghost.style.opacity = '1';
+    ghost.style.background = 'var(--editor-surface, var(--card))';
+    ghost.style.boxShadow = '0 14px 34px rgba(0,0,0,0.45)';
+    ghost.style.borderRadius = '8px';
+    ghost.style.overflow = 'hidden';
+
+    const clone = row.cloneNode(true) as HTMLElement;
+    clone.classList.remove('drag-source', 'drag-hidden-child', 'shift-up', 'shift-down');
+    clone.style.margin = '0';
+    ghost.appendChild(clone);
+    try { document.body.appendChild(ghost); } catch {}
+    ghostRef.current = ghost as HTMLDivElement;
+
+    try { row.classList.add('drag-source'); } catch {}
+
+    return groupHeight;
   }
 
   function startDrag(e: React.DragEvent<HTMLElement>, realIdx: number) {
@@ -1083,6 +1603,11 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
     ghost.classList.add('checklist-ghost');
     document.body.appendChild(ghost);
     ghostRef.current = ghost as HTMLDivElement;
+    dragProbeYRef.current = null;
+    dragMoveDirRef.current = null;
+    dragDirOpposeAccumRef.current = 0;
+    dragDirFlippedRef.current = false;
+    captureFrozenUncheckedCenters(previewItems ?? items);
     try { if (e.dataTransfer) e.dataTransfer.setDragImage(ghost, Math.round(offsetX), Math.round(offsetY)); } catch (err) { }
     if (e.dataTransfer) { e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', String(realIdx)); }
     setDragging(realIdx); setHoverIndex(realIdx);
@@ -1120,10 +1645,20 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
     if (ghostRef.current) { ghostRef.current.remove(); ghostRef.current = null; }
     if (docDragOverRef.current) { document.removeEventListener('dragover', docDragOverRef.current); docDragOverRef.current = undefined; }
     document.querySelectorAll('.checklist-item.drag-source').forEach(el => el.classList.remove('drag-source'));
-    setDragging(null); setHoverIndex(null);
+    setDragging(null); setHoverIndex(null); setHoverEdge(null);
     setPreviewItems(null);
+    setHiddenDragChildIndices([]);
     if (rafRef.current) { cancelAnimationFrame(rafRef.current); rafRef.current = null; }
     if (clearHoverTimeoutRef.current) { clearTimeout(clearHoverTimeoutRef.current); clearHoverTimeoutRef.current = null; }
+    frozenUncheckedCentersRef.current = new Map<number, number>();
+    frozenUncheckedRectsRef.current = new Map<number, { top: number; bottom: number }>();
+    frozenMinRowHeightRef.current = 0;
+    dragProbeYRef.current = null;
+    dragMoveDirRef.current = null;
+    dragDirOpposeAccumRef.current = 0;
+    dragDirFlippedRef.current = false;
+    dragDebugLastRef.current = null;
+    desktopDragIntentRef.current = { mode: 'pending', startX: 0, startY: 0, src: null };
     dragStartRef.current = null; dragDirectionRef.current = null; nestedPendingRef.current = { parentId: null, makeNested: false };
     // reset any dynamic shift applied during vertical drag
     try {
@@ -1146,6 +1681,30 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
     try { document.getSelection()?.removeAllRanges(); } catch {}
     try { activeChecklistEditor.current = null; } catch {}
     try { setToolbarTick((t) => t + 1); } catch {}
+  }
+
+  function applyDropSettleNoAnim(frames: number = 2) {
+    try {
+      const root = dialogRef.current as HTMLElement | null;
+      if (!root) return;
+      root.classList.add('drop-settle-no-anim');
+      if (settleNoAnimRafRef.current != null) {
+        cancelAnimationFrame(settleNoAnimRafRef.current);
+        settleNoAnimRafRef.current = null;
+      }
+      let left = Math.max(1, Number(frames || 2));
+      const tick = () => {
+        left -= 1;
+        if (!dialogRef.current) { settleNoAnimRafRef.current = null; return; }
+        if (left <= 0) {
+          try { (dialogRef.current as HTMLElement).classList.remove('drop-settle-no-anim'); } catch {}
+          settleNoAnimRafRef.current = null;
+          return;
+        }
+        settleNoAnimRafRef.current = requestAnimationFrame(tick);
+      };
+      settleNoAnimRafRef.current = requestAnimationFrame(tick);
+    } catch {}
   }
 
   async function save() {
@@ -1243,68 +1802,78 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
     try { setImagesOpen(true); } catch {}
     (async () => {
       try {
-        const res = await fetch(`/api/notes/${note.id}/images`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ url }) });
+        const res = await fetch(`/api/notes/${note.id}/images`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ url }),
+        });
         if (!res.ok) throw new Error(await res.text());
         const data = await res.json();
-        const img = data.image || null;
+        const img = data?.image || null;
         if (img && img.id && img.url) {
           setImages((s) => {
-            const serverId = Number(img.id);
-            const serverUrl = String(img.url);
-            const replaced = s.map((x) => (Number(x.id) === tempId || String(x.url) === String(url)) ? ({ id: serverId, url: serverUrl }) : x);
-            const hasServer = replaced.some((x) => Number(x.id) === serverId);
-            const next = hasServer ? replaced : [...replaced, { id: serverId, url: serverUrl }];
-            onImagesUpdated && onImagesUpdated(next);
-            return next;
+            const replaced = s.map((x) => Number(x.id) === Number(tempId) ? { id: Number(img.id), url: String(img.url) } : x);
+            onImagesUpdated && onImagesUpdated(replaced);
+            return replaced;
           });
           broadcastImagesChanged();
+          return;
         }
-      } catch (err) {
-        console.error('Failed to attach image', err);
-        window.alert('Failed to attach image');
-        // Keep optimistic image; user can refresh or retry if needed.
+        // Fallback: keep optimistic value and notify peers.
+        broadcastImagesChanged();
+      }
+      catch {
+        // rollback optimistic item
+        setImages((s) => {
+          const rollback = s.filter((x) => Number(x.id) !== Number(tempId));
+          onImagesUpdated && onImagesUpdated(rollback);
+          return rollback;
+        });
       }
     })();
   }
 
-  function onCollaboratorSelect(u: { id:number; email:string; name?: string; userImageUrl?: string }) {
+  async function onCollaboratorSelect(u: { id: number; email: string; name?: string; userImageUrl?: string }) {
+    if (!u || typeof u.id !== 'number') return;
+    const ownerId = (typeof (note as any).owner?.id === 'number') ? Number((note as any).owner.id) : null;
+    const currentUserId = (user && (user as any).id) ? Number((user as any).id) : null;
+    if (ownerId != null && Number(u.id) === ownerId) return;
+    if (currentUserId != null && Number(u.id) === currentUserId) return;
+    if (collaborators.some((c) => Number(c.userId) === Number(u.id))) return;
+
+    const optimistic = { userId: Number(u.id), email: String(u.email || ''), name: u.name, userImageUrl: u.userImageUrl };
     setCollaborators((s) => {
-      if (s.find(x => x.userId === u.id)) return s;
-      const next = [...s, { userId: u.id, email: u.email, name: u.name, userImageUrl: u.userImageUrl }];
+      const next = [...s, optimistic];
       try { (onCollaboratorsChanged as any)?.(next); } catch {}
       return next;
     });
-    setShowCollaborator(false);
 
-    (async () => {
-      try {
-        const res = await fetch(`/api/notes/${note.id}/collaborators`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-          body: JSON.stringify({ email: u.email })
-        });
-        if (!res.ok) throw new Error(await res.text());
-        const data = await res.json();
-        const collab = (data && (data.collaborator || null));
-        if (collab && typeof collab.id === 'number') {
-          setCollaborators((s) => {
-            const next = s.map(c => (c.userId === u.id ? { ...c, collabId: Number(collab.id) } : c));
-            try { (onCollaboratorsChanged as any)?.(next); } catch {}
-            return next;
-          });
-        }
-      } catch (err) {
-        console.error('Failed to add collaborator', err);
-        window.alert('Failed to add collaborator');
-        // Revert optimistic add on failure
+    try {
+      const res = await fetch(`/api/notes/${note.id}/collaborators`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ userId: Number(u.id) }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      const data = await res.json();
+      const collab = (data && (data.collaborator || null));
+      if (collab && typeof collab.id === 'number') {
         setCollaborators((s) => {
-          const next = s.filter(c => c.userId !== u.id);
+          const next = s.map(c => (c.userId === u.id ? { ...c, collabId: Number(collab.id) } : c));
           try { (onCollaboratorsChanged as any)?.(next); } catch {}
           return next;
         });
       }
-    })();
+    } catch (err) {
+      console.error('Failed to add collaborator', err);
+      setCollaborators((s) => {
+        const next = s.filter(c => c.userId !== u.id);
+        try { (onCollaboratorsChanged as any)?.(next); } catch {}
+        return next;
+      });
+    }
   }
+
   async function onRemoveCollaborator(collabId: number) {
     try {
       const res = await fetch(`/api/notes/${note.id}/collaborators/${collabId}`, { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } });
@@ -1316,7 +1885,6 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
       });
     } catch (err) {
       console.error('Failed to remove collaborator', err);
-      window.alert('Failed to remove collaborator');
     }
   }
   async function performDeleteImage(imageId: number) {
@@ -1402,7 +1970,7 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
 
   const dialog = (
     <div className="image-dialog-backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget) { handleClose(); } }}>
-      <div ref={dialogRef} className="image-dialog checklist-editor editor-dialog" role="dialog" aria-modal style={{ width: 'min(1000px, 86vw)', ...dialogStyle }}>
+      <div ref={dialogRef} className={`image-dialog checklist-editor editor-dialog${DND_DEBUG.staticVisuals ? ' dnd-debug-static' : ''}`} role="dialog" aria-modal style={{ width: 'min(1000px, 86vw)', ...dialogStyle }}>
         <div className="dialog-header">
           <strong>Edit checklist</strong>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
@@ -1500,12 +2068,14 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
                     return (
                       <div
                         key={it.key ?? realIdx}
-                        className={`checklist-item ${shiftClass}${isActive ? ' is-active' : ''}`}
+                        data-real-idx={realIdx}
+                        className={`checklist-item ${shiftClass}${isActive ? ' is-active' : ''}${hiddenDragChildSet.has(realIdx) ? ' drag-hidden-child' : ''}`}
                         style={{ marginLeft: (it.indent || 0) * 18 }}
                         draggable={false}
                         onPointerCancel={() => { pointerTrackRef.current = null; }}
                         
                         onDragOver={(e) => {
+                          if (!isCoarsePointer) return;
                           e.preventDefault(); const target = e.currentTarget as HTMLElement; const rect = target.getBoundingClientRect();
                           if (rafRef.current) cancelAnimationFrame(rafRef.current);
                           rafRef.current = requestAnimationFrame(() => {
@@ -1523,25 +2093,145 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
                               else nestedPendingRef.current = { parentId: null, makeNested: false };
                               return;
                             }
-                            // Use ghost overlap with directional thresholds
-                            let shouldHover = false;
+                            const root = dialogRef.current as HTMLElement | null;
+                            const nodes = Array.from((root ? root.querySelectorAll('.checklist-item:not(.completed)') : document.querySelectorAll('.image-dialog .checklist-item:not(.completed)'))) as HTMLElement[];
+                            const currentList = previewItems ?? items;
+                            if (!nodes.length) return;
+                            const pointerY = (e as unknown as React.DragEvent<HTMLElement>).clientY || 0;
                             const ghost = ghostRef.current ? ghostRef.current.getBoundingClientRect() : null;
-                            if (ghost) {
-                              const overlap = Math.max(0, Math.min(ghost.bottom, rect.bottom) - Math.max(ghost.top, rect.top));
-                              const frac = overlap / (rect.height || 1);
-                              const movingDown = ((e as unknown as React.DragEvent<HTMLElement>).clientY || 0) > (lastDragYRef.current || ((e as unknown as React.DragEvent<HTMLElement>).clientY || 0));
-                              lastDragYRef.current = (e as unknown as React.DragEvent<HTMLElement>).clientY || 0;
-                              const thresh = movingDown ? DRAG.ghostOverlapDownPct : DRAG.ghostOverlapUpPct;
-                              shouldHover = frac >= thresh;
+                            const probeY = ghost ? ((ghost.top + ghost.bottom) / 2) : pointerY;
+                            const movingDownNow = updateMovingDown(probeY, probeY >= ((dragStartRef.current?.y) ?? probeY));
+                            const ghostHForMode = ghost ? Math.max(1, ghost.bottom - ghost.top) : 0;
+                            const minRowHForMode = Math.max(1, frozenMinRowHeightRef.current || 0);
+                            const isDraggedMultilineForMode = ghostHForMode > minRowHForMode * 1.35;
+                            if (isDraggedMultilineForMode && consumeDragDirFlip()) {
+                              captureFrozenUncheckedCenters(currentList);
+                              if (ghost) dragProbeYRef.current = movingDownNow ? ghost.bottom : ghost.top;
+                              logDragHoverState('row-dragover-dir-flip-recalc', dragging, hoverIndex, currentList);
                             }
-                            if (shouldHover) { if (clearHoverTimeoutRef.current) { clearTimeout(clearHoverTimeoutRef.current); clearHoverTimeoutRef.current = null; } setHoverIndex(prev => (prev === realIdx ? prev : realIdx)); }
-                            else { if (hoverIndex === realIdx && clearHoverTimeoutRef.current === null) { clearHoverTimeoutRef.current = window.setTimeout(() => { setHoverIndex(prev => (prev === realIdx ? null : prev)); clearHoverTimeoutRef.current = null; }, Math.max(0, DRAG.hoverClearMs)); } }
+                            let chosenDomIdx: number | null = null;
+
+                            if (isDraggedMultilineForMode && ghost) {
+                              const leadY = movingDownNow ? ghost.bottom : ghost.top;
+                              if (movingDownNow) {
+                                let bestTop = Number.NEGATIVE_INFINITY;
+                                for (let i = 0; i < nodes.length; i++) {
+                                  const real = domToRealIndexUnchecked(i, currentList);
+                                  if (real < 0) continue;
+                                  const live = nodes[i].getBoundingClientRect();
+                                  const r = getFrozenUncheckedRect(real, live);
+                                  if (!r) continue;
+                                  if (leadY >= r.top && r.top > bestTop) { bestTop = r.top; chosenDomIdx = i; }
+                                }
+                              } else {
+                                let bestBottom = Number.POSITIVE_INFINITY;
+                                for (let i = 0; i < nodes.length; i++) {
+                                  const real = domToRealIndexUnchecked(i, currentList);
+                                  if (real < 0) continue;
+                                  const live = nodes[i].getBoundingClientRect();
+                                  const r = getFrozenUncheckedRect(real, live);
+                                  if (!r) continue;
+                                  if (leadY <= r.bottom && r.bottom < bestBottom) { bestBottom = r.bottom; chosenDomIdx = i; }
+                                }
+                              }
+                            }
+
+                            if (chosenDomIdx == null && DND_DEBUG.collisionMode === 'overlap' && ghost) {
+                              let bestOverlap = -1;
+                              for (let i = 0; i < nodes.length; i++) {
+                                const real = domToRealIndexUnchecked(i, currentList);
+                                if (real < 0) continue;
+                                const live = nodes[i].getBoundingClientRect();
+                                const r = getFrozenUncheckedRect(real, live);
+                                if (!r) continue;
+                                const overlap = Math.max(0, Math.min(ghost.bottom, r.bottom) - Math.max(ghost.top, r.top));
+                                if (overlap > bestOverlap) { bestOverlap = overlap; chosenDomIdx = i; }
+                              }
+                              if ((bestOverlap || 0) <= 0) chosenDomIdx = null;
+                            }
+
+                            if (chosenDomIdx == null && DND_DEBUG.collisionMode === 'pointerWithin') {
+                              let bestEdgeDist = Number.POSITIVE_INFINITY;
+                              for (let i = 0; i < nodes.length; i++) {
+                                const real = domToRealIndexUnchecked(i, currentList);
+                                if (real < 0) continue;
+                                const live = nodes[i].getBoundingClientRect();
+                                const r = getFrozenUncheckedRect(real, live);
+                                if (!r) continue;
+                                if (pointerY >= r.top && pointerY <= r.bottom) { chosenDomIdx = i; break; }
+                                const edgeDist = Math.min(Math.abs(pointerY - r.top), Math.abs(pointerY - r.bottom));
+                                if (edgeDist < bestEdgeDist) { bestEdgeDist = edgeDist; chosenDomIdx = i; }
+                              }
+                            } else if (chosenDomIdx == null) {
+                              const probeY = ghost ? ((ghost.top + ghost.bottom) / 2) : pointerY;
+                              let bestDist = Number.POSITIVE_INFINITY;
+                              for (let i = 0; i < nodes.length; i++) {
+                                const real = domToRealIndexUnchecked(i, currentList);
+                                if (real < 0) continue;
+                                const live = nodes[i].getBoundingClientRect();
+                                const r = getFrozenUncheckedRect(real, live);
+                                if (!r) continue;
+                                const frozenCenter = frozenUncheckedCentersRef.current.get(real);
+                                const centerY = (typeof frozenCenter === 'number') ? frozenCenter : ((r.top + r.bottom) / 2);
+                                const dist = Math.abs(probeY - centerY);
+                                if (dist < bestDist) { bestDist = dist; chosenDomIdx = i; }
+                              }
+                            }
+
+                            if (chosenDomIdx != null) {
+                              let chosenRealIdx = domToRealIndexUnchecked(chosenDomIdx, currentList);
+                              if (chosenRealIdx >= 0) {
+                                const srcIdx = (typeof dragging === 'number') ? dragging : null;
+                                const targetRect = getFrozenUncheckedRect(chosenRealIdx, nodes[chosenDomIdx]?.getBoundingClientRect?.() || null);
+                                const ghostH = ghostHForMode;
+                                const isDraggedMultiline = isDraggedMultilineForMode;
+                                const coverPct = getVerticalCoverPct(ghost, targetRect);
+                                const triggerPct = getGhostCoverPct(ghost, targetRect);
+                                if (!isDraggedMultiline && chosenRealIdx !== dragging && typeof triggerPct === 'number' && triggerPct < DND_DEBUG.coverTriggerPct) {
+                                  logDragHoverState('row-dragover-cover-gated', dragging, hoverIndex, currentList, coverPct, triggerPct);
+                                  return;
+                                }
+                                if (targetRect && srcIdx != null && chosenRealIdx !== srcIdx) {
+                                  const targetH = Math.max(1, targetRect.bottom - targetRect.top);
+                                  const applyTallTargetGate = ghostH > 0 && targetH > ghostH * 1.35;
+                                  const movingDown = movingDownNow;
+                                  if (isDraggedMultiline) {
+                                    const leadY = movingDown ? ghost.bottom : ghost.top;
+                                    const boundaryY = movingDown ? targetRect.top : targetRect.bottom;
+                                    if (typeof triggerPct === 'number' && triggerPct < DND_DEBUG.multilineEdgeMinTriggerPct) {
+                                      logDragHoverState('row-dragover-edge-cover-gated', dragging, hoverIndex, currentList, coverPct, triggerPct);
+                                      return;
+                                    }
+                                    if ((movingDown && leadY < boundaryY) || (!movingDown && leadY > boundaryY)) {
+                                      logDragHoverState('row-dragover-edge-gated', dragging, hoverIndex, currentList, coverPct, triggerPct);
+                                      return;
+                                    }
+                                  } else if (!applyTallTargetGate) {
+                                    // Keep single-line behavior responsive (closest-center only).
+                                  } else {
+                                  const targetCenterY = (targetRect.top + targetRect.bottom) / 2;
+                                  if ((movingDown && probeY < targetCenterY) || (!movingDown && probeY > targetCenterY)) {
+                                    logDragHoverState('row-dragover-gated', dragging, hoverIndex, currentList, coverPct, triggerPct);
+                                    return;
+                                  }
+                                  }
+                                }
+                                if (clearHoverTimeoutRef.current) { clearTimeout(clearHoverTimeoutRef.current); clearHoverTimeoutRef.current = null; }
+                                setHoverIndex(prev => {
+                                  const next = (prev === chosenRealIdx ? prev : chosenRealIdx);
+                                  logDragHoverState('row-dragover', dragging, next, currentList, coverPct, triggerPct);
+                                  return next;
+                                });
+                              }
+                            }
                           });
                         }}
                         onDrop={(e) => {
+                          if (!isCoarsePointer) return;
                           e.preventDefault();
                           const src = dragging !== null ? dragging : parseInt(e.dataTransfer.getData('text/plain') || '-1', 10);
                           const dst = realIdx;
+                          let pendingVerticalMove = false;
                           if (src >= 0) {
                             const dx = dragStartRef.current ? ((e.clientX || 0) - dragStartRef.current.x) : 0;
                             const treatHorizontal = dragDirectionRef.current === 'horizontal' || Math.abs(dx) > DRAG.indentPx;
@@ -1599,18 +2289,26 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
                               if (src !== dst) {
                                 const [bStart, bEnd] = getBlockRange(items, src);
                                 moveBlockY(bStart, bEnd, dst);
+                                pendingVerticalMove = true;
                               }
                             }
                           }
+                          if (pendingVerticalMove) applyDropSettleNoAnim();
                           endDragCleanup();
                         }}
-                        onDragLeave={() => { if (hoverIndex === realIdx) setHoverIndex(null); if (rafRef.current) { cancelAnimationFrame(rafRef.current); rafRef.current = null; } }}
+                        onDragLeave={() => {
+                          if (!isCoarsePointer) return;
+                          const keepHoverStable = (dragging !== null && !!ghostRef.current && dragDirectionRef.current === 'vertical');
+                          if (!keepHoverStable && hoverIndex === realIdx) setHoverIndex(null);
+                          if (rafRef.current) { cancelAnimationFrame(rafRef.current); rafRef.current = null; }
+                        }}
                       >
                         <div
                           className="drag-gutter"
                           style={{ cursor: 'grab', userSelect: 'none', WebkitUserSelect: 'none', MozUserSelect: 'none', msUserSelect: 'none', touchAction: 'none' }}
-                          onMouseDown={(e) => { e.preventDefault(); }}
+                          onMouseDown={(e) => { if (isCoarsePointer) e.preventDefault(); }}
                           onPointerDown={(e) => {
+                            if (!isCoarsePointer) return;
                             // Critical for mobile: prevent the page/dialog from starting a scroll gesture.
                             try { e.preventDefault(); } catch {}
                             try { e.stopPropagation(); } catch {}
@@ -1623,6 +2321,7 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
                             setPreviewItems(null);
                           }}
                           onPointerMove={(e) => {
+                            if (!isCoarsePointer) return;
                             const p = pointerTrackRef.current;
                             if (!p || !p.active) return;
                             // With touch-action:none this is usually redundant, but keep it to reduce scroll jitter.
@@ -1639,13 +2338,37 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
                               // create ghost once
                               if (!ghostRef.current) {
                                 const root = dialogRef.current as HTMLElement | null;
-                                const nodes = Array.from((root ? root.querySelectorAll('.checklist-item:not(.completed)') : document.querySelectorAll('.image-dialog .checklist-item:not(.completed)'))) as HTMLElement[];
+                                  const nodes = Array.from((root ? root.querySelectorAll('.checklist-item:not(.completed)') : document.querySelectorAll('.image-dialog .checklist-item:not(.completed)'))) as HTMLElement[];
                                 const srcRealIdx = p.idx ?? -1;
                                 const currentList = previewItems ?? items;
+                                  const [sStart, sEnd] = (srcRealIdx >= 0 && srcRealIdx < currentList.length)
+                                    ? getBlockRange(currentList as any, srcRealIdx)
+                                    : [srcRealIdx, srcRealIdx + 1];
+                                  const childIdxs: number[] = [];
+                                  for (let ii = sStart + 1; ii < sEnd; ii++) childIdxs.push(ii);
+                                  setHiddenDragChildIndices(childIdxs);
                                 const srcDomIdx = realToDomIndexUnchecked(srcRealIdx, currentList);
                                 const srcEl = nodes[srcDomIdx];
                                 if (srcEl) {
                                   const rect = srcEl.getBoundingClientRect();
+                                    let blockHeight = Math.max(1, rect.height);
+                                    try {
+                                      const allRows = Array.from((root ? root.querySelectorAll('.checklist-item[data-real-idx]') : document.querySelectorAll('.image-dialog .checklist-item[data-real-idx]'))) as HTMLElement[];
+                                      let top = Number.POSITIVE_INFINITY;
+                                      let bottom = Number.NEGATIVE_INFINITY;
+                                      for (const rowEl of allRows) {
+                                        const ridx = Number(rowEl.getAttribute('data-real-idx'));
+                                        if (!Number.isFinite(ridx)) continue;
+                                        if (ridx >= sStart && ridx < sEnd) {
+                                          const rr = rowEl.getBoundingClientRect();
+                                          top = Math.min(top, rr.top);
+                                          bottom = Math.max(bottom, rr.bottom);
+                                        }
+                                      }
+                                      if (Number.isFinite(top) && Number.isFinite(bottom) && bottom > top) {
+                                        blockHeight = Math.max(1, Math.round(bottom - top));
+                                      }
+                                    } catch {}
                                   // Keep the ghost anchored under the pointer immediately.
                                   dragOffsetRef.current = { x: (e.clientX - rect.left), y: (e.clientY - rect.top) };
                                   const ghost = srcEl.cloneNode(true) as HTMLElement;
@@ -1659,18 +2382,24 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
                                   ghost.classList.add('checklist-ghost');
                                   document.body.appendChild(ghost);
                                   ghostRef.current = ghost as any;
+                                  dragProbeYRef.current = null;
+                                  dragMoveDirRef.current = null;
+                                  dragDirOpposeAccumRef.current = 0;
+                                  captureFrozenUncheckedCenters(currentList);
 
                                   // mark source hidden
                                   try { srcEl.classList.add('drag-source'); } catch (err) {}
                                   setDragging(srcRealIdx);
                                   setHoverIndex(srcRealIdx);
+                                  setHoverEdge('top');
+                                  vibrateDragStart(10);
                                   // record source left for horizontal locking
                                   sourceLeftRef.current = rect.left;
                                   // set shift distance so neighbors occupy the dragged item's full height
                                   try {
                                     const root2 = dialogRef.current as HTMLElement | null;
                                     if (root2) {
-                                      root2.style.setProperty('--checklist-item-shift', `${Math.round(rect.height)}px`);
+                                      root2.style.setProperty('--checklist-item-shift', `${Math.round(blockHeight)}px`);
                                       root2.classList.add('is-dragging');
                                     }
                                   } catch (err) { }
@@ -1682,29 +2411,50 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
                                 ghostRef.current.style.top = (e.clientY - (dragOffsetRef.current.y || 0)) + 'px';
                                 startChecklistAutoScroll();
                               }
-                              // compute hover index using ghost overlap to avoid jitter
+                              // compute hover index using normalized hit-test (stable for variable-height rows)
                               const root = dialogRef.current as HTMLElement | null;
                               const nodes = Array.from((root ? root.querySelectorAll('.checklist-item:not(.completed)') : document.querySelectorAll('.image-dialog .checklist-item:not(.completed)'))) as HTMLElement[];
                               if (nodes.length) {
-                                let chosenDomIdx: number | null = null;
-                                let bestFrac = 0;
-                                const ghostRect = ghostRef.current ? ghostRef.current.getBoundingClientRect() : { top: e.clientY - 10, bottom: e.clientY + 10 };
-                                const movingDown = e.clientY > (lastPointerYRef.current || e.clientY);
-                                lastPointerYRef.current = e.clientY;
-                                const overlapThreshold = movingDown ? DRAG.ghostOverlapDownPct : DRAG.ghostOverlapUpPct;
+                                let chosenRealIdx: number | null = null;
+                                let chosenEdge: 'top' | 'bottom' | null = null;
+                                let bestDist = Number.POSITIVE_INFINITY;
+                                let deadZoneHit = false;
+                                const hiddenSet = hiddenDragChildSet;
+                                const pointerY = e.clientY || 0;
+                                const currentList = previewItems ?? items;
+                                const minRowH = Math.max(22, Number(frozenMinRowHeightRef.current || 22));
                                 for (let i = 0; i < nodes.length; i++) {
+                                  const real = domToRealIndexUnchecked(i, currentList);
+                                  if (real < 0) continue;
+                                  if (hiddenSet.has(real)) continue;
+                                  if (typeof dragging === 'number' && real === dragging) continue;
                                   const r = nodes[i].getBoundingClientRect();
-                                  const overlap = Math.max(0, Math.min(ghostRect.bottom, r.bottom) - Math.max(ghostRect.top, r.top));
-                                  const frac = overlap / (r.height || 1);
-                                  if (frac >= overlapThreshold && frac >= bestFrac) {
-                                    bestFrac = frac;
-                                    chosenDomIdx = i;
+                                  const inside = pointerY >= r.top && pointerY <= r.bottom;
+                                  const dist = inside ? 0 : Math.min(Math.abs(pointerY - r.top), Math.abs(pointerY - r.bottom));
+                                  const multiline = Math.max(1, r.bottom - r.top) > (minRowH * 1.35);
+                                  const edge = getHitTestEdge(pointerY, r, multiline);
+                                  if (inside && edge == null) {
+                                    deadZoneHit = true;
+                                    chosenRealIdx = real;
+                                    chosenEdge = null;
+                                    bestDist = 0;
+                                    break;
+                                  }
+                                  if (edge == null) continue;
+                                  if (dist < bestDist) {
+                                    bestDist = dist;
+                                    chosenRealIdx = real;
+                                    chosenEdge = edge;
                                   }
                                 }
-                                const currentList = previewItems ?? items;
-                                if (chosenDomIdx != null) {
-                                  const chosenRealIdx = domToRealIndexUnchecked(chosenDomIdx, currentList);
-                                  if (chosenRealIdx !== hoverIndex) setHoverIndex(chosenRealIdx);
+                                if (deadZoneHit) {
+                                  logDragHoverState('pointer-hit-test-dead-zone', dragging, hoverIndex, currentList);
+                                  return;
+                                }
+                                if (typeof chosenRealIdx === 'number' && chosenRealIdx >= 0 && chosenEdge) {
+                                  setHoverIndex(chosenRealIdx);
+                                  setHoverEdge(chosenEdge);
+                                  logDragHoverState('pointer-hit-test', dragging, chosenRealIdx, currentList);
                                 }
                               }
                               return;
@@ -1755,8 +2505,10 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
                             }
                           }}
                           onPointerUp={(e) => {
+                            if (!isCoarsePointer) return;
                             try { (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId); } catch {}
                             pointerTrackRef.current = null;
+                            let pendingVerticalMove = false;
                             if (previewItems) {
                               const yarr = yarrayRef.current;
                               if (yarr) {
@@ -1794,13 +2546,31 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
                               const current = items;
                               const [sStart, sEnd] = getBlockRange(current, srcRealIdx);
                               if (hoverIndex !== null) {
-                                // when moving down, insert after the hovered item; when moving up, insert before
-                                const dstRealIdx = srcRealIdx < hoverIndex ? hoverIndex + 1 : hoverIndex;
-                                if (!(dstRealIdx >= sStart && dstRealIdx < sEnd)) moveBlockY(sStart, sEnd, dstRealIdx);
+                                const edge = hoverEdgeRef.current;
+                                const dstRealIdx = Math.max(0, Math.min(current.length, hoverIndex + (edge === 'bottom' ? 1 : 0)));
+                                if (!(dstRealIdx >= sStart && dstRealIdx < sEnd)) {
+                                  // Auto-nest: when dropping near nested items, adopt surrounding indent level.
+                                  const len = Math.max(0, sEnd - sStart);
+                                  const firstIndent = Number(current?.[sStart]?.indent || 0);
+                                  let insertAt = dstRealIdx;
+                                  if (insertAt > sStart) insertAt = insertAt - len;
+                                  const baseWithout = current.slice();
+                                  baseWithout.splice(sStart, len);
+                                  if (insertAt < 0) insertAt = 0;
+                                  // Rule: first visible row can never be a child.
+                                  const forceTopLevel = insertAt <= 0;
+                                  const prevIndent = insertAt > 0 ? Number(baseWithout?.[insertAt - 1]?.indent || 0) : 0;
+                                  const nextIndent = insertAt < baseWithout.length ? Number(baseWithout?.[insertAt]?.indent || 0) : 0;
+                                  const desiredIndent = forceTopLevel ? 0 : (nextIndent > prevIndent ? nextIndent : prevIndent);
+                                  const indentDelta = desiredIndent - firstIndent;
+                                  moveBlockY(sStart, sEnd, dstRealIdx, indentDelta);
+                                  pendingVerticalMove = true;
+                                }
                               } else {
                                 // no hover; no-op
                               }
                             }
+                            if (pendingVerticalMove) applyDropSettleNoAnim();
                             dragDirectionRef.current = null;
                             // cleanup ghost and classes
                             endDragCleanup();
@@ -1955,7 +2725,7 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
                       return (
                         <div
                           key={it.key ?? realIdx}
-                          className={`checklist-item completed ${shiftClass}${isActive ? ' is-active' : ''}`}
+                          className={`checklist-item completed ${shiftClass}${isActive ? ' is-active' : ''}${hiddenDragChildSet.has(realIdx) ? ' drag-hidden-child' : ''}`}
                           style={{ marginLeft: (it.indent || 0) * 18 }}
                           draggable={false}
                           onClick={(e) => { try { e.stopPropagation(); } catch {} try { setActiveRowKey(rowKey); } catch {} }}
