@@ -7,9 +7,33 @@ type AdminUser = {
   name: string | null;
   role: 'admin' | 'user' | string;
   userImageUrl: string | null;
+  notesCount?: number;
+  imagesCount?: number;
+  dbStorageBytes?: number;
+  filesystemBytes?: number;
+  storageBytes?: number;
   createdAt?: any;
   updatedAt?: any;
 };
+
+function formatCount(v: number | null | undefined): string {
+  const n = Number(v || 0);
+  try { return new Intl.NumberFormat().format(Number.isFinite(n) ? n : 0); } catch { return String(Number.isFinite(n) ? n : 0); }
+}
+
+function formatBytes(v: number | null | undefined): string {
+  let n = Number(v || 0);
+  if (!Number.isFinite(n) || n < 0) n = 0;
+  if (n < 1024) return `${Math.round(n)} B`;
+  const units = ['KB', 'MB', 'GB', 'TB'];
+  let u = -1;
+  do {
+    n /= 1024;
+    u += 1;
+  } while (n >= 1024 && u < units.length - 1);
+  const digits = n >= 100 ? 0 : n >= 10 ? 1 : 2;
+  return `${n.toFixed(digits)} ${units[u]}`;
+}
 
 async function readError(res: Response): Promise<string> {
   try {
@@ -252,6 +276,7 @@ export default function UserManagementModal({ onClose }: { onClose: () => void }
             <div className="user-mgmt__row user-mgmt__row--head" role="row">
               <div role="columnheader">User</div>
               <div role="columnheader">Role</div>
+              <div role="columnheader">Usage</div>
               <div role="columnheader" style={{ textAlign: 'right' }}>Actions</div>
             </div>
             {loading ? (
@@ -276,6 +301,18 @@ export default function UserManagementModal({ onClose }: { onClose: () => void }
                       <div style={{ minWidth: 0 }}>
                         <div className="user-mgmt__email" title={u.email}>{u.email}{isMe ? ' (you)' : ''}</div>
                         {u.name && <div className="user-mgmt__name" title={u.name}>{u.name}</div>}
+                        <div className="user-mgmt__stats user-mgmt__stats--mobile" title={`${formatCount(u.notesCount)} notes • ${formatCount(u.imagesCount)} images • Total ${formatBytes(u.storageBytes)} • Files ${formatBytes(u.filesystemBytes)} • DB ${formatBytes(u.dbStorageBytes)}`}>
+                          <span>{formatCount(u.notesCount)} notes</span>
+                          <span>•</span>
+                          <span>{formatCount(u.imagesCount)} images</span>
+                          <span>•</span>
+                          <span>Total {formatBytes(u.storageBytes)}</span>
+                        </div>
+                        <div className="user-mgmt__stats user-mgmt__stats--mobile-sub" title={`Filesystem ${formatBytes(u.filesystemBytes)} • DB ${formatBytes(u.dbStorageBytes)}`}>
+                          <span>Files {formatBytes(u.filesystemBytes)}</span>
+                          <span>•</span>
+                          <span>DB {formatBytes(u.dbStorageBytes)}</span>
+                        </div>
                       </div>
                     </div>
 
@@ -290,6 +327,16 @@ export default function UserManagementModal({ onClose }: { onClose: () => void }
                         <option value="user">User</option>
                         <option value="admin">Admin</option>
                       </select>
+                    </div>
+
+                    <div role="cell" className="user-mgmt__statscell" title={`${formatCount(u.notesCount)} notes • ${formatCount(u.imagesCount)} images • Total ${formatBytes(u.storageBytes)} • Files ${formatBytes(u.filesystemBytes)} • DB ${formatBytes(u.dbStorageBytes)}`}>
+                      <div className="user-mgmt__stats user-mgmt__stats--desktop">
+                        <span>{formatCount(u.notesCount)} notes</span>
+                        <span>{formatCount(u.imagesCount)} images</span>
+                        <span>Total {formatBytes(u.storageBytes)}</span>
+                        <span>Files {formatBytes(u.filesystemBytes)}</span>
+                        <span>DB {formatBytes(u.dbStorageBytes)}</span>
+                      </div>
                     </div>
 
                     <div role="cell" className="user-mgmt__actioncell">

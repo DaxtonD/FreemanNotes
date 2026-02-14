@@ -172,9 +172,16 @@ UPLOADS_DIR=/app/uploads
 
 # Host path (example) -> store on array share
 UPLOADS_VOLUME=/mnt/user/freemannotes/uploads
+
+# Optional Unraid-style identity/permissions
+PUID=99
+PGID=100
+UMASK=002
 ```
 
 Now `docker compose up --build` will mount that host directory into the container and all uploads (avatars + note images) will be stored there.
+
+If `PUID` and `PGID` are provided, the container will run the app process under that uid/gid (via `gosu`) and apply `UMASK` at startup. This is optional, but recommended on Unraid when bind-mounting to array shares.
 
 Compose already includes an `uploads_data` named volume for the app service. When updating, avoid `docker compose down -v` unless you intentionally want to delete uploads.
 

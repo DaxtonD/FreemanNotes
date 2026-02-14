@@ -27,6 +27,10 @@ services:
       - .env
     environment:
       - OCR_SERVICE_URL=http://ocr:8080/ocr
+      # Optional (Unraid-style): run app as host uid/gid and set process umask.
+      # - PUID=${PUID:-99}
+      # - PGID=${PGID:-100}
+      # - UMASK=${UMASK:-002}
       # Store uploads (avatars + note images). In Unraid, set UPLOADS_VOLUME to a host path
       # on the array (e.g. /mnt/user/...) to avoid using Docker's default data-root on cache.
       - UPLOADS_DIR=${UPLOADS_DIR:-/app/uploads}

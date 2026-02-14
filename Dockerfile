@@ -49,6 +49,7 @@ RUN chmod +x server/scripts/docker-entrypoint.sh
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         python3 python3-venv python3-pip \
+        gosu \
         openssl ca-certificates \
         libgomp1 \
         libglib2.0-0 \
@@ -70,6 +71,7 @@ RUN npx prisma generate
 
 # Point app to the venv Python
 ENV PYTHON_BIN=/opt/ocr-venv/bin/python
+ENV UMASK=002
 
 EXPOSE 4000
 ENTRYPOINT ["/bin/sh", "server/scripts/docker-entrypoint.sh"]

@@ -9,6 +9,19 @@ Adheres to Semantic Versioning (MAJOR.MINOR.PATCH).
 ### Added
 - 
 
+## [0.6.6] - 2026-02-13
+
+### Added
+- Admin User Management now shows per-user usage stats: note count, image count, database usage, filesystem usage, and total storage.
+- Optional Unraid-style container environment support: `PUID`, `PGID`, and `UMASK`.
+
+### Changed
+- User Management layout was refined for mobile so usage stats remain readable on narrow screens.
+- Docker runtime now supports optional uid/gid privilege drop at startup (via `gosu`) for bind-mounted shares.
+
+### Fixed
+- Editor image dock behavior across note/checklist editors: the Images toggle stays fixed at the bottom while expanded images reveal upward and editor body space shrinks/expands accordingly.
+
 ## [0.6.3] - 2026-02-10
 
 ### Added

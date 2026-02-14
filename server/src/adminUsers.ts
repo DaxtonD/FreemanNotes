@@ -48,9 +48,52 @@ function safeUser(u: any) {
     name: u.name == null ? null : String(u.name),
     role: String(u.role || "user"),
     userImageUrl: u.userImageUrl == null ? null : String(u.userImageUrl),
+    notesCount: Number((u as any)?.notesCount || 0),
+    imagesCount: Number((u as any)?.imagesCount || 0),
+    dbStorageBytes: Number((u as any)?.dbStorageBytes || 0),
+    filesystemBytes: Number((u as any)?.filesystemBytes || 0),
+    storageBytes: Number((u as any)?.storageBytes || 0),
     createdAt: u.createdAt,
     updatedAt: u.updatedAt
   };
+}
+
+async function getDirectorySizeBytes(dir: string): Promise<number> {
+  let total = 0;
+  const stack = [dir];
+  while (stack.length > 0) {
+    const cur = stack.pop() as string;
+    let entries: any[] = [];
+    try {
+      entries = await fsp.readdir(cur, { withFileTypes: true } as any);
+    } catch {
+      continue;
+    }
+    for (const entry of entries as any[]) {
+      const full = path.join(cur, String((entry as any).name || ''));
+      if ((entry as any).isDirectory?.()) {
+        stack.push(full);
+        continue;
+      }
+      if (!(entry as any).isFile?.()) continue;
+      try {
+        const st = await fsp.stat(full);
+        total += Number((st as any)?.size || 0);
+      } catch {}
+    }
+  }
+  return Number.isFinite(total) ? total : 0;
+}
+
+async function getUserUploadsBytes(userId: number): Promise<number> {
+  const uid = Number(userId);
+  if (!Number.isFinite(uid) || uid <= 0) return 0;
+  const dir = path.join(getUploadsDir(), 'notes', String(uid));
+  try {
+    return await getDirectorySizeBytes(dir);
+  } catch {
+    return 0;
+  }
 }
 
 function stripUrlQueryAndHash(u: string): string {
@@ -169,7 +212,133 @@ router.get("/api/admin/users", async (req: Request, res: Response) => {
       }
     });
 
-    res.json({ users: (users || []).map(safeUser) });
+    const userIds = (users || []).map((u: any) => Number(u.id)).filter((id) => Number.isFinite(id));
+    const statsByUserId = new Map<number, { notesCount: number; imagesCount: number; dbStorageBytes: number; filesystemBytes: number; storageBytes: number }>();
+
+    if (userIds.length > 0) {
+      const idsCsv = userIds.join(',');
+
+      const noteStats = await prisma.$queryRawUnsafe<Array<{ userId: number; notesCount: number; bytes: number }>>(
+        `
+        SELECT
+          n.ownerId AS userId,
+          COUNT(*) AS notesCount,
+          COALESCE(SUM(
+            OCTET_LENGTH(COALESCE(n.title, '')) +
+            OCTET_LENGTH(COALESCE(n.body, '')) +
+            OCTET_LENGTH(COALESCE(n.color, '')) +
+            OCTET_LENGTH(COALESCE(n.linkPreviewUrl, '')) +
+            OCTET_LENGTH(COALESCE(n.linkPreviewTitle, '')) +
+            OCTET_LENGTH(COALESCE(n.linkPreviewDescription, '')) +
+            OCTET_LENGTH(COALESCE(n.linkPreviewImageUrl, '')) +
+            OCTET_LENGTH(COALESCE(n.linkPreviewDomain, ''))
+          ), 0) AS bytes
+        FROM Note n
+        WHERE n.ownerId IN (${idsCsv})
+        GROUP BY n.ownerId
+        `
+      );
+
+      const itemStats = await prisma.$queryRawUnsafe<Array<{ userId: number; bytes: number }>>(
+        `
+        SELECT
+          n.ownerId AS userId,
+          COALESCE(SUM(OCTET_LENGTH(COALESCE(ni.content, ''))), 0) AS bytes
+        FROM NoteItem ni
+        INNER JOIN Note n ON n.id = ni.noteId
+        WHERE n.ownerId IN (${idsCsv})
+        GROUP BY n.ownerId
+        `
+      );
+
+      const imageStats = await prisma.$queryRawUnsafe<Array<{ userId: number; imagesCount: number; bytes: number }>>(
+        `
+        SELECT
+          n.ownerId AS userId,
+          COUNT(*) AS imagesCount,
+          COALESCE(SUM(
+            OCTET_LENGTH(COALESCE(img.url, '')) +
+            OCTET_LENGTH(COALESCE(img.ocrText, '')) +
+            OCTET_LENGTH(COALESCE(img.ocrSearchText, '')) +
+            OCTET_LENGTH(COALESCE(img.ocrDataJson, '')) +
+            OCTET_LENGTH(COALESCE(img.ocrHash, '')) +
+            OCTET_LENGTH(COALESCE(img.ocrLang, '')) +
+            OCTET_LENGTH(COALESCE(img.ocrStatus, ''))
+          ), 0) AS bytes
+        FROM NoteImage img
+        INNER JOIN Note n ON n.id = img.noteId
+        WHERE n.ownerId IN (${idsCsv})
+        GROUP BY n.ownerId
+        `
+      );
+
+      const linkPreviewStats = await prisma.$queryRawUnsafe<Array<{ userId: number; bytes: number }>>(
+        `
+        SELECT
+          n.ownerId AS userId,
+          COALESCE(SUM(
+            OCTET_LENGTH(COALESCE(lp.urlHash, '')) +
+            OCTET_LENGTH(COALESCE(lp.url, '')) +
+            OCTET_LENGTH(COALESCE(lp.title, '')) +
+            OCTET_LENGTH(COALESCE(lp.description, '')) +
+            OCTET_LENGTH(COALESCE(lp.imageUrl, '')) +
+            OCTET_LENGTH(COALESCE(lp.domain, ''))
+          ), 0) AS bytes
+        FROM NoteLinkPreview lp
+        INNER JOIN Note n ON n.id = lp.noteId
+        WHERE n.ownerId IN (${idsCsv})
+        GROUP BY n.ownerId
+        `
+      );
+
+      for (const id of userIds) {
+        statsByUserId.set(id, { notesCount: 0, imagesCount: 0, dbStorageBytes: 0, filesystemBytes: 0, storageBytes: 0 });
+      }
+
+      for (const row of (noteStats || [])) {
+        const userId = Number((row as any)?.userId);
+        const cur = statsByUserId.get(userId) || { notesCount: 0, imagesCount: 0, dbStorageBytes: 0, filesystemBytes: 0, storageBytes: 0 };
+        cur.notesCount = Number((row as any)?.notesCount || 0);
+        cur.dbStorageBytes += Number((row as any)?.bytes || 0);
+        statsByUserId.set(userId, cur);
+      }
+      for (const row of (itemStats || [])) {
+        const userId = Number((row as any)?.userId);
+        const cur = statsByUserId.get(userId) || { notesCount: 0, imagesCount: 0, dbStorageBytes: 0, filesystemBytes: 0, storageBytes: 0 };
+        cur.dbStorageBytes += Number((row as any)?.bytes || 0);
+        statsByUserId.set(userId, cur);
+      }
+      for (const row of (imageStats || [])) {
+        const userId = Number((row as any)?.userId);
+        const cur = statsByUserId.get(userId) || { notesCount: 0, imagesCount: 0, dbStorageBytes: 0, filesystemBytes: 0, storageBytes: 0 };
+        cur.imagesCount = Number((row as any)?.imagesCount || 0);
+        cur.dbStorageBytes += Number((row as any)?.bytes || 0);
+        statsByUserId.set(userId, cur);
+      }
+      for (const row of (linkPreviewStats || [])) {
+        const userId = Number((row as any)?.userId);
+        const cur = statsByUserId.get(userId) || { notesCount: 0, imagesCount: 0, dbStorageBytes: 0, filesystemBytes: 0, storageBytes: 0 };
+        cur.dbStorageBytes += Number((row as any)?.bytes || 0);
+        statsByUserId.set(userId, cur);
+      }
+
+      const fsSizes = await Promise.all(
+        userIds.map(async (id) => ({ id, bytes: await getUserUploadsBytes(id) }))
+      );
+      for (const row of fsSizes) {
+        const cur = statsByUserId.get(Number(row.id)) || { notesCount: 0, imagesCount: 0, dbStorageBytes: 0, filesystemBytes: 0, storageBytes: 0 };
+        cur.filesystemBytes = Number(row.bytes || 0);
+        cur.storageBytes = Number(cur.dbStorageBytes || 0) + Number(cur.filesystemBytes || 0);
+        statsByUserId.set(Number(row.id), cur);
+      }
+    }
+
+    res.json({
+      users: (users || []).map((u: any) => {
+        const stats = statsByUserId.get(Number(u.id)) || { notesCount: 0, imagesCount: 0, dbStorageBytes: 0, filesystemBytes: 0, storageBytes: 0 };
+        return safeUser({ ...u, ...stats });
+      })
+    });
   } catch (err) {
     res.status(500).json({ error: String(err) });
   }
