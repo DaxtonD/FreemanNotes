@@ -71,6 +71,7 @@ export default function RichTextEditor({ note, onClose, onSaved, noteBg, onImage
   const backIdRef = React.useRef<string>((() => {
     try { return `rte-${note?.id || 'x'}-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`; } catch { return `rte-${Math.random()}`; }
   })());
+  const dialogRef = React.useRef<HTMLDivElement | null>(null);
 
   React.useEffect(() => {
     window.dispatchEvent(new Event('freemannotes:editor-modal-open'));
@@ -84,6 +85,30 @@ export default function RichTextEditor({ note, onClose, onSaved, noteBg, onImage
       window.dispatchEvent(new Event('freemannotes:editor-modal-close'));
     };
   }, []);
+
+  // Open in view mode: do not keep any field focused/selected.
+  React.useEffect(() => {
+    const id = window.setTimeout(() => {
+      try {
+        const active = document.activeElement as HTMLElement | null;
+        if (active && (active.matches?.('input, textarea, [contenteditable="true"]') || active.closest?.('[contenteditable="true"]'))) {
+          active.blur();
+        }
+      } catch {}
+      try {
+        const root = dialogRef.current as HTMLElement | null;
+        const active = document.activeElement as HTMLElement | null;
+        if (root && active && root.contains(active)) active.blur();
+      } catch {}
+      try {
+        const root = dialogRef.current as HTMLElement | null;
+        const pm = root?.querySelector?.('.ProseMirror[contenteditable="true"]') as HTMLElement | null;
+        pm?.blur?.();
+      } catch {}
+      try { document.getSelection()?.removeAllRanges(); } catch {}
+    }, 0);
+    return () => window.clearTimeout(id);
+  }, [note.id]);
 
   const [title, setTitle] = React.useState<string>(note.title || '');
   const [maximized, setMaximized] = React.useState<boolean>(false);
@@ -715,7 +740,7 @@ export default function RichTextEditor({ note, onClose, onSaved, noteBg, onImage
 
   const dialog = (
     <div className="image-dialog-backdrop editor-backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget) { handleClose(); } }}>
-      <div className={`image-dialog editor-dialog${maximized ? ' maximized' : ''}${imagesOpen ? ' images-open' : ''}`} role="dialog" aria-modal style={{ width: maximized ? '96vw' : 'min(1000px, 86vw)', ...dialogStyle }}>
+      <div ref={dialogRef} className={`image-dialog editor-dialog${maximized ? ' maximized' : ''}${imagesOpen ? ' images-open' : ''}`} role="dialog" aria-modal style={{ width: maximized ? '96vw' : 'min(1000px, 86vw)', ...dialogStyle }}>
         <div className="dialog-header">
           <strong aria-hidden="true" />
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
@@ -898,19 +923,8 @@ export default function RichTextEditor({ note, onClose, onSaved, noteBg, onImage
 
           {images && images.length > 0 && (
             <div className="editor-images editor-images-dock">
-              <button
-                type="button"
-                className="btn editor-images-toggle"
-                onClick={() => setImagesOpen(o => !o)}
-                aria-expanded={imagesOpen}
-              >
-                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
-                  <span style={{ transform: imagesOpen ? 'rotate(90deg)' : 'rotate(0deg)', display: 'inline-block' }}>{'▸'}</span>
-                  <span>Images ({images.length})</span>
-                </span>
-              </button>
               {imagesOpen && (
-                <div className="editor-images-grid" style={{ marginTop: 8 }}>
+                <div className="editor-images-grid">
                   {images.map(img => (
                     <div
                       key={img.id}
@@ -977,6 +991,17 @@ export default function RichTextEditor({ note, onClose, onSaved, noteBg, onImage
                   ))}
                 </div>
               )}
+              <button
+                type="button"
+                className="btn editor-images-toggle"
+                onClick={() => setImagesOpen(o => !o)}
+                aria-expanded={imagesOpen}
+              >
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+                  <span style={{ transform: imagesOpen ? 'rotate(90deg)' : 'rotate(0deg)', display: 'inline-block' }}>{'▸'}</span>
+                  <span>Images ({images.length})</span>
+                </span>
+              </button>
             </div>
           )}
 

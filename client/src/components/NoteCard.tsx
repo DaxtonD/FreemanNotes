@@ -1880,13 +1880,14 @@ export default function NoteCard({
                   }}
                 >
                   {(() => {
-                    const maxSlots = Math.max(1, thumbsPerRow) * 3;
+                    const maxRows = isCoarsePointer ? 2 : 3;
+                    const maxSlots = Math.max(1, thumbsPerRow) * maxRows;
                     const visible = images.slice(0, Math.min(images.length, maxSlots));
                     const hiddenCount = Math.max(0, images.length - maxSlots);
                     return visible.map((img, idx) => (
                       <button
                         key={img.id}
-                        className="note-image"
+                        className={`note-image${hiddenCount > 0 && idx === visible.length - 1 ? ' has-more' : ''}`}
                         style={{ padding: 0, border: 'none', background: 'transparent', cursor: 'pointer' }}
                         onClick={(e) => {
                           try {

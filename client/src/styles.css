@@ -108,10 +108,10 @@ html{
 @media (pointer: coarse), (any-pointer: coarse), (hover: none), (any-hover: none) {
   .dialog-body .note-title-input,
   .take-note-expanded .note-title-input{
-    padding-left: 12px;
-    padding-right: 12px;
-    margin-left: -12px;
-    margin-right: -12px;
+    padding-left: 18px;
+    padding-right: 18px;
+    margin-left: 10px;
+    margin-right: 10px;
   }
 }
 
@@ -1372,6 +1372,7 @@ html.is-editor-modal-open .mobile-add-note{
   background: linear-gradient(to bottom, rgba(0,0,0,0), rgba(0,0,0,0.55));
   mix-blend-mode: multiply;
   z-index: 18;
+  display: none;
 }
 .note-card[data-clipped="1"]::before{
   content: "…";
@@ -1385,6 +1386,29 @@ html.is-editor-modal-open .mobile-add-note{
   opacity: 0.7;
   pointer-events: none;
   z-index: 19;
+}
+/* If the note has an image chip row, still hide only the gradient layer. */
+.note-card[data-clipped="1"]:has(.note-images-toggle)::after{
+  display: none;
+}
+/* Keep the ellipsis under the image chip when present. */
+.note-card[data-clipped="1"]:has(.note-images-toggle)::before{
+  z-index: 20;
+}
+/* Keep image chip clear of clipped-content ellipsis. */
+.note-card[data-clipped="1"] .note-images-toggle{
+  margin-bottom: 24px;
+}
+/* When images are expanded, keep ellipsis above the image container, and chip above ellipsis. */
+.note-card[data-clipped="1"].is-images-expanded::before{
+  bottom: 2px;
+  z-index: 10072;
+}
+.note-card[data-clipped="1"].is-images-expanded .note-images-toggle{
+  z-index: 10073;
+}
+.note-card[data-clipped="1"].is-images-expanded .chip.chip--images{
+  z-index: 10074;
 }
 
 /* Checklist preview: allow wrapping up to 4 lines per item */
@@ -1834,6 +1858,10 @@ button.chip:focus{outline:2px solid rgba(255,255,255,0.18);outline-offset:2px;}
   width: 100%;
   height: 100%;
   object-fit: cover;
+}
+.note-card .note-images .note-image.has-more img{
+  filter: blur(1.6px) brightness(0.78);
+  transform: scale(1.03);
 }
 .note-card .note-images .note-image-moreOverlay{
   position: absolute;
@@ -2351,6 +2379,9 @@ button.chip:focus{outline:2px solid rgba(255,255,255,0.18);outline-offset:2px;}
 }
 .image-dialog.editor-dialog .editor-images.editor-images-dock{
   flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
   position: sticky;
   bottom: 0;
   margin: 0;
@@ -2364,27 +2395,27 @@ button.chip:focus{outline:2px solid rgba(255,255,255,0.18);outline-offset:2px;}
   border-top-color: rgba(0,0,0,0.08);
 }
 .image-dialog.editor-dialog .editor-images.editor-images-dock .editor-images-grid{
-  position: absolute;
-  left: 12px;
-  right: 12px;
-  bottom: calc(100% + 8px);
+  position: static;
+  left: auto;
+  right: auto;
+  bottom: auto;
   max-height: var(--editor-images-panel-height, min(40dvh, 340px));
   overflow: auto;
-  margin-top: 0 !important;
+  margin-top: 8px !important;
   background: var(--editor-surface, var(--card));
   border: 1px solid rgba(255,255,255,0.10);
   border-radius: 12px;
   padding: 10px;
-  box-shadow: 0 14px 26px rgba(0,0,0,0.35);
+  box-shadow: none;
 }
 :root[data-theme="light"] .image-dialog.editor-dialog .editor-images.editor-images-dock .editor-images-grid{
   border-color: rgba(0,0,0,0.12);
-  box-shadow: 0 10px 24px rgba(0,0,0,0.12);
+  box-shadow: none;
 }
 
-/* When expanded, keep dropdown fixed at bottom and reserve space in body above it. */
+/* When expanded, keep images in-flow (no large reserved blank area). */
 .image-dialog.editor-dialog.images-open .editor-scroll-area{
-  margin-bottom: calc(8px + var(--editor-images-panel-height, min(40dvh, 340px)));
+  margin-bottom: 0;
 }
 .dialog-footer{ padding:12px; border-top:1px solid rgba(255,255,255,0.03); display:flex; gap:8px; align-items:center; }
 :root[data-theme="light"] .dialog-footer{ border-top:1px solid rgba(0,0,0,0.06); }
@@ -2968,6 +2999,20 @@ button.chip:focus{outline:2px solid rgba(255,255,255,0.18);outline-offset:2px;}
     padding: 8px 12px calc(8px + env(safe-area-inset-bottom));
   }
 
+  /* Mobile/PWA: keep expanded image panel in-flow to avoid a large blank reserve area. */
+  .image-dialog.editor-dialog .editor-images.editor-images-dock .editor-images-grid{
+    position: static;
+    left: auto;
+    right: auto;
+    bottom: auto;
+    max-height: calc((var(--editor-image-thumb-size) * 2) + 16px);
+    margin-top: 8px !important;
+    box-shadow: none;
+  }
+  .image-dialog.editor-dialog.images-open .editor-scroll-area{
+    margin-bottom: 0;
+  }
+
 }
 /* preferences dialog header and close button inherit text color */
 .prefs-dialog .icon-close,
@@ -3275,6 +3320,20 @@ button.chip:focus{outline:2px solid rgba(255,255,255,0.18);outline-offset:2px;}
 @media (pointer: coarse), (any-pointer: coarse), (hover: none), (any-hover: none) {
   .note-card .footer-hover-zone,
   .note-card .note-footer{ display: none !important; }
+
+  /* Mobile/PWA: expand images inline so card grows downward instead of floating overlay. */
+  .note-card .note-images{
+    position: static;
+    left: auto;
+    right: auto;
+    bottom: auto;
+    z-index: auto;
+    margin-top: 8px;
+    max-height: none;
+    overflow: visible;
+    border-radius: 8px;
+    box-shadow: none;
+  }
 
   /* Let cards grow naturally to fit label chips. */
   .note-card,

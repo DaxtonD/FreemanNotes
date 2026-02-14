@@ -131,7 +131,7 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
       try {
         const root = dialogRef.current as HTMLElement | null;
         const active = document.activeElement as HTMLElement | null;
-        if (root && active && root.contains(active) && active.closest('.checklist-item')) {
+        if (root && active && root.contains(active)) {
           active.blur();
         }
       } catch {}
@@ -343,43 +343,6 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
   function stripHtmlToText(html: string): string {
     return String(html || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
   }
-
-  const initialChecklistFocusDoneRef = useRef<string>('');
-  useEffect(() => {
-    const noteKey = String((note as any)?.id ?? '');
-    if (!noteKey) return;
-    if (initialChecklistFocusDoneRef.current === noteKey) return;
-    if (!Array.isArray(items) || items.length === 0) return;
-
-    initialChecklistFocusDoneRef.current = noteKey;
-
-    let targetRealIdx = items.length - 1;
-    for (let i = items.length - 1; i >= 0; i--) {
-      const txt = stripHtmlToText(String(items[i]?.content || ''));
-      if (txt.length > 0) {
-        targetRealIdx = i;
-        break;
-      }
-    }
-
-    const target = items[targetRealIdx];
-    const rowKey = (typeof target?.id === 'number') ? target.id : (target?.uid || null);
-    try { setActiveRowKey(rowKey); } catch {}
-    try { setAutoFocusIndex(targetRealIdx); } catch {}
-
-    const id = window.setTimeout(() => {
-      try {
-        const ed: any = itemEditorRefs.current[targetRealIdx];
-        if (!ed) return;
-        const endPos = Math.max(0, Number(ed?.state?.doc?.content?.size || 0));
-        if (ed?.chain) ed.chain().focus().setTextSelection(endPos).run();
-        else if (ed?.commands?.focus) {
-          try { ed.commands.focus('end'); } catch { ed.commands.focus(); }
-        }
-      } catch {}
-    }, 0);
-    return () => window.clearTimeout(id);
-  }, [note, items]);
 
   function pruneEmptyChecklistItemsFromYjs(): number {
     try {
@@ -2903,19 +2866,8 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
 
                 {images && images.length > 0 && (
                   <div className="editor-images editor-images-dock">
-                    <button
-                      type="button"
-                      className="btn editor-images-toggle"
-                      onClick={() => setImagesOpen(o => !o)}
-                      aria-expanded={imagesOpen}
-                    >
-                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
-                        <span style={{ transform: imagesOpen ? 'rotate(90deg)' : 'rotate(0deg)', display: 'inline-block' }}>{'▸'}</span>
-                        <span>Images ({images.length})</span>
-                      </span>
-                    </button>
                     {imagesOpen && (
-                      <div className="editor-images-grid" style={{ marginTop: 8 }}>
+                      <div className="editor-images-grid">
                         {images.map(img => (
                           <div
                             key={img.id}
@@ -2982,6 +2934,17 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
                         ))}
                       </div>
                     )}
+                    <button
+                      type="button"
+                      className="btn editor-images-toggle"
+                      onClick={() => setImagesOpen(o => !o)}
+                      aria-expanded={imagesOpen}
+                    >
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+                        <span style={{ transform: imagesOpen ? 'rotate(90deg)' : 'rotate(0deg)', display: 'inline-block' }}>{'▸'}</span>
+                        <span>Images ({images.length})</span>
+                      </span>
+                    </button>
                   </div>
                 )}
 
