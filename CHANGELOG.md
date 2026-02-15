@@ -9,6 +9,25 @@ Adheres to Semantic Versioning (MAJOR.MINOR.PATCH).
 ### Added
 - 
 
+### Changed
+- 
+
+### Fixed
+- 
+
+## [0.6.9] - 2026-02-14
+
+### Changed
+- Refined header controls and icon styling for better visual consistency (menu button now matches view-toggle theme).
+- Mobile/PWA search placement was moved into the sticky strip for improved reachability.
+- Desktop quick-create sticky strip was tightened and aligned flush under the header with a solid background.
+
+### Fixed
+- Note reordering can now be started from note content areas more reliably across desktop and touch devices.
+- Desktop checklist-preview checkboxes are interactive again, while mobile/PWA card toggles remain intentionally disabled.
+- Checklist editors now clear active caret/selection/highlight state when toggling item checkboxes.
+- Improved checklist row alignment on mobile/PWA editors (drag handle, checkbox, and text baseline).
+
 ## [0.6.7] - 2026-02-14
 
 ### Changed

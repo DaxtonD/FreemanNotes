@@ -347,6 +347,33 @@ export default function NoteCard({
     }
   }, []);
 
+  const maybeBeginBodyDragMouse = React.useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    try {
+      const target = e.target as HTMLElement | null;
+      if (isInteractiveTarget(target)) return;
+      const fn = (dragHandleListeners as any)?.onMouseDown;
+      if (typeof fn === 'function') fn(e);
+    } catch {}
+  }, [dragHandleListeners, isInteractiveTarget]);
+
+  const maybeBeginBodyDragPointer = React.useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    try {
+      const target = e.target as HTMLElement | null;
+      if (isInteractiveTarget(target)) return;
+      const fn = (dragHandleListeners as any)?.onPointerDown;
+      if (typeof fn === 'function') fn(e);
+    } catch {}
+  }, [dragHandleListeners, isInteractiveTarget]);
+
+  const maybeBeginBodyDragTouch = React.useCallback((e: React.TouchEvent<HTMLDivElement>) => {
+    try {
+      const target = e.target as HTMLElement | null;
+      if (isInteractiveTarget(target)) return;
+      const fn = (dragHandleListeners as any)?.onTouchStart;
+      if (typeof fn === 'function') fn(e);
+    } catch {}
+  }, [dragHandleListeners, isInteractiveTarget]);
+
   const scheduleSnapPreview = React.useCallback((forceMeasure = false) => {
     if (snapRafRef.current != null) return;
     snapRafRef.current = requestAnimationFrame(() => {
@@ -638,6 +665,7 @@ export default function NoteCard({
       return false;
     }
   }, []);
+  const canToggleChecklistPreview = !isCoarsePointer;
 
   function isMoreMenuLongPressExcluded(target: HTMLElement | null): boolean {
     try {
@@ -1714,7 +1742,12 @@ export default function NoteCard({
       <div
         className="note-body"
         ref={bodyRef}
-        onPointerDown={maybeBeginMoreMenuLongPress}
+        onMouseDown={maybeBeginBodyDragMouse}
+        onPointerDown={(e) => {
+          maybeBeginMoreMenuLongPress(e);
+          maybeBeginBodyDragPointer(e);
+        }}
+        onTouchStart={maybeBeginBodyDragTouch}
         onPointerUp={() => { clearBodyLongPress(); }}
         onPointerCancel={() => { clearBodyLongPress(); }}
         onPointerMove={maybeCancelMoreMenuLongPressOnMove}
@@ -1756,9 +1789,16 @@ export default function NoteCard({
                   <button
                     className={`note-checkbox ${it.checked ? 'checked' : ''}`}
                     type="button"
-                    onClick={(e) => { e.stopPropagation(); }}
+                    disabled={!canToggleChecklistPreview}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (!canToggleChecklistPreview) return;
+                      const id = Number((it as any)?.id);
+                      if (!Number.isFinite(id)) return;
+                      void toggleItemChecked(id, !it.checked);
+                    }}
                     aria-pressed={!!it.checked}
-                    aria-disabled="true"
+                    aria-disabled={!canToggleChecklistPreview}
                     style={{ background: 'var(--checkbox-bg)', border: '2px solid var(--checkbox-border)', color: 'var(--checkbox-stroke)' }}
                   >
                     {it.checked && (
@@ -1793,9 +1833,16 @@ export default function NoteCard({
                     <button
                       className={`note-checkbox ${it.checked ? 'checked' : ''}`}
                       type="button"
-                      onClick={(e) => { e.stopPropagation(); }}
+                      disabled={!canToggleChecklistPreview}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (!canToggleChecklistPreview) return;
+                        const id = Number((it as any)?.id);
+                        if (!Number.isFinite(id)) return;
+                        void toggleItemChecked(id, !it.checked);
+                      }}
                       aria-pressed={!!it.checked}
-                      aria-disabled="true"
+                      aria-disabled={!canToggleChecklistPreview}
                       style={{ background: 'var(--checkbox-bg)', border: '2px solid var(--checkbox-border)', color: 'var(--checkbox-stroke)' }}
                     >
                       {it.checked && (

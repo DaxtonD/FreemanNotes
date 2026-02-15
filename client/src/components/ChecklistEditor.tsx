@@ -648,6 +648,55 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
     } catch {}
   }
 
+  function applyChecklistGhostSizing(ghostEl: HTMLElement, sourceEl?: HTMLElement | null) {
+    try {
+      const dialog = dialogRef.current as HTMLElement | null;
+      const source = sourceEl || null;
+      const scope = (dialog || source || document.documentElement) as HTMLElement;
+      const cs = window.getComputedStyle(scope);
+
+      const readVar = (name: string, fallback = '') => {
+        const val = String(cs.getPropertyValue(name) || '').trim();
+        return val || fallback;
+      };
+
+      const gap = readVar('--editor-checklist-gap', readVar('--checklist-gap', '8px'));
+      const checkbox = readVar('--editor-checklist-checkbox-size', readVar('--checklist-checkbox-size', '26px'));
+      const text = readVar('--editor-checklist-text-size', readVar('--checklist-text-size', '14px'));
+      const line = readVar('--editor-note-line-height', readVar('--note-line-height', '1.38'));
+
+      ghostEl.style.setProperty('--checklist-gap', gap);
+      ghostEl.style.setProperty('--checklist-checkbox-size', checkbox);
+      ghostEl.style.setProperty('--checklist-text-size', text);
+      ghostEl.style.setProperty('--note-line-height', line);
+    } catch {}
+  }
+
+  const lastShiftHapticRef = useRef<string>('');
+  const lastShiftHapticAtRef = useRef<number>(0);
+  React.useEffect(() => {
+    if (!isCoarsePointer) return;
+    if (dragging == null) {
+      lastShiftHapticRef.current = '';
+      return;
+    }
+    if (hoverIndex == null || !hoverEdge) return;
+    const sig = `${hoverIndex}:${hoverEdge}`;
+    if (sig === lastShiftHapticRef.current) return;
+    const now = Date.now();
+    if (now - lastShiftHapticAtRef.current < 65) {
+      lastShiftHapticRef.current = sig;
+      return;
+    }
+    lastShiftHapticRef.current = sig;
+    lastShiftHapticAtRef.current = now;
+    try {
+      if (typeof navigator !== 'undefined' && typeof navigator.vibrate === 'function') {
+        navigator.vibrate(6);
+      }
+    } catch {}
+  }, [isCoarsePointer, dragging, hoverIndex, hoverEdge]);
+
   function getHitTestEdge(inputY: number, rect: { top: number; bottom: number }, multilineDeadZone: boolean): 'top' | 'bottom' | null {
     const h = Math.max(1, Number(rect.bottom - rect.top));
     const rel = Math.max(0, Math.min(1, (Number(inputY || 0) - Number(rect.top)) / h));
@@ -1436,6 +1485,31 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
         return it;
       }));
     }
+    clearChecklistSelectionState();
+  }
+
+  function clearChecklistSelectionState() {
+    const clearOnce = () => {
+      try { setActiveRowKey(null); } catch {}
+      try { setAutoFocusIndex(null); } catch {}
+      try {
+        const ed: any = getCurrentChecklistEditor?.();
+        if (ed?.commands?.blur) ed.commands.blur();
+        else if (ed?.view?.dom) (ed.view.dom as HTMLElement).blur();
+      } catch {}
+      try {
+        const root = dialogRef.current as HTMLElement | null;
+        const active = document.activeElement as HTMLElement | null;
+        if (active && (!root || root.contains(active)) && active.closest('.checklist-item')) {
+          active.blur();
+        }
+      } catch {}
+      try { document.getSelection()?.removeAllRanges(); } catch {}
+      try { activeChecklistEditor.current = null; } catch {}
+      try { setToolbarTick((t) => t + 1); } catch {}
+    };
+    clearOnce();
+    try { window.setTimeout(clearOnce, 0); } catch {}
   }
 
   function moveItem(src: number, dst: number) {
@@ -1568,6 +1642,7 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
     ghost.style.boxShadow = '0 14px 34px rgba(0,0,0,0.45)';
     ghost.style.borderRadius = '8px';
     ghost.style.overflow = 'hidden';
+    applyChecklistGhostSizing(ghost, row);
 
     const clone = row.cloneNode(true) as HTMLElement;
     clone.classList.remove('drag-source', 'drag-hidden-child', 'shift-up', 'shift-down');
@@ -1601,6 +1676,7 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
     ghost.style.zIndex = '9999';
     ghost.style.opacity = '0.95';
     ghost.classList.add('checklist-ghost');
+    applyChecklistGhostSizing(ghost, target);
     document.body.appendChild(ghost);
     ghostRef.current = ghost as HTMLDivElement;
     dragProbeYRef.current = null;
@@ -2382,6 +2458,7 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
                                   ghost.style.zIndex = '9999';
                                   ghost.style.opacity = '0.98';
                                   ghost.classList.add('checklist-ghost');
+                                  applyChecklistGhostSizing(ghost, srcEl);
                                   document.body.appendChild(ghost);
                                   ghostRef.current = ghost as any;
                                   dragProbeYRef.current = null;
@@ -2733,7 +2810,10 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
                           onClick={(e) => { try { e.stopPropagation(); } catch {} try { setActiveRowKey(rowKey); } catch {} }}
                         >
                           <div style={{ width: 20 }} />
-                          <div className={`checkbox-visual ${it.checked ? 'checked' : ''}`} onClick={() => toggleChecked(realIdx)}>{it.checked && (<svg viewBox="0 0 24 24" fill="none" aria-hidden focusable="false"><path d="M20 6L9 17l-5-5" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" /></svg>)}</div>
+                          <div
+                            className={`checkbox-visual ${it.checked ? 'checked' : ''}`}
+                            onClick={(e) => { try { e.stopPropagation(); } catch {} toggleChecked(realIdx); }}
+                          >{it.checked && (<svg viewBox="0 0 24 24" fill="none" aria-hidden focusable="false"><path d="M20 6L9 17l-5-5" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" /></svg>)}</div>
                           <div style={{ flex: 1, textDecoration: 'line-through', minWidth: 0 }}>
                             <div className="rt-html" dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(String(it.content || ''), { USE_PROFILES: { html: true } }) }} />
                           </div>

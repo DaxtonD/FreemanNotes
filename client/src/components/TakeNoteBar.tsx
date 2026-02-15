@@ -552,6 +552,30 @@ export default function TakeNoteBar({
 
   function toggleLocalItemChecked(idx: number) {
     setItems(s => s.map((it, i) => i === idx ? { ...it, checked: !it.checked } : it));
+    clearChecklistRowSelectionState();
+  }
+
+  function clearChecklistRowSelectionState() {
+    const clearOnce = () => {
+      try { setActiveChecklistRowIdx(null); } catch {}
+      try {
+        const ed: any = activeChecklistEditor.current;
+        if (ed?.commands?.blur) ed.commands.blur();
+        else if (ed?.view?.dom) (ed.view.dom as HTMLElement).blur();
+      } catch {}
+      try {
+        const root = rootRef.current as HTMLElement | null;
+        const active = document.activeElement as HTMLElement | null;
+        if (active && (!root || root.contains(active)) && active.closest('.checklist-item')) {
+          active.blur();
+        }
+      } catch {}
+      try { document.getSelection()?.removeAllRanges(); } catch {}
+      try { activeChecklistEditor.current = null; } catch {}
+      try { setChecklistToolbarTick((t) => t + 1); } catch {}
+    };
+    clearOnce();
+    try { window.setTimeout(clearOnce, 0); } catch {}
   }
 
   function focusItem(idx: number) {
@@ -1307,7 +1331,7 @@ export default function TakeNoteBar({
                 aria-label="Drag to reorder"
                 title="Drag to reorder"
               >≡</div>
-              <div className="checkbox-visual" onClick={() => toggleLocalItemChecked(idx)} aria-hidden>
+              <div className="checkbox-visual" onClick={(e) => { try { e.stopPropagation(); } catch {} toggleLocalItemChecked(idx); }} aria-hidden>
                 {it.checked && (
                   <svg viewBox="0 0 24 24" fill="none" aria-hidden focusable="false">
                     <path d="M20 6L9 17l-5-5" stroke="currentColor" strokeWidth="6" strokeLinecap="round" strokeLinejoin="round" />

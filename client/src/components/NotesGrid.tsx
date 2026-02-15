@@ -25,6 +25,7 @@ import { DEFAULT_SORT_CONFIG, type SortConfig } from '../sortTypes';
 type NoteLabelLite = { id: number; name: string };
 type NoteImageLite = { id: number; url?: string; ocrSearchText?: string | null; ocrText?: string | null; ocrStatus?: string | null };
 type ViewerCollectionLite = { id: number; name: string; parentId: number | null };
+const MOBILE_FAB_ICON = '/icons/version.png';
 
 const SwapNoteItem = React.memo(function SwapNoteItem({
   note,
@@ -3095,13 +3096,20 @@ export default function NotesGrid({
   return (
     <section className={`notes-area${mobileAddOpen ? ' notes-area--mobile-add-open' : ''}${notesAreaViewClass}`}>
       <div className="take-note-sticky">
+        <div className="notes-sticky-search" role="search" aria-label="Search notes">
+          <input
+            className="search"
+            placeholder="Search"
+            value={searchQuery ?? ''}
+            onChange={(e) => { try { onSetSearchQuery && onSetSearchQuery(e.target.value); } catch {} }}
+          />
+        </div>
         <TakeNoteBar onCreated={load} openRequest={{ nonce: takeNoteOpenNonce, mode: takeNoteOpenMode }} activeCollection={activeCollection} />
 
         {gridContext.show && (
           <div className="grid-context" role="region" aria-label="Current view">
             <div className="grid-context__text">
               <div className="grid-context__title-row">
-                <div className="grid-context__title">{gridContext.title}</div>
                 {isTrashView && (
                   <button
                     type="button"
@@ -3153,47 +3161,54 @@ export default function NotesGrid({
         )}
       </div>
 
-      {mobileAddOpen && (
-        <div
-          className="mobile-add-backdrop"
-          aria-hidden="true"
-          onPointerDown={(e) => {
-            // Swallow events so taps don't interact with notes behind the blur.
-            try { e.preventDefault(); } catch {}
-            try { e.stopPropagation(); } catch {}
-          }}
-          onClick={(e) => {
-            try { e.preventDefault(); } catch {}
-            try { e.stopPropagation(); } catch {}
-          }}
-        />
-      )}
+      {createPortal(
+        <>
+          {mobileAddOpen && (
+            <div
+              className="mobile-add-backdrop"
+              aria-hidden="true"
+              onPointerDown={(e) => {
+                // Swallow events so taps don't interact with notes behind the blur.
+                try { e.preventDefault(); } catch {}
+                try { e.stopPropagation(); } catch {}
+              }}
+              onClick={(e) => {
+                try { e.preventDefault(); } catch {}
+                try { e.stopPropagation(); } catch {}
+              }}
+            />
+          )}
 
-      <div className="mobile-add-note" aria-label="Add note">
-        {mobileAddOpen && (
-          <div className="mobile-add-menu" role="menu" aria-label="Create">
-            <button type="button" className="mobile-add-menu-item" role="menuitem" onClick={() => openTakeNote('text')}>
-              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" aria-hidden focusable="false">
-                <path fill="currentColor" d="M6 2h9l5 5v15a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2Zm8 1.5V8h4.5L14 3.5ZM7 11h10v1.6H7V11Zm0 4h10v1.6H7V15Zm0 4h7v1.6H7V19Z"/>
-              </svg>
-              <span>New note</span>
-            </button>
-            <button type="button" className="mobile-add-menu-item" role="menuitem" onClick={() => openTakeNote('checklist')}>
-              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" aria-hidden focusable="false">
-                <path fill="currentColor" d="M9.2 7.2 7.9 5.9 6 7.8 5.1 6.9 4 8l2 2 3.2-3.2ZM10.5 8H20v1.6h-9.5V8Zm-1.3 6.2-1.3-1.3L6 14.8l-.9-.9L4 15l2 2 3.2-3.2ZM10.5 15H20v1.6h-9.5V15Z"/>
-              </svg>
-              <span>New checklist</span>
+          <div className="mobile-add-note" aria-label="Add note">
+            {mobileAddOpen && (
+              <div className="mobile-add-menu" role="menu" aria-label="Create">
+                <button type="button" className="mobile-add-menu-item" role="menuitem" onClick={() => openTakeNote('text')}>
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" aria-hidden focusable="false">
+                    <path fill="currentColor" d="M6 2h9l5 5v15a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2Zm8 1.5V8h4.5L14 3.5ZM7 11h10v1.6H7V11Zm0 4h10v1.6H7V15Zm0 4h7v1.6H7V19Z"/>
+                  </svg>
+                  <span>New note</span>
+                </button>
+                <button type="button" className="mobile-add-menu-item" role="menuitem" onClick={() => openTakeNote('checklist')}>
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" aria-hidden focusable="false">
+                    <path fill="currentColor" d="M9.2 7.2 7.9 5.9 6 7.8 5.1 6.9 4 8l2 2 3.2-3.2ZM10.5 8H20v1.6h-9.5V8Zm-1.3 6.2-1.3-1.3L6 14.8l-.9-.9L4 15l2 2 3.2-3.2ZM10.5 15H20v1.6h-9.5V15Z"/>
+                  </svg>
+                  <span>New checklist</span>
+                </button>
+              </div>
+            )}
+            <button
+              type="button"
+              className={`mobile-add-fab${mobileAddOpen ? ' is-open' : ''}`}
+              aria-haspopup="menu"
+              aria-expanded={mobileAddOpen}
+              onClick={() => setMobileAddOpen((s) => !s)}
+            >
+              <img src={MOBILE_FAB_ICON} alt="" aria-hidden="true" className="about-version-icon mobile-add-fab-icon" />
             </button>
           </div>
-        )}
-        <button
-          type="button"
-          className="mobile-add-fab"
-          aria-haspopup="menu"
-          aria-expanded={mobileAddOpen}
-          onClick={() => setMobileAddOpen((s) => !s)}
-        >+</button>
-      </div>
+        </>,
+        document.body
+      )}
 
       <MobileCreateModal
         open={mobileCreateMode != null}

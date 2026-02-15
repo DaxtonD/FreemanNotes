@@ -16,10 +16,21 @@ export default function Header({ onToggleSidebar, searchQuery, onSearchChange, v
   return (
     <header className="app-header">
       <div className="header-left">
-        <button className="menu-btn" aria-label="menu" onClick={() => onToggleSidebar && onToggleSidebar()}>☰</button>
+        <button
+          type="button"
+          className="menu-btn"
+          aria-label="Menu"
+          title="Menu"
+          onClick={() => onToggleSidebar && onToggleSidebar()}
+        >
+          <svg viewBox="0 0 24 24" aria-hidden focusable="false">
+            <rect x="4" y="5" width="16" height="2.2" rx="1.1" />
+            <rect x="4" y="10.9" width="16" height="2.2" rx="1.1" />
+            <rect x="4" y="16.8" width="16" height="2.2" rx="1.1" />
+          </svg>
+        </button>
         <div className="brand-inline">
           <img src={(theme.effective === 'light') ? '/icons/lighticon.png' : '/icons/darkicon.png'} alt="FreemanNotes icon" className="app-icon" />
-          <div className="brand">Freeman Notes</div>
         </div>
       </div>
       <div className="header-center">
@@ -64,13 +75,13 @@ export default function Header({ onToggleSidebar, searchQuery, onSearchChange, v
           )}
         </button>
         {user ? (
-          <>
+          <div className="header-avatar-wrap">
             { (user as any).userImageUrl ? (
               <img src={(user as any).userImageUrl} alt="User" className="avatar" style={{ width: 33, height: 33, borderRadius: '50%', objectFit: 'cover', cursor: 'pointer' }} onClick={() => setShowPrefs(true)} />
             ) : (
               <div className="avatar" style={{ width: 33, height: 33, borderRadius: '50%', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }} onClick={() => setShowPrefs(true)}>{(user.name && user.email ? (user.name || user.email)[0] : '')}</div>
             ) }
-          </>
+          </div>
         ) : null}
       </div>
       {showPrefs && <PreferencesModal onClose={() => setShowPrefs(false)} />}
