@@ -35,7 +35,12 @@ export async function me(token: string) {
   const res = await fetch('/api/auth/me', {
     headers: { Authorization: `Bearer ${token}`, ...deviceHeaders() }
   });
-  if (!res.ok) throw new Error(await res.text());
+  if (!res.ok) {
+    const txt = await res.text().catch(() => '');
+    const err: any = new Error(txt || `HTTP ${res.status}`);
+    err.status = res.status;
+    throw err;
+  }
   return res.json();
 }
 

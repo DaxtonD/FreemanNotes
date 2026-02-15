@@ -367,6 +367,23 @@ function AppShell(): JSX.Element {
 		}
 
 		function updateAt(x: number, y: number, preventScroll: (() => void) | null) {
+			// If card dragging or a note more-menu is open, never treat this gesture as sidebar swipe.
+			try {
+				const root = document.documentElement;
+				const blocked = root.classList.contains('is-note-swap-dragging')
+					|| root.classList.contains('is-note-swap-dragging-pending')
+					|| root.classList.contains('is-note-rearrange-dragging')
+					|| root.classList.contains('is-note-more-menu-open');
+				if (blocked) {
+					active = false;
+					pointerId = null;
+					touchId = null;
+					startedOnEdge = false;
+					startedInDrawerRegion = false;
+					return;
+				}
+			} catch {}
+
 			lastX = x;
 			lastY = y;
 			const dx = lastX - startX;

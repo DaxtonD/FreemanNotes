@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useAuth } from '../authContext';
+import { getOrCreateDeviceProfile } from '../lib/deviceProfile';
 import ChecklistItemRT from './ChecklistItemRT';
 import ColorPalette from './ColorPalette';
 import ReminderPicker, { type ReminderDraft } from './ReminderPicker';
@@ -173,6 +174,18 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
   }));
   const [saving, setSaving] = useState(false);
   const [completedOpen, setCompletedOpen] = useState(true);
+  const myDeviceKey = React.useMemo(() => {
+    try { return getOrCreateDeviceProfile().deviceKey; } catch { return ''; }
+  }, []);
+
+  React.useEffect(() => {
+    try {
+      if (!myDeviceKey) return;
+      const k = `fn.note.showCompleted.${myDeviceKey}.${note.id}`;
+      const v = localStorage.getItem(k);
+      if (v !== null) setCompletedOpen(v === 'true');
+    } catch {}
+  }, [myDeviceKey, note.id]);
   const [dragging, setDragging] = useState<number | null>(null);
   const [hoverIndex, setHoverIndex] = useState<number | null>(null);
   const [hoverEdge, setHoverEdge] = useState<'top' | 'bottom' | null>(null);
@@ -610,8 +623,10 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
     if (isCoarsePointer) {
       return {
         ...base,
+        // Mobile/PWA tuning: favor vertical reorder, require clearer horizontal intent for indent.
+        indentPx: 24,
         hoverClearMs: 0,
-        directionLockPx: 0,
+        directionLockPx: 4,
       } as const;
     }
     return {
@@ -2312,7 +2327,10 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
                           let pendingVerticalMove = false;
                           if (src >= 0) {
                             const dx = dragStartRef.current ? ((e.clientX || 0) - dragStartRef.current.x) : 0;
-                            const treatHorizontal = dragDirectionRef.current === 'horizontal' || Math.abs(dx) > DRAG.indentPx;
+                            const dy = dragStartRef.current ? ((e.clientY || 0) - dragStartRef.current.y) : 0;
+                            const treatHorizontal =
+                              dragDirectionRef.current === 'horizontal'
+                              || (Math.abs(dx) > DRAG.indentPx && Math.abs(dx) > (Math.abs(dy) * 1.35));
                             if (treatHorizontal) {
                               const yarr = yarrayRef.current;
                               if (yarr) {
@@ -2409,7 +2427,13 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
                             const dy = e.clientY - p.startY;
                             const TH = DRAG.directionLockPx;
                             if (dragDirectionRef.current === null && (Math.abs(dx) > TH || Math.abs(dy) > TH)) {
-                              dragDirectionRef.current = Math.abs(dx) > Math.abs(dy) ? 'horizontal' : 'vertical';
+                              const absX = Math.abs(dx);
+                              const absY = Math.abs(dy);
+                              const horizontalDominant = absX > (absY * 1.35);
+                              const verticalDominant = absY > (absX * 1.1);
+                              if (horizontalDominant) dragDirectionRef.current = 'horizontal';
+                              else if (verticalDominant) dragDirectionRef.current = 'vertical';
+                              else dragDirectionRef.current = 'vertical';
                             }
                             // handle pointer-driven vertical dragging (lift + reorder)
                             if (dragDirectionRef.current === 'vertical') {
@@ -2783,7 +2807,15 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
                   })}
 
                   <div style={{ marginTop: 12 }}>
-                    <button className="btn completed-toggle" onClick={() => setCompletedOpen(o => !o)} aria-expanded={completedOpen} aria-controls={`editor-completed-${note.id}`}>
+                    <button className="btn completed-toggle" onClick={() => {
+                      try { setCompletedOpen(o => {
+                        const next = !o;
+                        try {
+                          if (myDeviceKey) localStorage.setItem(`fn.note.showCompleted.${myDeviceKey}.${note.id}`, String(next));
+                        } catch {}
+                        return next;
+                      }); } catch {}
+                    }} aria-expanded={completedOpen} aria-controls={`editor-completed-${note.id}`}>
                       <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
                         <span style={{ transform: completedOpen ? 'rotate(90deg)' : 'rotate(0deg)', display: 'inline-block' }}>{'▸'}</span>
                         <span>{items.filter(it=>it.checked).length} completed items</span>

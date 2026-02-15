@@ -77,22 +77,33 @@ export default function MoreMenu({
   const rootRef = useRef<HTMLDivElement | null>(null);
   const [style, setStyle] = useState<React.CSSProperties>({ position: "fixed", visibility: "hidden", left: 0, top: 0, zIndex: 10001 });
   const [isSheet, setIsSheet] = useState(false);
+  const [interactionLocked, setInteractionLocked] = useState(true);
+  const openedAtRef = useRef<number>(Date.now());
   const backIdRef = useRef<string>((() => {
     try { return `more-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`; } catch { return `more-${Math.random()}`; }
   })());
+  const mountAtRef = useRef<number>(Date.now());
 
   useEffect(() => {
+    openedAtRef.current = Date.now();
+    setInteractionLocked(true);
+    const ms = isSheet ? 700 : 260;
+    const t = window.setTimeout(() => {
+      try { setInteractionLocked(false); } catch {}
+    }, ms);
     try {
       const id = backIdRef.current;
       const onBack = () => { try { onClose(); } catch {} };
       window.dispatchEvent(new CustomEvent('freemannotes:back/register', { detail: { id, onBack } }));
       return () => {
+        try { window.clearTimeout(t); } catch {}
         try { window.dispatchEvent(new CustomEvent('freemannotes:back/unregister', { detail: { id } })); } catch {}
       };
     } catch {
+      try { window.clearTimeout(t); } catch {}
       return;
     }
-  }, [onClose]);
+  }, [onClose, isSheet]);
 
   useLayoutEffect(() => {
     const decide = () => {
@@ -179,6 +190,17 @@ export default function MoreMenu({
 
   // Note: click-away is handled by the backdrop so underlying UI isn't clickable.
 
+  const swallowIfOpeningGesture = (e: React.SyntheticEvent) => {
+    try {
+      // Guard against the same long-press gesture that opened the menu from
+      // activating/highlighting an item under the finger on first release.
+      if (interactionLocked || (Date.now() - openedAtRef.current) < 420) {
+        (e as any).preventDefault?.();
+        (e as any).stopPropagation?.();
+      }
+    } catch {}
+  };
+
   const node = (
     <>
       <div
@@ -186,15 +208,29 @@ export default function MoreMenu({
         role="presentation"
         onPointerDown={(e) => { try { e.preventDefault(); e.stopPropagation(); } catch {} }}
         onMouseDown={(e) => { try { e.preventDefault(); e.stopPropagation(); } catch {} }}
-        onClick={(e) => { try { e.preventDefault(); e.stopPropagation(); } catch {} onClose(); }}
+        onClick={(e) => {
+          try { e.preventDefault(); e.stopPropagation(); } catch {}
+          // Ignore immediate click events that occur within a short window after
+          // the menu mounted (e.g., the finger release from the long-press that
+          // opened the menu). This avoids the backdrop immediately closing the
+          // menu the moment it appears.
+          try {
+            if (Date.now() - (mountAtRef.current || 0) < 350) return;
+          } catch {}
+          onClose();
+        }}
         onContextMenu={(e) => { try { e.preventDefault(); e.stopPropagation(); } catch {} }}
       />
       <div
         ref={rootRef}
-        className={`more-menu${isSheet ? ' more-menu--sheet' : ''}`}
+        className={`more-menu${isSheet ? ' more-menu--sheet' : ''}${interactionLocked ? ' more-menu--locked' : ''}`}
         style={style}
         role="menu"
         aria-label="More options"
+        onPointerDownCapture={swallowIfOpeningGesture}
+        onMouseDownCapture={swallowIfOpeningGesture}
+        onTouchStartCapture={swallowIfOpeningGesture}
+        onClickCapture={swallowIfOpeningGesture}
       >
       <div className="more-group">
         {onRestore && (

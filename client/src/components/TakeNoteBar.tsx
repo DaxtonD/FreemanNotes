@@ -866,6 +866,7 @@ export default function TakeNoteBar({
 
   return (
     <div className={`take-note-expanded${maximized ? ' maximized' : ''}`} ref={rootRef} style={{ padding: 12, ...dialogStyle }}>
+      <div className="take-note-editor-scroll-area">
       {mode === 'text' ? (
         <div>
           <div className="rt-sticky-header">
@@ -1414,6 +1415,7 @@ export default function TakeNoteBar({
           <button className="btn" type="button" onClick={() => setImageUrl(null)} style={{ padding: '6px 10px' }}>Remove</button>
         </div>
       )}
+      </div>
 
       <UrlEntryModal
         open={showUrlModal}

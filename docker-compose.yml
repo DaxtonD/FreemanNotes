@@ -19,6 +19,23 @@ services:
     volumes:
       - mysql_data:/var/lib/mysql
 
+  # Optional local PostgreSQL database (Postgres 14+). Enable with:
+  # `docker compose --profile with-db-postgres up --build`
+  # Then set DATABASE_URL to use host `postgres`, e.g.:
+  # DATABASE_URL="postgresql://freeman:freemanpass@postgres:5432/freemannotes"
+  postgres:
+    image: postgres:14
+    profiles: ["with-db-postgres"]
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: freemannotes
+      POSTGRES_USER: freeman
+      POSTGRES_PASSWORD: freemanpass
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
   freemannotes:
     build: .
     ports:

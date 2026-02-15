@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { useTheme } from '../themeContext';
 import DOMPurify from 'dompurify';
 import { useAuth } from '../authContext';
+import { getOrCreateDeviceProfile } from '../lib/deviceProfile';
 import ChecklistEditor from "./ChecklistEditor";
 import RichTextEditor from "./RichTextEditor";
 import CollaboratorModal from "./CollaboratorModal";
@@ -195,6 +196,18 @@ export default function NoteCard({
   const [showEditor, setShowEditor] = useState(false);
   const [showTextEditor, setShowTextEditor] = useState(false);
   const [showCompleted, setShowCompleted] = useState<boolean>(true);
+  const myDeviceKey = React.useMemo(() => {
+    try { return getOrCreateDeviceProfile().deviceKey; } catch { return ''; }
+  }, []);
+
+  React.useEffect(() => {
+    try {
+      if (!myDeviceKey) return;
+      const k = `fn.note.showCompleted.${myDeviceKey}.${note.id}`;
+      const v = localStorage.getItem(k);
+      if (v !== null) setShowCompleted(v === 'true');
+    } catch {}
+  }, [myDeviceKey, note.id]);
   const [rtHtmlFromY, setRtHtmlFromY] = React.useState<string | null>(null);
   const [previewClipped, setPreviewClipped] = useState(false);
 
@@ -351,6 +364,7 @@ export default function NoteCard({
 
   const maybeBeginBodyDragMouse = React.useCallback((e: React.MouseEvent<HTMLDivElement>) => {
     try {
+      if (showMore) return;
       const target = e.target as HTMLElement | null;
       if (isInteractiveTarget(target)) return;
       // Mark pending swap-drag activation so native scroll is disabled while the
@@ -362,10 +376,11 @@ export default function NoteCard({
       const fn = (dragHandleListeners as any)?.onMouseDown;
       if (typeof fn === 'function') fn(e);
     } catch {}
-  }, [dragHandleListeners, isInteractiveTarget]);
+  }, [dragHandleListeners, isInteractiveTarget, showMore]);
 
   const maybeBeginBodyDragPointer = React.useCallback((e: React.PointerEvent<HTMLDivElement>) => {
     try {
+      if (showMore) return;
       const target = e.target as HTMLElement | null;
       if (isInteractiveTarget(target)) return;
       try { document.documentElement.classList.add('is-note-swap-dragging-pending'); } catch {}
@@ -375,10 +390,11 @@ export default function NoteCard({
       const fn = (dragHandleListeners as any)?.onPointerDown;
       if (typeof fn === 'function') fn(e);
     } catch {}
-  }, [dragHandleListeners, isInteractiveTarget]);
+  }, [dragHandleListeners, isInteractiveTarget, showMore]);
 
   const maybeBeginBodyDragTouch = React.useCallback((e: React.TouchEvent<HTMLDivElement>) => {
     try {
+      if (showMore) return;
       const target = e.target as HTMLElement | null;
       if (isInteractiveTarget(target)) return;
       try { document.documentElement.classList.add('is-note-swap-dragging-pending'); } catch {}
@@ -388,7 +404,7 @@ export default function NoteCard({
       const fn = (dragHandleListeners as any)?.onTouchStart;
       if (typeof fn === 'function') fn(e);
     } catch {}
-  }, [dragHandleListeners, isInteractiveTarget]);
+  }, [dragHandleListeners, isInteractiveTarget, showMore]);
 
   const scheduleSnapPreview = React.useCallback((forceMeasure = false) => {
     if (snapRafRef.current != null) return;
@@ -713,6 +729,11 @@ export default function NoteCard({
       const y = e.clientY;
       bodyLongPressTimerRef.current = window.setTimeout(() => {
         clearBodyLongPress();
+        try {
+          const root = document.documentElement;
+          // Only cancel if drag has actually moved (not merely picked up).
+          if (root.classList.contains('is-note-swap-dragging-moving') || root.classList.contains('is-note-rearrange-dragging')) return;
+        } catch {}
         suppressNextBodyClickRef.current = true;
         try { setMoreAnchorPoint({ x, y }); } catch {}
         try { setShowMore(true); } catch {}
@@ -735,6 +756,23 @@ export default function NoteCard({
     bodyLongPressTimerRef.current = null;
     bodyLongPressStartRef.current = null;
   }
+
+  React.useEffect(() => {
+    try {
+      const root = document.documentElement;
+      if (showMore) {
+        root.classList.add('is-note-more-menu-open');
+        root.classList.remove('is-note-swap-dragging-pending');
+        try { window.dispatchEvent(new CustomEvent('freemannotes:more-menu-open')); } catch {}
+      } else {
+        root.classList.remove('is-note-more-menu-open');
+        try { window.dispatchEvent(new CustomEvent('freemannotes:more-menu-close')); } catch {}
+      }
+    } catch {}
+    return () => {
+      try { document.documentElement.classList.remove('is-note-more-menu-open'); } catch {}
+    };
+  }, [showMore]);
 
   React.useEffect(() => {
     const decide = () => {
@@ -935,17 +973,25 @@ export default function NoteCard({
         ],
         content: ''
       });
+      // Only use Yjs-derived HTML after the provider signals a successful sync.
+      let providerSynced = false;
       const compute = () => {
         try {
+          if (!providerSynced) return; // avoid applying possibly-stale editor updates
           const html = ed?.getHTML() || '';
           const safe = DOMPurify.sanitize(html, { USE_PROFILES: { html: true } });
           setRtHtmlFromY(safe);
         } catch {}
       };
       ed.on('update', compute);
-      // On initial provider sync, compute once
+      // On provider sync, mark synced and compute once
       const provider = providerRef.current;
-      const onSync = (isSynced: boolean) => { if (isSynced) compute(); };
+      const onSync = (isSynced: boolean) => {
+        try {
+          providerSynced = !!isSynced;
+        } catch {}
+        if (isSynced) compute();
+      };
       provider?.on('sync', onSync);
       return () => { try { ed?.destroy(); } catch {}; try { provider?.off('sync', onSync as any); } catch {}; };
     } catch {
@@ -1063,32 +1109,46 @@ export default function NoteCard({
     setShowPalette(false);
   }
 
+  async function attachImageUrl(url: string) {
+    try {
+      const res = await fetch(`/api/notes/${note.id}/images`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: token ? `Bearer ${token}` : '' }, body: JSON.stringify({ url }) });
+      if (!res.ok) throw new Error(await res.text());
+      const data = await res.json();
+      const img = data.image || null;
+      if (img && img.id && img.url) {
+        setImagesWithNotify((s) => {
+          const exists = s.some(x => Number(x.id) === Number(img.id));
+          if (exists) return s;
+          return [...s, { id: Number(img.id), url: String(img.url) }];
+        });
+      }
+    } catch (err) {
+      console.error('Failed to attach image', err);
+      // Fallback: show locally even if save fails
+      setImagesWithNotify((s) => {
+        const exists = s.some(x => String(x.url) === String(url));
+        if (exists) return s;
+        return [...s, { id: Date.now() + Math.floor(Math.random() * 1000), url }];
+      });
+      window.alert('Failed to attach image to server; showing locally');
+    }
+  }
+
   function onAddImageUrl(url?: string | null) {
     setShowImageDialog(false);
     if (!url) return;
-    // Persist to server and update local images list
+    void attachImageUrl(String(url));
+  }
+
+  function onAddImageUrls(urls?: string[] | null) {
+    setShowImageDialog(false);
+    const list = Array.isArray(urls)
+      ? urls.map((u) => String(u || '').trim()).filter((u) => !!u)
+      : [];
+    if (!list.length) return;
     (async () => {
-      try {
-        const res = await fetch(`/api/notes/${note.id}/images`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: token ? `Bearer ${token}` : '' }, body: JSON.stringify({ url }) });
-        if (!res.ok) throw new Error(await res.text());
-        const data = await res.json();
-        const img = data.image || null;
-        if (img && img.id && img.url) {
-          setImagesWithNotify((s) => {
-            const exists = s.some(x => Number(x.id) === Number(img.id));
-            if (exists) return s;
-            return [...s, { id: Number(img.id), url: String(img.url) }];
-          });
-        }
-      } catch (err) {
-        console.error('Failed to attach image', err);
-        // Fallback: show locally even if save fails
-        setImagesWithNotify((s) => {
-          const exists = s.some(x => String(x.url) === String(url));
-          if (exists) return s;
-          return [...s, { id: Date.now(), url }];
-        });
-        window.alert('Failed to attach image to server; showing locally');
+      for (const u of list) {
+        await attachImageUrl(u);
       }
     })();
   }
@@ -1882,7 +1942,16 @@ export default function NoteCard({
             {/** Completed items block */}
             {noteItems.some((it:any) => it.checked) && (
               <div style={{ marginTop: 6 }}>
-                <button className="btn completed-toggle" onClick={(e) => { e.stopPropagation(); setShowCompleted(s => !s); }} aria-expanded={showCompleted} aria-controls={`completed-${note.id}`}>
+                <button className="btn completed-toggle" onClick={(e) => {
+                  try { e.stopPropagation(); } catch {}
+                  setShowCompleted(s => {
+                    const next = !s;
+                    try {
+                      if (myDeviceKey) localStorage.setItem(`fn.note.showCompleted.${myDeviceKey}.${note.id}`, String(next));
+                    } catch {}
+                    return next;
+                  });
+                }} aria-expanded={showCompleted} aria-controls={`completed-${note.id}`}>
                   <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
                     <span style={{ transform: showCompleted ? 'rotate(90deg)' : 'rotate(0deg)', display: 'inline-block' }}>{'▸'}</span>
                     <span>{noteItems.filter((it:any)=>it.checked).length} completed items</span>
@@ -2239,7 +2308,7 @@ export default function NoteCard({
 
       {showPalette && <ColorPalette anchorRef={noteRef} onPick={onPickColor} onClose={() => setShowPalette(false)} />}
 
-      {showImageDialog && <ImageDialog onClose={() => setShowImageDialog(false)} onAdd={onAddImageUrl} />}
+      {showImageDialog && <ImageDialog onClose={() => setShowImageDialog(false)} onAdd={onAddImageUrl} onAddMany={onAddImageUrls} />}
       {showImagesModal && (
         <NoteImagesModal
           noteId={Number(note.id)}

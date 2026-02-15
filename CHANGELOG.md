@@ -15,6 +15,22 @@ Adheres to Semantic Versioning (MAJOR.MINOR.PATCH).
 ### Fixed
 - 
 
+## [0.7.1] - 2026-02-15
+
+### Changed
+- Migrated runtime database setup and container defaults to PostgreSQL (`pg`) with updated bootstrap/setup scripts and Docker wiring.
+- Mobile/FAB create flows now use the same editor scroll-shell structure and title/body width behavior as existing-note editors.
+- MobileCreateModal rich-text toolbar now matches the existing note editor order and controls (including link placement and justify alignment).
+- Tightened more-menu sizing and spacing across desktop and mobile/PWA for denser, easier-to-scan actions.
+
+### Fixed
+- Auth session persistence after server restarts: returning users are no longer incorrectly prompted to log in when `/api/auth/me` is valid.
+- Mobile note-card gesture conflicts: long-press menu vs drag activation, sidebar swipe interference during drag, and background drag while menu is open.
+- Mobile long-press/menu interactions on Android no longer trigger unwanted text-selection/callout behavior.
+- Note-card image picker now supports selecting and attaching multiple images in one action (desktop/mobile/PWA).
+- Checklist mobile drag intent tuning: improved vertical reorder pickup and reduced accidental horizontal indent actions.
+- Mobile create/edit parity fixes for focus rings, title-missing highlighting, and bottom typing runway near sticky/footer controls.
+
 ## [0.6.9] - 2026-02-14
 
 ### Changed

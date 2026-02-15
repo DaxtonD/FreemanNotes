@@ -688,6 +688,7 @@ export default function MobileCreateModal({
         </div>
 
         <div className="dialog-body">
+          <div className="editor-scroll-area">
           <UrlEntryModal
             open={showUrlModal}
             title="Add URL preview"
@@ -725,7 +726,7 @@ export default function MobileCreateModal({
               <div className="rt-sticky-header">
                 <div style={{ display: 'flex', gap: 12, marginBottom: 8 }}>
                   <input
-                    className="note-title-input"
+                    className={`note-title-input${!String(title || '').trim() ? ' note-title-input-missing' : ''}`}
                     ref={titleInputRef}
                     placeholder="Title"
                     value={title}
@@ -737,7 +738,6 @@ export default function MobileCreateModal({
                   <button className="tiny" onClick={() => editor?.chain().focus().toggleBold().run()} aria-pressed={editor?.isActive('bold')} aria-label="Bold" title="Bold">B</button>
                   <button className="tiny" onClick={() => editor?.chain().focus().toggleItalic().run()} aria-pressed={editor?.isActive('italic')} aria-label="Italic" title="Italic">I</button>
                   <button className="tiny" onClick={() => editor?.chain().focus().toggleUnderline().run()} aria-pressed={editor?.isActive('underline')} aria-label="Underline" title="Underline">U</button>
-                  <button className="tiny" onClick={applyTextLink} aria-label="Add URL preview" title="Add URL preview"><FontAwesomeIcon icon={faLink} /></button>
                   <button className="tiny" onClick={() => editor?.chain().focus().toggleHeading({ level: 1 }).run()} aria-pressed={editor?.isActive('heading', { level: 1 })} aria-label="Heading 1" title="Heading 1">H1</button>
                   <button className="tiny" onClick={() => editor?.chain().focus().toggleHeading({ level: 2 }).run()} aria-pressed={editor?.isActive('heading', { level: 2 })} aria-label="Heading 2" title="Heading 2">H2</button>
                   <button className="tiny" onClick={() => editor?.chain().focus().toggleHeading({ level: 3 }).run()} aria-pressed={editor?.isActive('heading', { level: 3 })} aria-label="Heading 3" title="Heading 3">H3</button>
@@ -750,6 +750,8 @@ export default function MobileCreateModal({
                   <button className="tiny" onClick={() => editor?.chain().focus().setTextAlign('left').run()} aria-pressed={editor?.isActive({ textAlign: 'left' })} aria-label="Align left" title="Align left"><svg viewBox="0 0 24 24" aria-hidden focusable="false"><rect x="4" y="5" width="14" height="2" rx="1" /><rect x="4" y="9" width="10" height="2" rx="1" /><rect x="4" y="13" width="14" height="2" rx="1" /><rect x="4" y="17" width="8" height="2" rx="1" /></svg></button>
                   <button className="tiny" onClick={() => editor?.chain().focus().setTextAlign('center').run()} aria-pressed={editor?.isActive({ textAlign: 'center' })} aria-label="Align center" title="Align center"><svg viewBox="0 0 24 24" aria-hidden focusable="false"><rect x="5" y="5" width="14" height="2" rx="1" /><rect x="7" y="9" width="10" height="2" rx="1" /><rect x="5" y="13" width="14" height="2" rx="1" /><rect x="8" y="17" width="8" height="2" rx="1" /></svg></button>
                   <button className="tiny" onClick={() => editor?.chain().focus().setTextAlign('right').run()} aria-pressed={editor?.isActive({ textAlign: 'right' })} aria-label="Align right" title="Align right"><svg viewBox="0 0 24 24" aria-hidden focusable="false"><rect x="6" y="5" width="14" height="2" rx="1" /><rect x="10" y="9" width="10" height="2" rx="1" /><rect x="6" y="13" width="14" height="2" rx="1" /><rect x="12" y="17" width="8" height="2" rx="1" /></svg></button>
+                  <button className="tiny" onClick={() => editor?.chain().focus().setTextAlign('justify').run()} aria-pressed={editor?.isActive({ textAlign: 'justify' })} aria-label="Justify" title="Justify"><svg viewBox="0 0 24 24" aria-hidden focusable="false"><rect x="5" y="5" width="14" height="2" rx="1" /><rect x="5" y="9" width="14" height="2" rx="1" /><rect x="5" y="13" width="14" height="2" rx="1" /><rect x="5" y="17" width="14" height="2" rx="1" /></svg></button>
+                  <button className="tiny" onClick={applyTextLink} aria-label="Add URL preview" title="Add URL preview"><FontAwesomeIcon icon={faLink} /></button>
                 </div>
               </div>
               <EditorContent editor={editor} style={{ color: (textColor || 'inherit') }} />
@@ -759,7 +761,7 @@ export default function MobileCreateModal({
               <div className="rt-sticky-header">
                 <div style={{ display: 'flex', gap: 12, marginBottom: 8 }}>
                   <input
-                    className="note-title-input"
+                    className={`note-title-input${!String(title || '').trim() ? ' note-title-input-missing' : ''}`}
                     ref={titleInputRef}
                     placeholder="Title"
                     value={title}
@@ -1031,6 +1033,7 @@ export default function MobileCreateModal({
               <button className="btn" type="button" onClick={() => setImageUrl(null)} style={{ padding: '6px 10px' }}>Remove</button>
             </div>
           )}
+          </div>
         </div>
 
         <div className="dialog-footer" style={{ display: 'block' }}>

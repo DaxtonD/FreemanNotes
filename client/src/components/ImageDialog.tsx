@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
-export default function ImageDialog({ onClose, onAdd }: { onClose: () => void; onAdd: (url?: string | null) => void }) {
+export default function ImageDialog({ onClose, onAdd, onAddMany }: { onClose: () => void; onAdd: (url?: string | null) => void; onAddMany?: (urls: string[]) => void }) {
   const [url, setUrl] = useState("");
   const fileRef = useRef<HTMLInputElement | null>(null);
   useEffect(() => {
@@ -16,14 +16,29 @@ export default function ImageDialog({ onClose, onAdd }: { onClose: () => void; o
   }
 
   function onFile(e: React.ChangeEvent<HTMLInputElement>) {
-    const f = e.target.files && e.target.files[0];
-    if (!f) return;
-    const reader = new FileReader();
-    reader.onload = () => {
-      onAdd(String(reader.result));
-    };
-    reader.readAsDataURL(f);
-    onClose();
+    const files = Array.from(e.target.files || []).filter(Boolean);
+    if (!files.length) return;
+    const readAsDataUrl = (f: File) => new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result || ''));
+      reader.onerror = () => reject(reader.error || new Error('Failed to read file'));
+      reader.readAsDataURL(f);
+    });
+    (async () => {
+      try {
+        const urls = (await Promise.all(files.map((f) => readAsDataUrl(f))))
+          .map((u) => String(u || ''))
+          .filter((u) => !!u);
+        if (!urls.length) return;
+        if (onAddMany) onAddMany(urls);
+        else onAdd(urls[0]);
+      } catch {
+        // keep dialog open only if caller wants to retry; current UX closes after selection
+      } finally {
+        try { if (fileRef.current) fileRef.current.value = ''; } catch {}
+        onClose();
+      }
+    })();
   }
 
   function onSubmitUrl(e?: React.FormEvent) {
@@ -44,10 +59,10 @@ export default function ImageDialog({ onClose, onAdd }: { onClose: () => void; o
           <input placeholder="Image URL" value={url} onChange={e => setUrl(e.target.value)} className="image-url-input" />
           <div className="image-form-actions">
             <button type="submit" className="btn">Add URL</button>
-            <button type="button" className="btn" onClick={onChooseFile}>Choose file</button>
+            <button type="button" className="btn" onClick={onChooseFile}>Choose file(s)</button>
           </div>
         </form>
-        <input ref={fileRef} type="file" accept="image/*" style={{ display: "none" }} onChange={onFile} />
+        <input ref={fileRef} type="file" accept="image/*" multiple style={{ display: "none" }} onChange={onFile} />
       </div>
     </div>
   );

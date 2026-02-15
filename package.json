@@ -1,6 +1,6 @@
 {
   "name": "freemannotes",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "private": true,
   "type": "commonjs",
   "scripts": {
@@ -28,6 +28,7 @@
     "@fortawesome/free-solid-svg-icons": "^7.1.0",
     "@fortawesome/react-fontawesome": "^3.1.1",
     "@prisma/client": "^5.10.0",
+    "pg": "^8.10.0",
     "@tiptap/extension-collaboration": "^3.18.0",
     "@tiptap/extension-link": "^3.18.0",
     "@tiptap/extension-text-align": "^3.18.0",

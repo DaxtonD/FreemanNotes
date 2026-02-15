@@ -12,6 +12,7 @@ import {
   pointerWithin,
   type DragCancelEvent,
   type DragEndEvent,
+  type DragMoveEvent,
   type DragOverEvent,
   type DragStartEvent,
 } from '@dnd-kit/core';
@@ -243,6 +244,7 @@ export default function NotesGrid({
 
   // Swap drag autoscroll (mobile): keep drag stable while scrolling to far targets.
   const swapDraggingRef = useRef(false);
+  const swapHasMovedRef = useRef(false);
   const swapPointerRef = useRef<{ x: number; y: number } | null>(null);
   const swapAutoScrollRafRef = useRef<number | null>(null);
   const swapUnsubMoveRef = useRef<null | (() => void)>(null);
@@ -636,11 +638,17 @@ export default function NotesGrid({
   const swapSensors = useSensors(
     useSensor(MouseSensor, { activationConstraint: { distance: 6 } }),
     // Long-press to reorder on touch so scrolling still works.
-    useSensor(TouchSensor, { activationConstraint: { delay: 160, tolerance: 12 } })
+    useSensor(TouchSensor, { activationConstraint: { delay: 220, tolerance: 12 } })
   );
 
   function onSwapDragStart(evt: DragStartEvent) {
     if (!manualSwapEnabled) return;
+    try {
+      const root = document.documentElement;
+      if (root.classList.contains('is-note-more-menu-open')) return;
+    } catch {}
+    swapHasMovedRef.current = false;
+    try { document.documentElement.classList.remove('is-note-swap-dragging-moving'); } catch {}
     const id = Number(evt.active.id);
     if (!Number.isFinite(id)) return;
     swapDraggingRef.current = true;
@@ -655,6 +663,16 @@ export default function NotesGrid({
     swapCandidateIdRef.current = null;
     clearSwapDwellTimer();
     setManualDragActive(true);
+  }
+
+  function onSwapDragMove(evt: DragMoveEvent) {
+    if (!manualSwapEnabled) return;
+    if (swapHasMovedRef.current) return;
+    const dx = Math.abs(Number((evt as any)?.delta?.x || 0));
+    const dy = Math.abs(Number((evt as any)?.delta?.y || 0));
+    if (dx < 6 && dy < 6) return;
+    swapHasMovedRef.current = true;
+    try { document.documentElement.classList.add('is-note-swap-dragging-moving'); } catch {}
   }
 
   function onSwapDragOver(evt: DragOverEvent) {
@@ -706,7 +724,21 @@ export default function NotesGrid({
     setSwapTargetId(null);
     setManualDragActive(false);
     setSwapOverlayRect(null);
+    swapHasMovedRef.current = false;
+    try { document.documentElement.classList.remove('is-note-swap-dragging-moving'); } catch {}
   }
+
+  useEffect(() => {
+    const onMoreMenuOpen = () => {
+      try {
+        if (swapDraggingRef.current || swapActiveId != null) finishSwapDrag();
+      } catch {}
+    };
+    try { window.addEventListener('freemannotes:more-menu-open', onMoreMenuOpen as any); } catch {}
+    return () => {
+      try { window.removeEventListener('freemannotes:more-menu-open', onMoreMenuOpen as any); } catch {}
+    };
+  }, [swapActiveId]);
 
   // While swap-dragging, disable native touch scrolling so auto-scroll is controlled
   // and the drag stays stable even near the viewport edges.
@@ -3233,6 +3265,7 @@ export default function NotesGrid({
           sensors={swapSensors}
           collisionDetection={pointerWithin}
           onDragStart={onSwapDragStart}
+          onDragMove={onSwapDragMove}
           onDragOver={onSwapDragOver}
           onDragEnd={onSwapDragEnd}
           onDragCancel={onSwapDragCancel}

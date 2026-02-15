@@ -61,6 +61,12 @@ export async function ensureDatabaseReady() {
     // Make sure DATABASE_URL is set via helper script if DB_* env vars are provided
     try {
       runCommand('node ./server/scripts/set-database-url.js');
+        // Ensure the target database exists (create if possible). Non-fatal.
+        try {
+          runCommand('node ./server/scripts/ensure-database.js');
+        } catch (e) {
+          // ignore; ensure-database is best-effort and should not block startup
+        }
     } catch (e) {
       // ignore - script exits 0 when DATABASE_URL present
     }

@@ -3,7 +3,7 @@ generator client {
 }
 
 datasource db {
-  provider = "mysql"
+  provider = "postgresql"
   url      = env("DATABASE_URL")
 }
 
@@ -125,13 +125,13 @@ model Invite {
   createdAt   DateTime  @default(now())
   invitedBy   User?     @relation("InvitesSent", fields: [invitedById], references: [id])
 
-  @@index([invitedById], map: "Invite_invitedById_fkey")
+  @@index([invitedById])
 }
 
 model Note {
   id            Int            @id @default(autoincrement())
   title         String?
-  body          String?        @db.LongText
+  body          String?        @db.Text
   yData         Bytes?
   color         String?
   type          NoteType       @default(TEXT)
@@ -170,6 +170,7 @@ model Note {
   @@index([ownerId, trashedAt])
   @@index([ownerId, reminderAt])
   @@index([ownerId, reminderDueAt])
+  @@map("Note")
 }
 
 model PushSubscription {
@@ -252,25 +253,25 @@ model NoteCollection {
 model NoteItem {
   id      Int     @id @default(autoincrement())
   noteId  Int
-  content String  @db.LongText
+  content String  @db.Text
   checked Boolean @default(false)
   indent  Int     @default(0)
   ord     Int     @default(0)
   note    Note    @relation(fields: [noteId], references: [id])
 
-  @@index([noteId], map: "NoteItem_noteId_fkey")
+  @@index([noteId])
 }
 
 model NoteImage {
   id        Int      @id @default(autoincrement())
   noteId    Int
-  url       String   @db.LongText
+  url       String   @db.Text
   // OCR: raw extracted text
-  ocrText   String?  @db.LongText
+  ocrText   String?  @db.Text
   // OCR: normalized text optimized for search indexing
-  ocrSearchText String? @db.LongText
+  ocrSearchText String? @db.Text
   // OCR: structured JSON output (blocks/lines/boxes/confidence)
-  ocrDataJson String? @db.LongText
+  ocrDataJson String? @db.Text
   // OCR: sha256 hash of the source image bytes (used to avoid re-OCR)
   ocrHash   String?  @db.Char(64)
   // OCR: best-effort average confidence (0..1)
@@ -283,7 +284,7 @@ model NoteImage {
   createdAt DateTime @default(now())
   note      Note     @relation(fields: [noteId], references: [id])
 
-  @@index([noteId], map: "NoteImage_noteId_fkey")
+  @@index([noteId])
   @@index([ocrHash])
 }
 
@@ -306,7 +307,7 @@ model NoteLabel {
   note    Note  @relation(fields: [noteId], references: [id])
 
   @@unique([noteId, labelId])
-  @@index([labelId], map: "NoteLabel_labelId_fkey")
+  @@index([labelId])
 }
 
 model Collaborator {

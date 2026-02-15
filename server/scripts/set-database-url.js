@@ -22,13 +22,13 @@ function hasDatabaseUrlInText(txt) {
 }
 
 function buildUrlFromDbVars() {
-  const user = process.env.DB_USER || process.env.MYSQL_USER;
-  const pass = process.env.DB_PASSWORD || process.env.MYSQL_PASSWORD;
-  const host = process.env.DB_HOST || process.env.MYSQL_HOST;
-  const port = process.env.DB_PORT || process.env.MYSQL_PORT || '3306';
-  const name = process.env.DB_NAME || process.env.MYSQL_DATABASE;
+  const user = process.env.DB_USER || process.env.POSTGRES_USER || process.env.PGUSER;
+  const pass = process.env.DB_PASSWORD || process.env.POSTGRES_PASSWORD || process.env.PGPASSWORD;
+  const host = process.env.DB_HOST || process.env.POSTGRES_HOST || process.env.PGHOST || 'localhost';
+  const port = process.env.DB_PORT || process.env.POSTGRES_PORT || process.env.PGPORT || '5432';
+  const name = process.env.DB_NAME || process.env.POSTGRES_DB || process.env.PGDATABASE;
   if (!user || !pass || !host || !name) return null;
-  return `mysql://${encodeURIComponent(user)}:${encodeURIComponent(pass)}@${host}:${port}/${name}`;
+  return `postgresql://${encodeURIComponent(user)}:${encodeURIComponent(pass)}@${host}:${port}/${name}`;
 }
 
 (async () => {

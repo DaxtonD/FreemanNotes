@@ -24,10 +24,36 @@ export function useAuth() {
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User>(null);
   const [token, setToken] = useState<string | null>(() => localStorage.getItem('fn_token'));
+  const [ready, setReady] = useState<boolean>(false);
 
   useEffect(() => {
-    if (!token) return;
-    apiMe(token).then((data) => setUser(data.user)).catch(() => { setUser(null); setToken(null); localStorage.removeItem('fn_token'); });
+    let cancelled = false;
+    (async () => {
+      if (!token) {
+        setReady(true);
+        return;
+      }
+      try {
+        const data = await apiMe(token);
+        if (cancelled) return;
+        setUser(data.user);
+      } catch (err) {
+        if (cancelled) return;
+        const status = (err as any)?.status;
+        if (status === 401) {
+          // Explicit unauthorized: clear local token
+          setUser(null);
+          setToken(null);
+          try { localStorage.removeItem('fn_token'); } catch {}
+        } else {
+          // Transient/network error: keep token and treat as not-ready but allow app to render
+          console.warn('Transient auth/me failure — keeping token:', err);
+        }
+      } finally {
+        if (!cancelled) setReady(true);
+      }
+    })();
+    return () => { cancelled = true; };
   }, [token]);
   // apply persisted user preferences when loaded
   useEffect(() => {
@@ -212,6 +238,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     localStorage.removeItem('fn_token');
   }
 
+  if (!ready) return null;
   return (
     <AuthContext.Provider value={{ user, token, login, register, logout, uploadPhoto, updateMe }}>
       {children}

@@ -225,75 +225,75 @@ router.get("/api/admin/users", async (req: Request, res: Response) => {
       const noteStats = (await prisma.$queryRawUnsafe(
         `
         SELECT
-          n.ownerId AS userId,
+          n."ownerId" AS userId,
           COUNT(*) AS notesCount,
           COALESCE(SUM(
-            OCTET_LENGTH(COALESCE(n.title, '')) +
-            OCTET_LENGTH(COALESCE(n.body, '')) +
-            OCTET_LENGTH(COALESCE(n.color, '')) +
-            OCTET_LENGTH(COALESCE(n.linkPreviewUrl, '')) +
-            OCTET_LENGTH(COALESCE(n.linkPreviewTitle, '')) +
-            OCTET_LENGTH(COALESCE(n.linkPreviewDescription, '')) +
-            OCTET_LENGTH(COALESCE(n.linkPreviewImageUrl, '')) +
-            OCTET_LENGTH(COALESCE(n.linkPreviewDomain, ''))
+            OCTET_LENGTH(COALESCE(n."title", '')) +
+            OCTET_LENGTH(COALESCE(n."body", '')) +
+            OCTET_LENGTH(COALESCE(n."color", '')) +
+            OCTET_LENGTH(COALESCE(n."linkPreviewUrl", '')) +
+            OCTET_LENGTH(COALESCE(n."linkPreviewTitle", '')) +
+            OCTET_LENGTH(COALESCE(n."linkPreviewDescription", '')) +
+            OCTET_LENGTH(COALESCE(n."linkPreviewImageUrl", '')) +
+            OCTET_LENGTH(COALESCE(n."linkPreviewDomain", ''))
           ), 0) AS bytes
-        FROM Note n
-        WHERE n.ownerId IN (${idsCsv})
-        GROUP BY n.ownerId
-        `
-      )) as UserNoteStatsRow[];
+          FROM "Note" n
+          WHERE n."ownerId" IN (${idsCsv})
+          GROUP BY n."ownerId"
+          `
+        )) as UserNoteStatsRow[];
 
       const itemStats = (await prisma.$queryRawUnsafe(
         `
         SELECT
-          n.ownerId AS userId,
-          COALESCE(SUM(OCTET_LENGTH(COALESCE(ni.content, ''))), 0) AS bytes
-        FROM NoteItem ni
-        INNER JOIN Note n ON n.id = ni.noteId
-        WHERE n.ownerId IN (${idsCsv})
-        GROUP BY n.ownerId
-        `
-      )) as UserBytesRow[];
+          n."ownerId" AS userId,
+          COALESCE(SUM(OCTET_LENGTH(COALESCE(ni."content", ''))), 0) AS bytes
+        FROM "NoteItem" ni
+        INNER JOIN "Note" n ON n."id" = ni."noteId"
+          WHERE n."ownerId" IN (${idsCsv})
+          GROUP BY n."ownerId"
+          `
+        )) as UserBytesRow[];
 
       const imageStats = (await prisma.$queryRawUnsafe(
         `
         SELECT
-          n.ownerId AS userId,
+          n."ownerId" AS userId,
           COUNT(*) AS imagesCount,
           COALESCE(SUM(
-            OCTET_LENGTH(COALESCE(img.url, '')) +
-            OCTET_LENGTH(COALESCE(img.ocrText, '')) +
-            OCTET_LENGTH(COALESCE(img.ocrSearchText, '')) +
-            OCTET_LENGTH(COALESCE(img.ocrDataJson, '')) +
-            OCTET_LENGTH(COALESCE(img.ocrHash, '')) +
-            OCTET_LENGTH(COALESCE(img.ocrLang, '')) +
-            OCTET_LENGTH(COALESCE(img.ocrStatus, ''))
+            OCTET_LENGTH(COALESCE(img."url", '')) +
+            OCTET_LENGTH(COALESCE(img."ocrText", '')) +
+            OCTET_LENGTH(COALESCE(img."ocrSearchText", '')) +
+            OCTET_LENGTH(COALESCE(img."ocrDataJson", '')) +
+            OCTET_LENGTH(COALESCE(img."ocrHash", '')) +
+            OCTET_LENGTH(COALESCE(img."ocrLang", '')) +
+            OCTET_LENGTH(COALESCE(img."ocrStatus", ''))
           ), 0) AS bytes
-        FROM NoteImage img
-        INNER JOIN Note n ON n.id = img.noteId
-        WHERE n.ownerId IN (${idsCsv})
-        GROUP BY n.ownerId
-        `
-      )) as UserImageStatsRow[];
+          FROM "NoteImage" img
+          INNER JOIN "Note" n ON n."id" = img."noteId"
+          WHERE n."ownerId" IN (${idsCsv})
+          GROUP BY n."ownerId"
+          `
+        )) as UserImageStatsRow[];
 
       const linkPreviewStats = (await prisma.$queryRawUnsafe(
         `
         SELECT
-          n.ownerId AS userId,
+          n."ownerId" AS userId,
           COALESCE(SUM(
-            OCTET_LENGTH(COALESCE(lp.urlHash, '')) +
-            OCTET_LENGTH(COALESCE(lp.url, '')) +
-            OCTET_LENGTH(COALESCE(lp.title, '')) +
-            OCTET_LENGTH(COALESCE(lp.description, '')) +
-            OCTET_LENGTH(COALESCE(lp.imageUrl, '')) +
-            OCTET_LENGTH(COALESCE(lp.domain, ''))
+            OCTET_LENGTH(COALESCE(lp."urlHash", '')) +
+            OCTET_LENGTH(COALESCE(lp."url", '')) +
+            OCTET_LENGTH(COALESCE(lp."title", '')) +
+            OCTET_LENGTH(COALESCE(lp."description", '')) +
+            OCTET_LENGTH(COALESCE(lp."imageUrl", '')) +
+            OCTET_LENGTH(COALESCE(lp."domain", ''))
           ), 0) AS bytes
-        FROM NoteLinkPreview lp
-        INNER JOIN Note n ON n.id = lp.noteId
-        WHERE n.ownerId IN (${idsCsv})
-        GROUP BY n.ownerId
-        `
-      )) as UserBytesRow[];
+          FROM "NoteLinkPreview" lp
+          INNER JOIN "Note" n ON n."id" = lp."noteId"
+          WHERE n."ownerId" IN (${idsCsv})
+          GROUP BY n."ownerId"
+          `
+        )) as UserBytesRow[];
 
       for (const id of userIds) {
         statsByUserId.set(id, { notesCount: 0, imagesCount: 0, dbStorageBytes: 0, filesystemBytes: 0, storageBytes: 0 });
