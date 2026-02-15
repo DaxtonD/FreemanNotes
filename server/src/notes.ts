@@ -1107,7 +1107,11 @@ router.patch('/api/notes/:noteId/items/:itemId', async (req: Request, res: Respo
       return res.json({ ok: true, deleted: true });
     }
 
-    const item = await prisma.noteItem.update({ where: { id: itemId }, data });
+    // Race-safe update: item may be removed by another session between existence check and write.
+    const upd = await prisma.noteItem.updateMany({ where: { id: itemId, noteId }, data });
+    if (!upd.count) return res.status(404).json({ error: 'item not found' });
+    const item = await prisma.noteItem.findUnique({ where: { id: itemId } });
+    if (!item) return res.status(404).json({ error: 'item not found' });
 
     // Realtime: sync checklist items across other sessions and collaborators.
     try {
@@ -1164,30 +1168,37 @@ router.put('/api/notes/:id/items', async (req: Request, res: Response) => {
       return res.json({ items: ordered });
     }
 
-    // Sync: upsert provided items. If `replaceMissing` is true, also delete DB rows
-    // that are not present in the provided list (full authoritative replace).
-    const results = await prisma.$transaction(
-      items.map((it, idx) => {
-        const base = { content: String(it.content || ''), checked: !!it.checked, ord: typeof it.ord === 'number' ? it.ord : idx, indent: typeof it.indent === 'number' ? it.indent : 0 };
-        if (it.id) {
-          return prisma.noteItem.update({ where: { id: Number(it.id) }, data: base });
-        }
-        return prisma.noteItem.create({ data: { noteId, ...base } });
-      })
-    );
+    // Sync: upsert provided items in a race-safe way. If an id no longer exists,
+    // recreate the row so transient client/server ordering races don't throw P2025.
+    await prisma.$transaction(async (tx) => {
+      const touched: number[] = [];
+      for (let idx = 0; idx < items.length; idx++) {
+        const it = items[idx];
+        const base = {
+          content: String(it.content || ''),
+          checked: !!it.checked,
+          ord: typeof it.ord === 'number' ? it.ord : idx,
+          indent: typeof it.indent === 'number' ? it.indent : 0,
+        };
 
-    if (replaceMissing) {
-      try {
-        const keepIds = (Array.isArray(results) ? results : [])
-          .map((r: any) => Number(r?.id))
-          .filter((n: any) => Number.isFinite(n));
-
-        // If none of the upserts returned ids, avoid deleting everything.
-        if (keepIds.length) {
-          await prisma.noteItem.deleteMany({ where: { noteId, id: { notIn: keepIds } } });
+        const incomingId = Number(it?.id);
+        if (Number.isInteger(incomingId) && incomingId > 0) {
+          const upd = await tx.noteItem.updateMany({ where: { id: incomingId, noteId }, data: base });
+          if (upd.count > 0) {
+            touched.push(incomingId);
+            continue;
+          }
         }
-      } catch {}
-    }
+
+        const created = await tx.noteItem.create({ data: { noteId, ...base } });
+        touched.push(Number(created.id));
+      }
+
+      if (replaceMissing && touched.length) {
+        await tx.noteItem.deleteMany({ where: { noteId, id: { notIn: touched } } });
+      }
+      return touched;
+    });
 
     const updated = await prisma.note.findUnique({ where: { id: noteId }, include: { items: true } });
     const ordered = (updated?.items || []).slice().sort((a, b) => (a.ord || 0) - (b.ord || 0));

@@ -2,6 +2,7 @@ import { Router, Request, Response } from "express";
 import prisma from "./prismaClient";
 import jwt from "jsonwebtoken";
 import bcrypt from "bcryptjs";
+import { getInitialUserPrefs } from "./userPrefDefaults";
 import { getUploadsDir } from './uploads';
 import * as fsp from 'fs/promises';
 import path from 'path';
@@ -404,20 +405,14 @@ router.post("/api/admin/users", async (req: Request, res: Response) => {
     if (existing) return res.status(409).json({ error: "email already registered" });
 
     const hash = await bcrypt.hash(passwordStr, 10);
+    const userDefaults = getInitialUserPrefs();
     const created = await prisma.user.create({
       data: {
         email: emailStr,
         name: nameStr || null,
         passwordHash: hash,
         role,
-        fontFamily: "Calibri, system-ui, Arial, sans-serif",
-        dragBehavior: "swap",
-        animationSpeed: "normal",
-        checklistSpacing: 15,
-        checkboxSize: 20,
-        checklistTextSize: 17,
-        noteWidth: 288,
-        noteLineSpacing: 1.38
+        ...userDefaults,
       },
       select: {
         id: true,

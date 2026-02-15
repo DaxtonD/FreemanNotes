@@ -8,6 +8,7 @@ import path from 'path';
 import sharp from 'sharp';
 import { notifyUser } from './events';
 import { getUsersUploadsDir } from './uploads';
+import { getInitialDevicePrefs, getInitialUserPrefs } from './userPrefDefaults';
 
 const router = Router();
 
@@ -168,54 +169,26 @@ router.post("/api/auth/register", async (req: Request, res: Response) => {
     } else if (invite && (invite.desiredRole === 'admin' || invite.desiredRole === 'user')) {
       role = invite.desiredRole;
     }
+    const userDefaults = getInitialUserPrefs();
     const user = await prisma.user.create({ data: {
       email,
       name: name || null,
       passwordHash: hash,
       role,
-      // initial preferences
-      fontFamily: 'Calibri, system-ui, Arial, sans-serif',
-      dragBehavior: 'swap',
-      animationSpeed: 'normal',
-      checklistSpacing: 15,
-      checkboxSize: 20,
-      checklistTextSize: 17,
-      noteWidth: 288,
-      noteLineSpacing: 1.38
+      // initial preferences (configurable via REGISTER_USER_PREFS_JSON)
+      ...userDefaults,
     } });
     // Bind this client to a per-device profile and initialize prefs from defaults.
     try {
       const ctx = await resolveDeviceContext(user.id, req);
       if (ctx) {
         const prismaAny = prisma as any;
+        const initialDevicePrefs = getInitialDevicePrefs(req, ctx.deviceName, user as any);
         await prismaAny.userDevicePrefs.upsert({
           where: { profileId: ctx.profileId },
           create: {
             profileId: ctx.profileId,
-            themeChoice: 'system',
-            checklistSpacing: user.checklistSpacing,
-            checkboxSize: user.checkboxSize,
-            checklistTextSize: user.checklistTextSize,
-            noteLineSpacing: user.noteLineSpacing,
-            cardTitleSize: 20,
-            cardChecklistSpacing: user.checklistSpacing,
-            cardCheckboxSize: user.checkboxSize,
-            cardChecklistTextSize: user.checklistTextSize,
-            cardNoteLineSpacing: user.noteLineSpacing,
-            editorChecklistSpacing: user.checklistSpacing,
-            editorCheckboxSize: user.checkboxSize,
-            editorChecklistTextSize: user.checklistTextSize,
-            editorNoteLineSpacing: user.noteLineSpacing,
-            noteWidth: user.noteWidth,
-            fontFamily: user.fontFamily,
-            dragBehavior: user.dragBehavior,
-            animationSpeed: user.animationSpeed,
-            chipDisplayMode: user.chipDisplayMode,
-            animationsEnabled: true,
-            imageThumbSize: 96,
-            editorImageThumbSize: 115,
-            editorImagesExpandedByDefault: false,
-            disableNoteCardLinks: false
+            ...initialDevicePrefs,
           },
           // Upsert is used here only to ensure the prefs row exists.
           // `lastSeenAt` belongs to device profile/client, not prefs.

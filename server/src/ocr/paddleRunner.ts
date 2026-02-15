@@ -83,7 +83,8 @@ async function runWithPython(
   pythonBin: string,
   scriptPath: string,
   imagePath: string,
-  lang: string
+  lang: string,
+  envPatch?: Record<string, string>
 ): Promise<{ ok: true; out: string; err: string; code: number } | { ok: false; spawnErr: unknown }> {
   return await new Promise((resolve) => {
     let stdout = '';
@@ -94,7 +95,10 @@ async function runWithPython(
       ? ['-3', scriptPath, '--image', imagePath, '--lang', lang]
       : [scriptPath, '--image', imagePath, '--lang', lang];
 
-    const proc = spawn(pythonBin, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    const proc = spawn(pythonBin, args, {
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env: { ...process.env, ...(envPatch || {}) },
+    });
 
     proc.stdout.on('data', (d) => { stdout += d.toString(); });
     proc.stderr.on('data', (d) => { stderr += d.toString(); });
@@ -116,12 +120,29 @@ async function runWithPython(
 export async function runPaddleOcrOnPng(preprocessedPng: Buffer, opts?: { lang?: string }): Promise<OcrStructuredResult | OcrFailure> {
   const lang = (opts?.lang || DEFAULT_LANG).trim() || DEFAULT_LANG;
   const scriptPath = path.resolve(process.cwd(), 'scripts', 'paddle_ocr.py');
+  const paddleHome = String(process.env.PADDLEOCR_HOME || path.join(os.tmpdir(), 'freemannotes-paddleocr'));
+
+  try {
+    await fs.mkdir(paddleHome, { recursive: true });
+  } catch (e) {
+    ocrLog('warn', 'failed creating paddle home, falling back to tmp', { paddleHome, err: tailString(e, 400) });
+  }
+
+  const xdgCacheHome = String(process.env.XDG_CACHE_HOME || path.join(os.tmpdir(), 'freemannotes-cache'));
+  try { await fs.mkdir(xdgCacheHome, { recursive: true }); } catch {}
+
+  const runnerEnv: Record<string, string> = {
+    PADDLEOCR_HOME: paddleHome,
+    HOME: String(process.env.HOME || os.tmpdir()),
+    XDG_CACHE_HOME: xdgCacheHome,
+  };
 
   ocrLog('debug', 'runner start', {
     lang,
     scriptPath,
     pythonCandidates: PYTHON_CANDIDATES,
     pythonBinEnv: process.env.PYTHON_BIN || null,
+    paddleHome,
     bytes: preprocessedPng.length,
   });
 
@@ -129,7 +150,7 @@ export async function runPaddleOcrOnPng(preprocessedPng: Buffer, opts?: { lang?:
   const start = Date.now();
   try {
     for (const py of PYTHON_CANDIDATES) {
-      const run = await runWithPython(py, scriptPath, tmpImage, lang);
+      const run = await runWithPython(py, scriptPath, tmpImage, lang, runnerEnv);
       if (!run.ok) {
         ocrLog('debug', 'spawn failed', { python: py, err: tailString((run as any).spawnErr, 800) });
         continue;
