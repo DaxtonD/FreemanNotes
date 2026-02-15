@@ -185,7 +185,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const effectiveToken = token || localStorage.getItem('fn_token');
     if (!effectiveToken) throw new Error('Not authenticated');
     const data = await uploadMyPhoto(effectiveToken, dataUrl);
-    if (data && data.user) setUser(data.user);
+    if (data && data.user) {
+      setUser(data.user);
+      try {
+        window.dispatchEvent(new CustomEvent('freemannotes:user-photo-updated', { detail: { user: data.user } }));
+      } catch {}
+    }
   }
 
   async function updateMe(payload: any) {

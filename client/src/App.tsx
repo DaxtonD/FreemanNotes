@@ -343,9 +343,13 @@ function AppShell(): JSX.Element {
 				startedOnNoteCard = !!(el && el.closest && el.closest('.note-card'));
 			} catch {}
 
+			// Also: avoid treating note drags as sidebar opens. If a note swap-drag is
+			// active (or pending activation), never allow the edge swipe to open the drawer.
+			let draggingInProgress = false;
+			try { draggingInProgress = !!document.documentElement.classList && (document.documentElement.classList.contains('is-note-swap-dragging') || document.documentElement.classList.contains('is-note-swap-dragging-pending')); } catch {}
+
 			// Only arm the gesture if we started in a relevant region.
-			// Also: avoid treating note drags as sidebar opens.
-			const canStartOpen = (!sidebarDrawerOpen && x <= OPEN_ZONE_MAX_X && (!startedOnNoteCard || x <= NOTE_CARD_OPEN_EDGE_PX));
+			const canStartOpen = (!sidebarDrawerOpen && x <= OPEN_ZONE_MAX_X && !draggingInProgress && (!startedOnNoteCard || x <= NOTE_CARD_OPEN_EDGE_PX));
 			const canStartClose = (sidebarDrawerOpen && x <= DRAWER_REGION_PX);
 			if (!canStartOpen && !canStartClose) return false;
 

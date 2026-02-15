@@ -580,6 +580,16 @@ export default function NotesGrid({
     }
   }, [isPhoneLike, mobileAddOpen]);
 
+  useEffect(() => {
+    const onForceClose = () => {
+      try { setMobileAddOpen(false); } catch {}
+    };
+    window.addEventListener('freemannotes:mobile-add/close', onForceClose as EventListener);
+    return () => {
+      window.removeEventListener('freemannotes:mobile-add/close', onForceClose as EventListener);
+    };
+  }, []);
+
   const canManualReorder = !!(sortConfig && sortConfig.sortKey === 'default' && sortConfig.groupBy === 'none' && sortConfig.smartFilter === 'none');
   const storedDragBehavior = (() => {
     try { return (localStorage.getItem('prefs.dragBehavior') || 'swap'); } catch { return 'swap'; }

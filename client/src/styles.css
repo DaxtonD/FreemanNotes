@@ -709,12 +709,15 @@ body{
   grid-template-columns: minmax(0, 1fr) !important;
   grid-auto-rows: auto;
   grid-auto-flow: row;
+  gap: 0px;
   width: 100% !important;
 }
 .notes-area--list-2 .notes-grid.notes-grid--list{
   grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
   grid-auto-rows: auto;
   grid-auto-flow: row;
+  row-gap: 0px;
+  column-gap: 10px;
   width: 100% !important;
 }
 .notes-area--list-1 .notes-grid.notes-grid--list > [data-note-id],
@@ -725,7 +728,12 @@ body{
 }
 .notes-area--list .notes-grid.notes-grid--list .note-card{
   width: 100%;
-  padding-bottom: 0;
+  padding: 0;
+  background: transparent;
+  box-shadow: none;
+  border-radius: 0;
+  border: none;
+  outline: none;
 }
 .notes-area--list .notes-grid.notes-grid--list .note-body,
 .notes-area--list .notes-grid.notes-grid--list .note-link-previews{
@@ -739,17 +747,56 @@ body{
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-bottom: 0;
+  margin: 0;
   line-clamp: 1;
   -webkit-line-clamp: 1;
   min-height: 0;
   padding-top: 9px;
   padding-bottom: 8px;
   padding-right: 12px;
+  border-bottom: none;
+  border-radius: 8px;
 }
 .notes-area--list .notes-grid.notes-grid--list .note-meta,
 .notes-area--list .notes-grid.notes-grid--list .note-images-toggle{
   display: none !important;
+}
+.notes-area--list-1 .notes-grid.notes-grid--list .note-meta{
+  display: block !important;
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  margin: 0;
+  z-index: 35;
+}
+.notes-area--list-1 .notes-grid.notes-grid--list .note-meta-bar{
+  flex-wrap: nowrap;
+  gap: 6px;
+}
+.notes-area--list-1 .notes-grid.notes-grid--list .chip.chip--meta,
+.notes-area--list-1 .notes-grid.notes-grid--list .chip.chip--meta.chip--meta-collections{
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  line-height: 1;
+}
+.notes-area--list-1 .notes-grid.notes-grid--list .chip.chip--meta .meta-fa-icon{
+  width: 11px;
+  height: 11px;
+  opacity: 0.85;
+}
+.notes-area--list-1 .notes-grid.notes-grid--list .note-title{
+  padding-right: 206px;
+}
+.notes-area--list-1 .notes-grid.notes-grid--list .note-meta-panel{
+  left: auto;
+  right: 0;
+  top: calc(100% + 8px);
+  min-width: min(320px, 78vw);
 }
 .notes-area--list .notes-grid.notes-grid--list .footer-hover-zone{
   display: none;
@@ -856,6 +903,15 @@ html.is-note-swap-dragging .main-area{
   overscroll-behavior: contain;
 }
 
+/* While a note drag activation is pending (touch delay), also restrict native scroll
+   so the page doesn't scroll before the library activates the drag. */
+html.is-note-swap-dragging-pending,
+html.is-note-swap-dragging-pending body,
+html.is-note-swap-dragging-pending .main-area{
+  touch-action: none;
+  overscroll-behavior: contain;
+}
+
 /* During an active rearrange drag, disable native scroll/select so pointer tracking stays smooth */
 html.is-note-rearrange-dragging,
 html.is-note-rearrange-dragging body,
@@ -872,6 +928,9 @@ html.is-editor-modal-open .notes-area{
   pointer-events: none;
 }
 html.is-editor-modal-open .mobile-add-note{
+  display: none !important;
+}
+html.is-preferences-open .mobile-add-note{
   display: none !important;
 }
 
@@ -1213,6 +1272,53 @@ html.is-editor-modal-open .mobile-add-note{
     min-height: var(--checklist-checkbox-size);
     font-size: max(22px, var(--checklist-checkbox-size));
   }
+
+/* Normalize first-line vertical centering across browsers (desktop + mobile).
+   Compute offset between first text line center and checkbox size and apply
+   a top margin to the drag gutter / direct checkbox so handles/checks
+   visually align with the first text line across engines. */
+.image-dialog.checklist-editor .checklist-item,
+.take-note-expanded .checklist-item{
+  --checklist-first-line-center-offset: calc((var(--checklist-text-size) * var(--note-line-height, 1.38) - var(--checklist-checkbox-size)) / 2);
+}
+.image-dialog.checklist-editor .checklist-item .drag-gutter,
+.take-note-expanded .checklist-item .drag-gutter{
+  margin-top: var(--checklist-first-line-center-offset);
+}
+.image-dialog.checklist-editor .checklist-item > .checkbox-visual,
+.image-dialog.checklist-editor .checklist-item > .note-checkbox,
+.take-note-expanded .checklist-item > .checkbox-visual,
+.take-note-expanded .checklist-item > .note-checkbox{
+  margin-top: var(--checklist-first-line-center-offset);
+}
+
+/* Firefox-specific: bump checkbox/handle slightly to match text baseline */
+@-moz-document url-prefix() {
+  .image-dialog.checklist-editor .checklist-item .drag-gutter,
+  .take-note-expanded .checklist-item .drag-gutter {
+    margin-top: calc(var(--checklist-first-line-center-offset) + 2px);
+  }
+  .image-dialog.checklist-editor .checklist-item > .checkbox-visual,
+  .image-dialog.checklist-editor .checklist-item > .note-checkbox,
+  .take-note-expanded .checklist-item > .checkbox-visual,
+  .take-note-expanded .checklist-item > .note-checkbox{
+    margin-top: calc(var(--checklist-first-line-center-offset) + 2px);
+  }
+}
+
+/* WebKit/Blink (Chrome) subtle adjustment: reduce offset slightly if text appears too high */
+@supports (-webkit-appearance: none) {
+  .image-dialog.checklist-editor .checklist-item .drag-gutter,
+  .take-note-expanded .checklist-item .drag-gutter {
+    margin-top: calc(var(--checklist-first-line-center-offset) - 1px);
+  }
+  .image-dialog.checklist-editor .checklist-item > .checkbox-visual,
+  .image-dialog.checklist-editor .checklist-item > .note-checkbox,
+  .take-note-expanded .checklist-item > .checkbox-visual,
+  .take-note-expanded .checklist-item > .note-checkbox{
+    margin-top: calc(var(--checklist-first-line-center-offset) - 1px);
+  }
+}
   .checklist-item .drag-handle::before{
     content: '';
     position: absolute;
@@ -2136,6 +2242,116 @@ button.chip:focus{outline:2px solid rgba(255,255,255,0.18);outline-offset:2px;}
 .image-dialog-backdrop{
   position:fixed;inset:0;background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;z-index:200;
 }
+.note-images-modal-backdrop{
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10040;
+}
+.note-images-modal{
+  width: min(760px, calc(100vw - 24px));
+  max-height: min(84vh, calc(100vh - 24px));
+  background: #181818;
+  color: #ffffff;
+  border-radius: 14px;
+  border: 1px solid rgba(255,255,255,0.08);
+  box-shadow: 0 20px 50px rgba(0,0,0,0.6);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+:root[data-theme="light"] .note-images-modal{
+  background: #ffffff;
+  color: #000000;
+  border-color: rgba(0,0,0,0.10);
+  box-shadow: 0 16px 42px rgba(0,0,0,0.18);
+}
+.note-images-modal__header{
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border-bottom: 1px solid rgba(255,255,255,0.08);
+}
+:root[data-theme="light"] .note-images-modal__header{
+  border-bottom-color: rgba(0,0,0,0.08);
+}
+.note-images-modal__body{
+  overflow: auto;
+  padding: 12px;
+  min-height: 140px;
+}
+.note-images-modal__empty{
+  color: var(--muted);
+  text-align: center;
+  padding: 26px 10px;
+}
+.note-images-modal__grid{
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(var(--image-thumb-size), var(--image-thumb-size)));
+  justify-content: flex-start;
+  gap: 10px;
+}
+.note-images-modal__tile{
+  width: var(--image-thumb-size);
+  height: var(--image-thumb-size);
+  border-radius: 10px;
+  overflow: hidden;
+  position: relative;
+  background: rgba(255,255,255,0.05);
+  border: 1px solid rgba(255,255,255,0.12);
+}
+:root[data-theme="light"] .note-images-modal__tile{
+  background: rgba(0,0,0,0.05);
+  border-color: rgba(0,0,0,0.12);
+}
+.note-images-modal__tile img{
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+.note-images-modal .image-delete{
+  position: absolute;
+  right: 6px;
+  bottom: 6px;
+}
+.note-images-modal__tile:hover .image-delete,
+.note-images-modal__tile:focus-within .image-delete{
+  opacity: 1;
+}
+
+@media (pointer: coarse) and (max-width: 820px), (display-mode: standalone) and (pointer: coarse) {
+  .note-images-modal-backdrop{
+    align-items: stretch;
+    justify-content: stretch;
+    padding: 0;
+  }
+  .note-images-modal{
+    width: 100vw;
+    height: 100dvh;
+    max-height: none;
+    border-radius: 0;
+    border: none;
+  }
+  .note-images-modal__header{
+    padding: calc(10px + env(safe-area-inset-top)) 12px 10px;
+  }
+  .note-images-modal__body{
+    padding: 10px 10px calc(10px + env(safe-area-inset-bottom));
+  }
+  .note-images-modal .image-delete{
+    display: none;
+  }
+}
 .image-dialog-backdrop.editor-backdrop{
   background: rgba(0,0,0,0.82);
 }
@@ -2511,6 +2727,12 @@ button.chip:focus{outline:2px solid rgba(255,255,255,0.18);outline-offset:2px;}
 
 .image-url-input{width:100%;padding:8px;border-radius:6px;border:1px solid rgba(255,255,255,0.04);background:#1c1c1c;color:#fff}
 :root[data-theme="light"] .image-url-input{ background:#f7f7f9; color:#000; border:1px solid rgba(0,0,0,0.1); }
+/* Use an inset focus indicator so it doesn't get clipped by parent overflow/border-radius */
+.image-url-input:focus,
+.image-url-input:focus-visible{
+  outline: none;
+  box-shadow: inset 0 0 0 2px var(--accent);
+}
 .dialog-header{display:flex;align-items:center;justify-content:space-between}
 /* dialog body (scrollable) and footer (sticky) */
 .dialog-body{ padding:12px; overflow:auto; flex:1 1 auto; }

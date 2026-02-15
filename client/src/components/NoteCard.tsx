@@ -14,6 +14,7 @@ import { faPalette, faUsers, faTag, faFolder, faImage, faUser, faNoteSticky, faL
 import LabelsDialog from "./LabelsDialog";
 import ColorPalette from "./ColorPalette";
 import ImageDialog from "./ImageDialog";
+import NoteImagesModal from "./NoteImagesModal";
 import ReminderPicker, { type ReminderDraft } from "./ReminderPicker";
 import * as Y from 'yjs';
 import { WebsocketProvider } from 'y-websocket';
@@ -189,6 +190,7 @@ export default function NoteCard({
 
   const [showPalette, setShowPalette] = useState(false);
   const [showImageDialog, setShowImageDialog] = useState(false);
+  const [showImagesModal, setShowImagesModal] = useState(false);
   const [showReminderPicker, setShowReminderPicker] = useState(false);
   const [showEditor, setShowEditor] = useState(false);
   const [showTextEditor, setShowTextEditor] = useState(false);
@@ -351,6 +353,12 @@ export default function NoteCard({
     try {
       const target = e.target as HTMLElement | null;
       if (isInteractiveTarget(target)) return;
+      // Mark pending swap-drag activation so native scroll is disabled while the
+      // touch/mouse activation delay elapses. Cleared on pointerup/cancel.
+      try { document.documentElement.classList.add('is-note-swap-dragging-pending'); } catch {}
+      const clearPending = () => { try { document.documentElement.classList.remove('is-note-swap-dragging-pending'); } catch {} };
+      try { window.addEventListener('pointerup', clearPending, { once: true }); } catch {}
+      try { window.addEventListener('pointercancel', clearPending, { once: true }); } catch {}
       const fn = (dragHandleListeners as any)?.onMouseDown;
       if (typeof fn === 'function') fn(e);
     } catch {}
@@ -360,6 +368,10 @@ export default function NoteCard({
     try {
       const target = e.target as HTMLElement | null;
       if (isInteractiveTarget(target)) return;
+      try { document.documentElement.classList.add('is-note-swap-dragging-pending'); } catch {}
+      const clearPending = () => { try { document.documentElement.classList.remove('is-note-swap-dragging-pending'); } catch {} };
+      try { window.addEventListener('pointerup', clearPending, { once: true }); } catch {}
+      try { window.addEventListener('pointercancel', clearPending, { once: true }); } catch {}
       const fn = (dragHandleListeners as any)?.onPointerDown;
       if (typeof fn === 'function') fn(e);
     } catch {}
@@ -369,6 +381,10 @@ export default function NoteCard({
     try {
       const target = e.target as HTMLElement | null;
       if (isInteractiveTarget(target)) return;
+      try { document.documentElement.classList.add('is-note-swap-dragging-pending'); } catch {}
+      const clearPending = () => { try { document.documentElement.classList.remove('is-note-swap-dragging-pending'); } catch {} };
+      try { window.addEventListener('touchend', clearPending, { once: true }); } catch {}
+      try { window.addEventListener('touchcancel', clearPending, { once: true }); } catch {}
       const fn = (dragHandleListeners as any)?.onTouchStart;
       if (typeof fn === 'function') fn(e);
     } catch {}
@@ -892,6 +908,7 @@ export default function NoteCard({
         if (yarr.length === 0) return; // avoid overwriting DB items until doc has content
         const arr = yarr.toArray().map((m) => ({
           id: (typeof m.get('id') === 'number' ? Number(m.get('id')) : undefined),
+          uid: (m.get('uid') ? String(m.get('uid')) : undefined),
           content: String(m.get('content') || ''),
           checked: !!m.get('checked'),
           indent: Number(m.get('indent') || 0),
@@ -1076,10 +1093,19 @@ export default function NoteCard({
     })();
   }
 
-  async function toggleItemChecked(itemId: number, checked: boolean) {
+  async function toggleItemChecked(target: { id?: number; uid?: string }, checked: boolean) {
+    const itemId = (typeof target?.id === 'number' && Number.isFinite(target.id)) ? Number(target.id) : undefined;
+    const itemUid = (typeof target?.uid === 'string' && target.uid) ? String(target.uid) : undefined;
+
     const yarr = yarrayRef.current;
     if (yarr) {
-      const idx = yarr.toArray().findIndex((m) => (typeof m.get('id') === 'number' ? Number(m.get('id')) === itemId : false));
+      const idx = yarr.toArray().findIndex((m) => {
+        const idVal = (typeof m.get('id') === 'number') ? Number(m.get('id')) : undefined;
+        const uidVal = m.get('uid') ? String(m.get('uid')) : undefined;
+        if (typeof itemId === 'number' && idVal === itemId) return true;
+        if (itemUid && uidVal && uidVal === itemUid) return true;
+        return false;
+      });
       if (idx >= 0) {
         const m = yarr.get(idx) as Y.Map<any>;
         m.set('checked', checked);
@@ -1094,6 +1120,18 @@ export default function NoteCard({
         return;
       }
     }
+
+    // No Yjs match (or Yjs unavailable): update local state by id/uid so preview remains interactive.
+    setNoteItems((s) => s.map((it: any) => {
+      const sameId = (typeof itemId === 'number' && typeof it?.id === 'number' && Number(it.id) === itemId);
+      const sameUid = (!!itemUid && typeof it?.uid === 'string' && String(it.uid) === itemUid);
+      if (!sameId && !sameUid) return it;
+      return { ...it, checked };
+    }));
+
+    // Without a numeric id we cannot PATCH this specific row via REST endpoint.
+    if (typeof itemId !== 'number') return;
+
     // Fallback to REST if Yjs not available
     try {
       const res = await fetch(`/api/notes/${note.id}/items/${itemId}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ checked }) });
@@ -1551,7 +1589,12 @@ export default function NoteCard({
       </div>
 
       {(() => {
-        const hasAnyMeta = (chipParticipants.length > 0) || (labels.length > 0) || (viewerCollections.length > 0);
+        const imageCount = (() => {
+          const fromNote = Number((note as any).imagesCount ?? 0);
+          if (Number.isFinite(fromNote) && fromNote > 0) return fromNote;
+          return Array.isArray(images) ? images.length : 0;
+        })();
+        const hasAnyMeta = (chipParticipants.length > 0) || (labels.length > 0) || (viewerCollections.length > 0) || (imageCount > 0);
         if (!hasAnyMeta) return null;
 
         const panelId = `note-meta-panel-${Number(note.id)}`;
@@ -1646,6 +1689,23 @@ export default function NoteCard({
                   <span>{viewerCollections.length}</span>
                 </button>
               )}
+
+              {imageCount > 0 && (
+                <button
+                  type="button"
+                  className={`chip chip--meta${showImagesModal ? ' is-active' : ''}`}
+                  aria-haspopup="dialog"
+                  title={`${imageCount} images`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setExpandedMeta(null);
+                    setShowImagesModal(true);
+                  }}
+                >
+                  <FontAwesomeIcon icon={faImage} className="meta-fa-icon" />
+                  <span>{imageCount}</span>
+                </button>
+              )}
             </div>
 
             <div
@@ -1734,6 +1794,7 @@ export default function NoteCard({
                   </div>
                 </div>
               )}
+
             </div>
           </div>
         );
@@ -1790,12 +1851,16 @@ export default function NoteCard({
                     className={`note-checkbox ${it.checked ? 'checked' : ''}`}
                     type="button"
                     disabled={!canToggleChecklistPreview}
+                    onPointerDown={(e) => { try { e.stopPropagation(); } catch {} }}
+                    onPointerUp={(e) => { try { e.stopPropagation(); } catch {} }}
+                    onMouseDown={(e) => { try { e.stopPropagation(); } catch {} }}
                     onClick={(e) => {
                       e.stopPropagation();
                       if (!canToggleChecklistPreview) return;
-                      const id = Number((it as any)?.id);
-                      if (!Number.isFinite(id)) return;
-                      void toggleItemChecked(id, !it.checked);
+                      const id = (typeof (it as any)?.id === 'number' && Number.isFinite((it as any)?.id)) ? Number((it as any).id) : undefined;
+                      const uid = (typeof (it as any)?.uid === 'string' && (it as any).uid) ? String((it as any).uid) : undefined;
+                      if (typeof id !== 'number' && !uid) return;
+                      void toggleItemChecked({ id, uid }, !it.checked);
                     }}
                     aria-pressed={!!it.checked}
                     aria-disabled={!canToggleChecklistPreview}
@@ -1834,12 +1899,16 @@ export default function NoteCard({
                       className={`note-checkbox ${it.checked ? 'checked' : ''}`}
                       type="button"
                       disabled={!canToggleChecklistPreview}
+                      onPointerDown={(e) => { try { e.stopPropagation(); } catch {} }}
+                      onPointerUp={(e) => { try { e.stopPropagation(); } catch {} }}
+                      onMouseDown={(e) => { try { e.stopPropagation(); } catch {} }}
                       onClick={(e) => {
                         e.stopPropagation();
                         if (!canToggleChecklistPreview) return;
-                        const id = Number((it as any)?.id);
-                        if (!Number.isFinite(id)) return;
-                        void toggleItemChecked(id, !it.checked);
+                        const id = (typeof (it as any)?.id === 'number' && Number.isFinite((it as any)?.id)) ? Number((it as any).id) : undefined;
+                        const uid = (typeof (it as any)?.uid === 'string' && (it as any).uid) ? String((it as any).uid) : undefined;
+                        if (typeof id !== 'number' && !uid) return;
+                        void toggleItemChecked({ id, uid }, !it.checked);
                       }}
                       aria-pressed={!!it.checked}
                       aria-disabled={!canToggleChecklistPreview}
@@ -1866,112 +1935,7 @@ export default function NoteCard({
         )}
       </div>
 
-      {(() => {
-        const count = (() => {
-          const fromNote = Number((note as any).imagesCount ?? 0);
-          if (Number.isFinite(fromNote) && fromNote > 0) return fromNote;
-          return Array.isArray(images) ? images.length : 0;
-        })();
-        if (!count) return null;
-
-        return (
-          <>
-            <div
-              className="note-images-toggle"
-              ref={imagesToggleRef}
-              onPointerDown={maybeBeginMoreMenuLongPress}
-              onPointerUp={() => { clearBodyLongPress(); }}
-              onPointerCancel={() => { clearBodyLongPress(); }}
-              onPointerMove={maybeCancelMoreMenuLongPressOnMove}
-              onClick={(e) => { try { e.stopPropagation(); } catch {} }}
-            >
-              <button
-                type="button"
-                className={`chip chip--images${imagesExpanded ? ' is-active' : ''}`}
-                onClick={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  const next = !imagesExpanded;
-                  setImagesExpanded(next);
-                  notifyImagesExpanded(next);
-                  persistImagesExpanded(next);
-                }}
-                aria-expanded={imagesExpanded}
-                aria-label={`${imagesExpanded ? 'Hide' : 'Show'} ${count} images`}
-                title={`${imagesExpanded ? 'Hide' : 'Show'} images`}
-                style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
-              >
-                <FontAwesomeIcon icon={faImage} className="meta-fa-icon" />
-                <span className="chip-images-count">+{count}</span>
-                <span className="chip-images-label">image{count === 1 ? '' : 's'}</span>
-              </button>
-            </div>
-
-            {imagesExpanded && (
-              (images && images.length > 0) ? (
-                <div
-                  className={`note-images${imagesExpandDirection === 'down' ? ' note-images--expand-down' : ''}`}
-                  ref={imagesWrapRef}
-                  style={imagesExpandDirection === 'down' ? ({ top: `${imagesDownTop}px`, bottom: 'auto' } as React.CSSProperties) : undefined}
-                  onPointerDown={maybeBeginMoreMenuLongPress}
-                  onPointerUp={() => { clearBodyLongPress(); }}
-                  onPointerCancel={() => { clearBodyLongPress(); }}
-                  onPointerMove={maybeCancelMoreMenuLongPressOnMove}
-                  onClickCapture={(e) => {
-                    try {
-                      if (!suppressNextBodyClickRef.current) return;
-                      suppressNextBodyClickRef.current = false;
-                      e.preventDefault();
-                      e.stopPropagation();
-                    } catch {}
-                  }}
-                >
-                  {(() => {
-                    const maxRows = isCoarsePointer ? 2 : 3;
-                    const maxSlots = Math.max(1, thumbsPerRow) * maxRows;
-                    const visible = images.slice(0, Math.min(images.length, maxSlots));
-                    const hiddenCount = Math.max(0, images.length - maxSlots);
-                    return visible.map((img, idx) => (
-                      <button
-                        key={img.id}
-                        className={`note-image${hiddenCount > 0 && idx === visible.length - 1 ? ' has-more' : ''}`}
-                        style={{ padding: 0, border: 'none', background: 'transparent', cursor: 'pointer' }}
-                        onClick={(e) => {
-                          try {
-                            if (suppressNextBodyClickRef.current) {
-                              suppressNextBodyClickRef.current = false;
-                              e.preventDefault();
-                              e.stopPropagation();
-                              return;
-                            }
-                          } catch {}
-                          openEditor();
-                        }}
-                        onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); }}
-                      >
-                        <img src={img.url} alt="note image" loading="lazy" decoding="async" />
-                        {hiddenCount > 0 && idx === visible.length - 1 && (
-                          <span className="note-image-moreOverlay" aria-label={`${hiddenCount} more images`}>+{hiddenCount} more</span>
-                        )}
-                      </button>
-                    ));
-                  })()}
-                </div>
-              ) : (
-                <div
-                  className={`note-images note-images--loading${imagesExpandDirection === 'down' ? ' note-images--expand-down' : ''}`}
-                  style={imagesExpandDirection === 'down'
-                    ? ({ top: `${imagesDownTop}px`, bottom: 'auto', opacity: 0.75 } as React.CSSProperties)
-                    : ({ marginTop: 10, opacity: 0.75 } as React.CSSProperties)
-                  }
-                >
-                  Loading images…
-                </div>
-              )
-            )}
-          </>
-        );
-      })()}
+      {null}
 
       {(() => {
         try {
@@ -2276,6 +2240,16 @@ export default function NoteCard({
       {showPalette && <ColorPalette anchorRef={noteRef} onPick={onPickColor} onClose={() => setShowPalette(false)} />}
 
       {showImageDialog && <ImageDialog onClose={() => setShowImageDialog(false)} onAdd={onAddImageUrl} />}
+      {showImagesModal && (
+        <NoteImagesModal
+          noteId={Number(note.id)}
+          initialImages={images}
+          onClose={() => setShowImagesModal(false)}
+          onImagesChanged={(next) => {
+            try { setImagesWithNotify(() => next); } catch {}
+          }}
+        />
+      )}
 
       {showReminderPicker && (
         <ReminderPicker

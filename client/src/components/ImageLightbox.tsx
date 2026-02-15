@@ -141,7 +141,7 @@ export default function ImageLightbox({ url, onClose }: { url: string; onClose: 
     <div
       className="lightbox-backdrop"
       onClick={onClose}
-      style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 10000 }}
+      style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 10120 }}
     >
       <div
         className="lightbox-content"
