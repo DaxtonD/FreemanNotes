@@ -346,6 +346,41 @@ export default function Sidebar({
         </div>
         <div
           className="sidebar-item"
+          title="Images"
+          style={{ cursor: 'pointer', fontWeight: sortConfig.smartFilter === 'images' ? 700 : undefined }}
+          onClick={() => {
+            if (collapsed) {
+              requestExpandIfCollapsed();
+              try { setRemindersOpen(false); } catch {}
+              try { setOpen(false); } catch {}
+              try { setSortingOpen(false); } catch {}
+              try { setFiltersListOpen(false); } catch {}
+              try { setGroupingListOpen(false); } catch {}
+              try { setCollectionsOpen(false); } catch {}
+            }
+            try {
+              onSortConfigChange && onSortConfigChange({
+                ...sortConfig,
+                smartFilter: 'images',
+                sortKey: 'createdAt' as any,
+                sortDir: 'desc',
+                groupBy: 'none',
+              });
+            } catch {
+              try { setSmartFilter('images' as any); } catch {}
+            }
+            try { onRequestClose && onRequestClose(); } catch {}
+          }}
+        >
+          <span className="icon" aria-hidden>
+            <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+              <path d="M4 5a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v14l-4.8-4.8a1.5 1.5 0 0 0-2.12 0L8 19.28 4 15.28V5zm6-1.2a2.2 2.2 0 1 0 0 4.4 2.2 2.2 0 0 0 0-4.4z"/>
+            </svg>
+          </span>
+          {!collapsed && <span className="text">Images</span>}
+        </div>
+        <div
+          className="sidebar-item"
           title="Reminders"
           style={{ cursor: 'pointer' }}
           onClick={() => {

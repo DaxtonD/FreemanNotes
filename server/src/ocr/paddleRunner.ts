@@ -121,19 +121,24 @@ export async function runPaddleOcrOnPng(preprocessedPng: Buffer, opts?: { lang?:
   const lang = (opts?.lang || DEFAULT_LANG).trim() || DEFAULT_LANG;
   const scriptPath = path.resolve(process.cwd(), 'scripts', 'paddle_ocr.py');
   const paddleHome = String(process.env.PADDLEOCR_HOME || path.join(os.tmpdir(), 'freemannotes-paddleocr'));
+  const processHome = String(process.env.HOME || '').trim();
+  const runnerHome = (processHome && processHome !== '/') ? processHome : path.join(paddleHome, 'home');
 
   try {
     await fs.mkdir(paddleHome, { recursive: true });
   } catch (e) {
     ocrLog('warn', 'failed creating paddle home, falling back to tmp', { paddleHome, err: tailString(e, 400) });
   }
+  try { await fs.mkdir(runnerHome, { recursive: true }); } catch {}
 
   const xdgCacheHome = String(process.env.XDG_CACHE_HOME || path.join(os.tmpdir(), 'freemannotes-cache'));
   try { await fs.mkdir(xdgCacheHome, { recursive: true }); } catch {}
 
   const runnerEnv: Record<string, string> = {
     PADDLEOCR_HOME: paddleHome,
-    HOME: String(process.env.HOME || os.tmpdir()),
+    PPOCR_HOME: paddleHome,
+    PADDLE_HOME: paddleHome,
+    HOME: runnerHome,
     XDG_CACHE_HOME: xdgCacheHome,
   };
 
@@ -143,6 +148,7 @@ export async function runPaddleOcrOnPng(preprocessedPng: Buffer, opts?: { lang?:
     pythonCandidates: PYTHON_CANDIDATES,
     pythonBinEnv: process.env.PYTHON_BIN || null,
     paddleHome,
+    runnerHome,
     bytes: preprocessedPng.length,
   });
 

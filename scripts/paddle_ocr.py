@@ -9,6 +9,34 @@ import contextlib
 
 from PIL import Image
 
+
+def _prepare_cache_env() -> None:
+    paddle_home = (
+        str(os.environ.get("PADDLEOCR_HOME") or "").strip()
+        or str(os.environ.get("PPOCR_HOME") or "").strip()
+        or "/tmp/freemannotes-paddleocr"
+    )
+    os.environ["PADDLEOCR_HOME"] = paddle_home
+    os.environ.setdefault("PPOCR_HOME", paddle_home)
+    os.environ.setdefault("PADDLE_HOME", paddle_home)
+
+    home = str(os.environ.get("HOME") or "").strip()
+    if (not home) or (home == "/"):
+        home = os.path.join(paddle_home, "home")
+        os.environ["HOME"] = home
+
+    xdg_cache = str(os.environ.get("XDG_CACHE_HOME") or "").strip() or os.path.join(paddle_home, "cache")
+    os.environ["XDG_CACHE_HOME"] = xdg_cache
+
+    for p in (paddle_home, home, xdg_cache):
+        try:
+            os.makedirs(p, exist_ok=True)
+        except Exception:
+            pass
+
+
+_prepare_cache_env()
+
 try:
     from paddleocr import PaddleOCR
 except Exception as e:

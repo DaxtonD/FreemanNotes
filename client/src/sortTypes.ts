@@ -3,6 +3,7 @@ export type SortDir = 'asc' | 'desc';
 
 export type SmartFilterKey =
   | 'none'
+  | 'images'
   | 'archive'
   | 'trash'
   | 'dueSoon'

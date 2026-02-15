@@ -21,10 +21,12 @@ import { useAuth } from "../authContext";
 import { getOrCreateDeviceProfile } from "../lib/deviceProfile";
 import TakeNoteBar from "./TakeNoteBar";
 import MobileCreateModal from "./MobileCreateModal";
+import ConfirmDialog from "./ConfirmDialog";
+import ImageLightbox from "./ImageLightbox";
 import { DEFAULT_SORT_CONFIG, type SortConfig } from '../sortTypes';
 
 type NoteLabelLite = { id: number; name: string };
-type NoteImageLite = { id: number; url?: string; ocrSearchText?: string | null; ocrText?: string | null; ocrStatus?: string | null };
+type NoteImageLite = { id: number; url?: string; ocrSearchText?: string | null; ocrText?: string | null; ocrStatus?: string | null; createdAt?: string | null };
 type ViewerCollectionLite = { id: number; name: string; parentId: number | null };
 const MOBILE_FAB_ICON = '/icons/version.png';
 
@@ -111,6 +113,8 @@ export default function NotesGrid({
   const [hasLoadedOnce, setHasLoadedOnce] = useState(false);
   const notesRef = useRef<any[]>([]);
   const [emptyingTrash, setEmptyingTrash] = useState(false);
+  const [galleryLightboxUrl, setGalleryLightboxUrl] = useState<string | null>(null);
+  const [galleryDeleteTarget, setGalleryDeleteTarget] = useState<{ noteId: number; imageId: number; title: string } | null>(null);
 
   // Auto-detected layout bucket.
   // "Phone" here means small viewport + touch-first; tablets keep the normal responsive layout.
@@ -494,6 +498,7 @@ export default function NotesGrid({
           ocrSearchText: (img.ocrSearchText == null ? (prevById.get(Number(img.id))?.ocrSearchText ?? null) : String(img.ocrSearchText)),
           ocrText: (img.ocrText == null ? (prevById.get(Number(img.id))?.ocrText ?? null) : String(img.ocrText)),
           ocrStatus: (img.ocrStatus == null ? (prevById.get(Number(img.id))?.ocrStatus ?? null) : String(img.ocrStatus)),
+          createdAt: (img.createdAt == null ? (prevById.get(Number(img.id))?.createdAt ?? null) : String(img.createdAt)),
         }));
       return { ...n, images: nextImages, imagesCount: nextImages.length };
     }));
@@ -2162,6 +2167,10 @@ export default function NotesGrid({
       if (isTrashed) return false;
       if (key === 'archive') return isArchived;
       if (isArchived) return false;
+      if (key === 'images') {
+        const imgs = Array.isArray((n as any)?.images) ? (n as any).images : [];
+        return imgs.some((img: any) => !!String(img?.url || '').trim());
+      }
       if (!key || key === 'none') return true;
 
       if (key === 'remindersAll') {
@@ -2358,6 +2367,7 @@ export default function NotesGrid({
         if (cfg.smartFilter === 'leastAccessed') return 'Filter: Least accessed';
         if (cfg.smartFilter === 'mostEdited') return 'Filter: Most edited';
         if (cfg.smartFilter === 'atRisk') return 'Filter: At risk';
+        if (cfg.smartFilter === 'images') return 'Images';
         if (cfg.smartFilter === 'trash') return 'Trash';
         if (cfg.smartFilter === 'remindersAll') return 'Reminders: All';
         if (cfg.smartFilter === 'remindersToday') return 'Reminders: Today';
@@ -2376,7 +2386,14 @@ export default function NotesGrid({
     }
 
     const hasAnyFilter = chips.length > 0;
-    const title = colPath || (cfg.smartFilter === 'trash' ? 'Trash' : cfg.smartFilter === 'archive' ? 'Archive' : 'All notes');
+    const title = colPath
+      || (cfg.smartFilter === 'trash'
+        ? 'Trash'
+        : cfg.smartFilter === 'archive'
+          ? 'Archive'
+          : cfg.smartFilter === 'images'
+            ? 'Images'
+            : 'All notes');
     return {
       title,
       chips,
@@ -3093,12 +3110,79 @@ export default function NotesGrid({
     };
   }, [keepRearrangeEnabled, disableNoteDnD, token]);
 
-  if (loading && !hasLoadedOnce) return <div>Loading notes…</div>;
-
   const isTrashView = ((sortConfig || DEFAULT_SORT_CONFIG).smartFilter === 'trash');
+  const isImagesView = ((sortConfig || DEFAULT_SORT_CONFIG).smartFilter === 'images');
   const trashCount = (() => {
     try { return (notes || []).filter((n: any) => !!(n as any)?.trashedAt).length; } catch { return 0; }
   })();
+
+  const imageEntries = useMemo(() => {
+    const cfg = sortConfig || DEFAULT_SORT_CONFIG;
+    const source = [...(pinned || []), ...(others || [])];
+    const entries: Array<any> = [];
+    for (const n of source) {
+      const imgs = Array.isArray((n as any)?.images) ? (n as any).images : [];
+      for (const img of imgs) {
+        const url = String((img as any)?.url || '').trim();
+        if (!url) continue;
+        entries.push({
+          key: `${Number((n as any)?.id)}:${Number((img as any)?.id)}`,
+          noteId: Number((n as any)?.id),
+          imageId: Number((img as any)?.id),
+          url,
+          imageCreatedAt: String((img as any)?.createdAt || ''),
+          noteCreatedAt: String((n as any)?.createdAt || ''),
+          noteUpdatedAt: String((n as any)?.updatedAt || ''),
+          noteTitle: String((n as any)?.title || '').trim(),
+          noteOwnerName: String((n as any)?.owner?.name || (n as any)?.owner?.email || ''),
+          noteCollections: Array.isArray((n as any)?.viewerCollections) ? (n as any)?.viewerCollections : [],
+          noteCollaborators: Array.isArray((n as any)?.collaborators) ? (n as any)?.collaborators : [],
+          ocrText: String((img as any)?.ocrSearchText || (img as any)?.ocrText || '').trim(),
+        });
+      }
+    }
+
+    const dir = cfg.sortDir === 'asc' ? 1 : -1;
+    entries.sort((a, b) => {
+      if (cfg.sortKey === 'title') {
+        const cmp = String(a.noteTitle || '').localeCompare(String(b.noteTitle || ''), undefined, { sensitivity: 'base' });
+        if (cmp !== 0) return cmp * dir;
+      } else if (cfg.sortKey === 'updatedAt') {
+        const av = parseDateMaybe(a.noteUpdatedAt);
+        const bv = parseDateMaybe(b.noteUpdatedAt);
+        if (av !== bv) return (av - bv) * dir;
+      } else {
+        const av = parseDateMaybe(a.imageCreatedAt || a.noteCreatedAt);
+        const bv = parseDateMaybe(b.imageCreatedAt || b.noteCreatedAt);
+        if (av !== bv) return (av - bv) * dir;
+      }
+      return (Number(a.imageId) - Number(b.imageId)) * dir;
+    });
+
+    return entries;
+  }, [pinned, others, sortConfig]);
+
+  if (loading && !hasLoadedOnce) return <div>Loading notes…</div>;
+
+  async function deleteImageFromGallery(target: { noteId: number; imageId: number }) {
+    if (!token) return;
+    try {
+      const res = await fetch(`/api/notes/${target.noteId}/images/${target.imageId}`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) throw new Error(await res.text());
+      setNotes((s) => s.map((n: any) => {
+        if (Number(n?.id) !== Number(target.noteId)) return n;
+        const imgs = Array.isArray(n?.images) ? n.images : [];
+        const nextImgs = imgs.filter((img: any) => Number(img?.id) !== Number(target.imageId));
+        return { ...n, images: nextImgs, imagesCount: nextImgs.length };
+      }));
+    } catch (err) {
+      console.error('Failed to delete image', err);
+      window.alert('Failed to delete image');
+    }
+  }
 
   async function onEmptyTrashNow() {
     if (emptyingTrash) return;
@@ -3260,7 +3344,61 @@ export default function NotesGrid({
         activeCollection={activeCollection}
       />
 
-      {manualSwapEnabled ? (
+      {isImagesView ? (
+        <div className="notes-section">
+          {imageEntries.length === 0 ? (
+            <div className="images-gallery-empty">No images match the current filters.</div>
+          ) : (
+            <div className="images-gallery-grid" role="list" aria-label="Images">
+              {imageEntries.map((img: any) => {
+                const createdAt = parseDateMaybe(img.imageCreatedAt || img.noteCreatedAt);
+                const createdLabel = createdAt ? new Date(createdAt).toLocaleString() : '';
+                const collectionNames = (Array.isArray(img.noteCollections) ? img.noteCollections : [])
+                  .map((c: any) => String(c?.name || '').trim())
+                  .filter(Boolean)
+                  .slice(0, 2);
+                const collabCount = Math.max(0, (Array.isArray(img.noteCollaborators) ? img.noteCollaborators.length : 0));
+                return (
+                  <article key={img.key} className="images-gallery-card" role="listitem">
+                    <button
+                      type="button"
+                      className="images-gallery-thumb-btn"
+                      onClick={() => setGalleryLightboxUrl(String(img.url || ''))}
+                      aria-label="Open full image"
+                      title="Open full image"
+                    >
+                      <img className="images-gallery-thumb" src={img.url} alt={img.noteTitle ? `${img.noteTitle} image` : 'Note image'} loading="lazy" />
+                    </button>
+                    <div className="images-gallery-meta">
+                      <div className="images-gallery-title" title={img.noteTitle || 'Untitled note'}>{img.noteTitle || 'Untitled note'}</div>
+                      <div className="images-gallery-subtitle">
+                        {img.noteOwnerName ? <span>{img.noteOwnerName}</span> : <span>Note</span>}
+                        {createdLabel ? <span>• {createdLabel}</span> : null}
+                      </div>
+                      {(collectionNames.length > 0 || collabCount > 0) && (
+                        <div className="images-gallery-tags">
+                          {collectionNames.map((name: string) => <span key={`${img.key}:${name}`} className="images-gallery-tag">{name}</span>)}
+                          {collabCount > 0 ? <span className="images-gallery-tag">+{collabCount} collaborators</span> : null}
+                        </div>
+                      )}
+                    </div>
+                    <button
+                      type="button"
+                      className="images-gallery-delete"
+                      onClick={() => setGalleryDeleteTarget({ noteId: Number(img.noteId), imageId: Number(img.imageId), title: String(img.noteTitle || 'Untitled note') })}
+                      aria-label="Delete image"
+                      title="Delete image"
+                    >
+                      Delete
+                    </button>
+                  </article>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      ) : (
+      manualSwapEnabled ? (
         <DndContext
           sensors={swapSensors}
           collisionDetection={pointerWithin}
@@ -3599,7 +3737,27 @@ export default function NotesGrid({
             ))}
           </div>
         </>
+      )
       )}
+
+      <ConfirmDialog
+        open={galleryDeleteTarget != null}
+        title="Delete image"
+        message={galleryDeleteTarget
+          ? `Delete this image from "${galleryDeleteTarget.title}"? This will remove it from the associated note.`
+          : 'Delete this image? This will remove it from the associated note.'}
+        confirmLabel="Delete"
+        cancelLabel="Cancel"
+        danger
+        onCancel={() => setGalleryDeleteTarget(null)}
+        onConfirm={() => {
+          const target = galleryDeleteTarget;
+          setGalleryDeleteTarget(null);
+          if (target) void deleteImageFromGallery({ noteId: Number(target.noteId), imageId: Number(target.imageId) });
+        }}
+      />
+
+      {galleryLightboxUrl && <ImageLightbox url={galleryLightboxUrl} onClose={() => setGalleryLightboxUrl(null)} />}
 
       {keepRearrangeEnabled && activeRearrangeNote && rearrangeBaseRectRef.current ? createPortal(
         <div
