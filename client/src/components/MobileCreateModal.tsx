@@ -782,12 +782,15 @@ export default function MobileCreateModal({
   if (!open) return null;
 
   const dialogStyle: React.CSSProperties = {} as any;
-  if (bg) {
-    dialogStyle.background = bg;
-    // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-    // @ts-ignore
-    dialogStyle['--editor-surface'] = bg;
-  }
+  const titleStripStyle: React.CSSProperties | undefined = bg
+    ? {
+        background: bg,
+        color: textColor || 'inherit',
+        borderRadius: 8,
+        padding: '8px 10px',
+        marginBottom: 8,
+      }
+    : undefined;
 
   const label = mode === 'checklist' ? 'New checklist' : 'New note';
 
@@ -861,7 +864,7 @@ export default function MobileCreateModal({
                     </div>
                   );
                 })()}
-                <div style={{ display: 'flex', gap: 12, marginBottom: 8 }}>
+                <div style={{ display: 'flex', gap: 12, marginBottom: 8, ...(titleStripStyle || {}) }}>
                   <input
                     className={`note-title-input${!String(title || '').trim() ? ' note-title-input-missing' : ''}`}
                     ref={titleInputRef}
@@ -871,7 +874,7 @@ export default function MobileCreateModal({
                     style={{ flex: 1, background: 'transparent', border: 'none', color: 'inherit', fontWeight: 600, fontSize: 18 }}
                   />
                 </div>
-                <div className="rt-toolbar" style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center', marginTop: 0, marginBottom: 0, overflowX: 'auto', color: (textColor || 'inherit') }}>
+                <div className="rt-toolbar" style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center', marginTop: 0, marginBottom: 0, overflowX: 'auto' }}>
                   <button className="tiny" onClick={() => editor?.chain().focus().toggleBold().run()} aria-pressed={editor?.isActive('bold')} aria-label="Bold" title="Bold">B</button>
                   <button className="tiny" onClick={() => editor?.chain().focus().toggleItalic().run()} aria-pressed={editor?.isActive('italic')} aria-label="Italic" title="Italic">I</button>
                   <button className="tiny" onClick={() => editor?.chain().focus().toggleUnderline().run()} aria-pressed={editor?.isActive('underline')} aria-label="Underline" title="Underline">U</button>
@@ -891,7 +894,7 @@ export default function MobileCreateModal({
                   <button className="tiny" onClick={applyTextLink} aria-label="Add URL preview" title="Add URL preview"><FontAwesomeIcon icon={faLink} /></button>
                 </div>
               </div>
-              <EditorContent editor={editor} style={{ color: (textColor || 'inherit') }} />
+              <EditorContent editor={editor} />
             </>
           ) : (
             <>
@@ -905,7 +908,7 @@ export default function MobileCreateModal({
                     </div>
                   );
                 })()}
-                <div style={{ display: 'flex', gap: 12, marginBottom: 8 }}>
+                <div style={{ display: 'flex', gap: 12, marginBottom: 8, ...(titleStripStyle || {}) }}>
                   <input
                     className={`note-title-input${!String(title || '').trim() ? ' note-title-input-missing' : ''}`}
                     ref={titleInputRef}
@@ -915,7 +918,7 @@ export default function MobileCreateModal({
                     style={{ flex: 1, background: 'transparent', border: 'none', color: 'inherit', fontWeight: 600, fontSize: 18 }}
                   />
                 </div>
-                <div className="rt-toolbar" style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center', marginTop: 0, marginBottom: 0, overflowX: 'auto', color: (textColor || 'inherit') }}>
+                <div className="rt-toolbar" style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center', marginTop: 0, marginBottom: 0, overflowX: 'auto' }}>
                   <button className="tiny" onClick={() => applyChecklistMarkAcrossLine('bold')} aria-pressed={isCurrentLineMarked('bold')} aria-label="Bold" title="Bold">B</button>
                   <button className="tiny" onClick={() => applyChecklistMarkAcrossLine('italic')} aria-pressed={isCurrentLineMarked('italic')} aria-label="Italic" title="Italic">I</button>
                   <button className="tiny" onClick={() => applyChecklistMarkAcrossLine('underline')} aria-pressed={isCurrentLineMarked('underline')} aria-label="Underline" title="Underline">U</button>
@@ -1199,7 +1202,7 @@ export default function MobileCreateModal({
             </label>
           )}
 
-          <div className="note-actions" style={{ display: 'inline-flex', gap: 8, justifyContent: 'flex-start', color: (textColor || 'inherit') }}>
+          <div className="note-actions" style={{ display: 'inline-flex', gap: 8, justifyContent: 'flex-start' }}>
             <button className="tiny palette" onClick={() => setShowPalette(true)} aria-label="Change color" title="Change color">
               <FontAwesomeIcon icon={faPalette} className="palette-svg" />
             </button>

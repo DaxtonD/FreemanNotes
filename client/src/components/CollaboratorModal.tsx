@@ -2,6 +2,8 @@ import React, { useMemo, useState, useEffect } from "react";
 import { createPortal } from "react-dom";
 import { useAuth } from '../authContext';
 
+const USERS_CACHE_KEY = 'fn.users.cache.v1';
+
 export default function CollaboratorModal({ onClose, onSelect, current, onRemove, ownerId }:
   {
     onClose: () => void;
@@ -12,19 +14,49 @@ export default function CollaboratorModal({ onClose, onSelect, current, onRemove
   }) {
   const { token, user } = useAuth();
   const [q, setQ] = useState("");
-  const [users, setUsers] = useState<Array<{id:number;email:string;name?:string;userImageUrl?: string}>>([]);
+  const [users, setUsers] = useState<Array<{id:number;email:string;name?:string;userImageUrl?: string}>>(() => {
+    try {
+      const raw = localStorage.getItem(USERS_CACHE_KEY);
+      if (!raw) return [];
+      const parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) return [];
+      return parsed
+        .map((u: any) => ({
+          id: Number(u?.id),
+          email: String(u?.email || ''),
+          name: (typeof u?.name === 'string' ? String(u.name) : undefined),
+          userImageUrl: (typeof u?.userImageUrl === 'string' ? String(u.userImageUrl) : undefined),
+        }))
+        .filter((u: any) => Number.isFinite(u.id) && u.id > 0 && !!u.email);
+    } catch {
+      return [];
+    }
+  });
   useEffect(() => {
     (async () => {
       try {
+        if (!token) return;
         const res = await fetch('/api/users', { headers: { Authorization: token ? `Bearer ${token}` : '' } });
         if (!res.ok) throw new Error(await res.text());
         const data = await res.json();
-        setUsers(Array.isArray(data.users) ? data.users : []);
+        const next = (Array.isArray(data.users) ? data.users : [])
+          .map((u: any) => ({
+            id: Number(u?.id),
+            email: String(u?.email || ''),
+            name: (typeof u?.name === 'string' ? String(u.name) : undefined),
+            userImageUrl: (typeof u?.userImageUrl === 'string' ? String(u.userImageUrl) : undefined),
+          }))
+          .filter((u: any) => Number.isFinite(u.id) && u.id > 0 && !!u.email);
+        setUsers(next);
+        try { localStorage.setItem(USERS_CACHE_KEY, JSON.stringify(next)); } catch {}
       } catch (err) {
         console.warn('Failed to load users', err);
       }
     })();
   }, [token]);
+  const isOffline = (() => {
+    try { return navigator.onLine === false; } catch { return false; }
+  })();
   const currentIds = useMemo(() => new Set(current.map(c => c.userId)), [current]);
   const userById = useMemo(() => {
     const m = new Map<number, { id: number; email: string; name?: string; userImageUrl?: string }>();
@@ -54,6 +86,11 @@ export default function CollaboratorModal({ onClose, onSelect, current, onRemove
           <button className="icon-close" onClick={onClose}>✕</button>
         </div>
         <input className="collab-search" placeholder="Search users..." value={q} onChange={e => setQ(e.target.value)} style={{ width: '100%', marginBottom: 12 }} />
+        {isOffline && (
+          <div style={{ marginBottom: 10, color: 'var(--muted)', fontSize: 12 }}>
+            Offline mode: showing cached users.
+          </div>
+        )}
         <div className="collab-current" style={{ marginBottom: 16 }}>
           <div className="collab-section-title" style={{ fontWeight: 600, opacity: 0.8, marginBottom: 6 }}>Current collaborators</div>
           {current.length === 0 && <div className="collab-empty">None</div>}
@@ -98,6 +135,11 @@ export default function CollaboratorModal({ onClose, onSelect, current, onRemove
             </div>
           ))}
           {list.length === 0 && <div className="collab-empty">No users found</div>}
+          {isOffline && users.length === 0 && (
+            <div className="collab-empty" style={{ marginTop: 6 }}>
+              No cached user directory yet. Open Collaborators once while online to cache users for offline use.
+            </div>
+          )}
         </div>
       </div>
     </div>

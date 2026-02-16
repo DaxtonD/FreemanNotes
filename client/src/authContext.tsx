@@ -22,14 +22,26 @@ export function useAuth() {
 }
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [user, setUser] = useState<User>(null);
   const [token, setToken] = useState<string | null>(() => localStorage.getItem('fn_token'));
+  const [user, setUser] = useState<User>(() => {
+    try {
+      const t = localStorage.getItem('fn_token');
+      if (!t) return null;
+      const raw = localStorage.getItem('fn_user');
+      if (!raw) return null;
+      return JSON.parse(raw) as User;
+    } catch {
+      return null;
+    }
+  });
   const [ready, setReady] = useState<boolean>(false);
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
       if (!token) {
+        setUser(null);
+        try { localStorage.removeItem('fn_user'); } catch {}
         setReady(true);
         return;
       }
@@ -37,6 +49,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         const data = await apiMe(token);
         if (cancelled) return;
         setUser(data.user);
+        try { localStorage.setItem('fn_user', JSON.stringify(data.user)); } catch {}
       } catch (err) {
         if (cancelled) return;
         const status = (err as any)?.status;
@@ -45,6 +58,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           setUser(null);
           setToken(null);
           try { localStorage.removeItem('fn_token'); } catch {}
+          try { localStorage.removeItem('fn_user'); } catch {}
         } else {
           // Transient/network error: keep token and treat as not-ready but allow app to render
           console.warn('Transient auth/me failure — keeping token:', err);
@@ -196,6 +210,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setToken(t);
     localStorage.setItem('fn_token', t);
     setUser(data.user);
+    try { localStorage.setItem('fn_user', JSON.stringify(data.user)); } catch {}
   }
 
   async function register(email: string, password: string, name?: string, inviteToken?: string) {
@@ -204,6 +219,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setToken(t);
     localStorage.setItem('fn_token', t);
     setUser(data.user);
+    try { localStorage.setItem('fn_user', JSON.stringify(data.user)); } catch {}
   }
 
   async function uploadPhoto(dataUrl: string) {
@@ -214,6 +230,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const data = await uploadMyPhoto(effectiveToken, dataUrl);
     if (data && data.user) {
       setUser(data.user);
+      try { localStorage.setItem('fn_user', JSON.stringify(data.user)); } catch {}
       try {
         window.dispatchEvent(new CustomEvent('freemannotes:user-photo-updated', { detail: { user: data.user } }));
       } catch {}
@@ -223,12 +240,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   async function updateMe(payload: any) {
     if (!token) throw new Error('Not authenticated');
     const data = await apiUpdateMe(token, payload);
-    if (data && data.user) setUser(data.user);
+    if (data && data.user) {
+      setUser(data.user);
+      try { localStorage.setItem('fn_user', JSON.stringify(data.user)); } catch {}
+    }
     else {
       // Optimistically merge payload into user if server doesn't echo
       setUser((prev) => {
         if (!prev) return prev;
-        return { ...(prev as any), ...(payload || {}) } as any;
+        const next = { ...(prev as any), ...(payload || {}) } as any;
+        try { localStorage.setItem('fn_user', JSON.stringify(next)); } catch {}
+        return next;
       });
     }
   }
@@ -237,6 +259,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setToken(null);
     setUser(null);
     localStorage.removeItem('fn_token');
+    try { localStorage.removeItem('fn_user'); } catch {}
   }
 
   if (!ready) return null;

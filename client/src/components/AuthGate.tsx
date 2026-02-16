@@ -36,7 +36,7 @@ export default function AuthGate({
   onSetSearchQuery?: (q: string) => void;
   onSortConfigChange?: (next: SortConfig) => void;
 }) {
-  const { user } = useAuth();
+  const { user, token } = useAuth();
   const [showRegister, setShowRegister] = useState(false);
   const [showLogin, setShowLogin] = useState(false);
   const [registrationEnabled, setRegistrationEnabled] = useState<boolean | null>(null);
@@ -48,7 +48,7 @@ export default function AuthGate({
       .catch(() => setRegistrationEnabled(false));
   }, []);
 
-  if (user) return (
+  if (user || token) return (
     <NotesGrid
       selectedLabelIds={selectedLabelIds || []}
       selectedCollectionId={selectedCollectionId ?? null}

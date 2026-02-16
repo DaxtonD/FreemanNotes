@@ -278,7 +278,9 @@ router.get('/api/notes', async (req: Request, res: Response) => {
         const isOwnerView = Number(n.ownerId) === Number(user.id);
         // Prefer authoritative Yjs snapshot for checklist items when available.
         // This prevents stale/ghost DB rows from briefly appearing before the client finishes Yjs sync.
-        let itemsFromDb = (n.items || []).slice().sort((a: any, b: any) => (a.ord || 0) - (b.ord || 0));
+        let itemsFromDb = (String(n.type || '') === 'CHECKLIST')
+          ? (n.items || []).slice().sort((a: any, b: any) => (a.ord || 0) - (b.ord || 0))
+          : [];
         try {
           if (String(n.type || '') === 'CHECKLIST') {
             const buf = n.yData as unknown as Buffer | null;
@@ -415,7 +417,7 @@ router.post('/api/notes', async (req: Request, res: Response) => {
     // Enforce: do not create empty notes/checklists.
     // (Empty checklist items are already filtered below.)
     let filteredItemsCount = 0;
-    if (Array.isArray(items) && items.length > 0) {
+    if (String(type || 'TEXT').toUpperCase() === 'CHECKLIST' && Array.isArray(items) && items.length > 0) {
       const filtered = items
         .map((it: any) => ({
           content: String(it?.content || ''),
@@ -1225,6 +1227,9 @@ router.put('/api/notes/:id/items', async (req: Request, res: Response) => {
     if (note.ownerId !== user.id) {
       const collab = await prisma.collaborator.findFirst({ where: { noteId, userId: user.id } });
       if (!collab) return res.status(403).json({ error: 'forbidden' });
+    }
+    if (String((note as any).type || '').toUpperCase() !== 'CHECKLIST') {
+      return res.status(409).json({ error: 'items only supported for checklist notes' });
     }
 
     // Safety: if client sends an empty array unexpectedly (e.g., transient sync), do not delete.

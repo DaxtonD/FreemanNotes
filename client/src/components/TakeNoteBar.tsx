@@ -565,7 +565,7 @@ export default function TakeNoteBar({
   // Update textColor whenever bg changes
   useEffect(() => {
     if (!bg) {
-      setTextColor('var(--muted)');
+      setTextColor(undefined);
     } else {
       setTextColor(contrastColorForBackground(bg));
     }
@@ -984,26 +984,15 @@ export default function TakeNoteBar({
   }
 
   const dialogStyle: React.CSSProperties = {} as any;
-  if (bg) {
-    dialogStyle.background = bg;
-    // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-    // @ts-ignore
-    dialogStyle['--checkbox-bg'] = bg;
-    // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-    // @ts-ignore
-    dialogStyle['--checkbox-border'] = '#ffffff';
-    // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-    // @ts-ignore
-    dialogStyle['--checkbox-checked-bg'] = bg;
-    // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-    // @ts-ignore
-    dialogStyle['--checkbox-checked-mark'] = '#ffffff';
-
-    // Used by sticky title/toolbar backgrounds.
-    // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-    // @ts-ignore
-    dialogStyle['--editor-surface'] = bg;
-  }
+  const titleStripStyle: React.CSSProperties | undefined = bg
+    ? {
+        background: bg,
+        color: textColor || 'inherit',
+        borderRadius: 8,
+        padding: '8px 10px',
+        marginBottom: 8,
+      }
+    : undefined;
 
   return (
     <div className={`take-note-expanded${maximized ? ' maximized' : ''}`} ref={rootRef} style={{ padding: 12, ...dialogStyle }}>
@@ -1020,8 +1009,8 @@ export default function TakeNoteBar({
                 </div>
               );
             })()}
-            <div style={{ display: 'flex', justifyContent: 'flex-start' }}>
-              <input className="note-title-input" ref={titleInputRef} placeholder="Title" value={title} onChange={e => setTitle(e.target.value)} style={{ fontSize: 18, fontWeight: 600, border: 'none', background: 'transparent', color: 'inherit' }} />
+            <div style={{ display: 'flex', justifyContent: 'flex-start', ...(titleStripStyle || {}) }}>
+              <input className="note-title-input" ref={titleInputRef} placeholder="Title" value={title} onChange={e => setTitle(e.target.value)} style={{ flex: 1, width: '100%', fontSize: 18, fontWeight: 600, border: 'none', background: 'transparent', color: 'inherit' }} />
             </div>
 
             <div className="rt-toolbar" style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center', marginTop: 8, marginBottom: 0, overflowX: 'auto' }}>
@@ -1121,8 +1110,8 @@ export default function TakeNoteBar({
                 </div>
               );
             })()}
-            <div style={{ display: 'flex', justifyContent: 'flex-start' }}>
-              <input className="note-title-input" ref={titleInputRef} placeholder="Title" value={title} onChange={e => setTitle(e.target.value)} style={{ fontSize: 18, fontWeight: 600, border: 'none', background: 'transparent', color: 'inherit' }} />
+            <div style={{ display: 'flex', justifyContent: 'flex-start', ...(titleStripStyle || {}) }}>
+              <input className="note-title-input" ref={titleInputRef} placeholder="Title" value={title} onChange={e => setTitle(e.target.value)} style={{ flex: 1, width: '100%', fontSize: 18, fontWeight: 600, border: 'none', background: 'transparent', color: 'inherit' }} />
             </div>
 
             <div
@@ -1613,7 +1602,7 @@ export default function TakeNoteBar({
       )}
 
       <div className="note-footer" aria-hidden={false} style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 10, flexWrap: 'wrap' }}>
-        <div style={{ marginRight: 'auto', display: 'flex', flexDirection: 'column', gap: 8, minWidth: 0, color: (bg ? textColor : undefined) }}>
+        <div style={{ marginRight: 'auto', display: 'flex', flexDirection: 'column', gap: 8, minWidth: 0 }}>
           {!!activeCollectionId && !!activeCollectionPath && (
             <label className="create-collection-toggle" title={activeCollectionPath}>
               <input

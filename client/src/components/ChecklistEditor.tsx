@@ -52,6 +52,24 @@ function reminderDueColorClass(dueMs: number): string {
   return '';
 }
 
+/** choose '#000' or '#fff' based on best WCAG contrast vs provided hex color */
+function contrastColorForBackground(hex?: string | null): string | undefined {
+  if (!hex) return undefined;
+  const h = String(hex).replace('#', '');
+  const full = h.length === 3 ? h.split('').map(ch => ch + ch).join('') : h;
+  if (full.length !== 6) return undefined;
+  const r = parseInt(full.slice(0, 2), 16) / 255;
+  const g = parseInt(full.slice(2, 4), 16) / 255;
+  const b = parseInt(full.slice(4, 6), 16) / 255;
+  const srgbToLin = (c: number) => (c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4));
+  const R = srgbToLin(r), G = srgbToLin(g), B = srgbToLin(b);
+  const L = 0.2126 * R + 0.7152 * G + 0.0722 * B;
+  const contrastRatio = (L1: number, L2: number) => (Math.max(L1, L2) + 0.05) / (Math.min(L1, L2) + 0.05);
+  const contrastWithWhite = contrastRatio(1, L);
+  const contrastWithBlack = contrastRatio(0, L);
+  return contrastWithWhite >= contrastWithBlack ? '#ffffff' : '#000000';
+}
+
 export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImagesUpdated, onColorChanged, onCollaboratorsChanged, moreMenu }:
   {
     note: any;
@@ -229,6 +247,14 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
   const [autoFocusIndex, setAutoFocusIndex] = useState<number | null>(null);
   const [activeRowKey, setActiveRowKey] = useState<string | number | null>(null);
   const [title, setTitle] = useState<string>(note.title || '');
+  const initialBg = React.useMemo(() => {
+    try {
+      return String((noteBg ?? (note as any)?.viewerColor ?? (note as any)?.color ?? '') || '');
+    } catch {
+      return '';
+    }
+  }, [noteBg, (note as any)?.viewerColor, (note as any)?.color]);
+  const [bg, setBg] = useState<string>(initialBg);
   const lastSavedTitleRef = useRef<string>(note.title || '');
   const titleSaveTimerRef = useRef<number | null>(null);
   // Keep editor dialog on current app theme colors.
@@ -315,6 +341,11 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
     lastSavedTitleRef.current = note.title || '';
     setTitle(note.title || '');
     try {
+      setBg(String((noteBg ?? (note as any)?.viewerColor ?? (note as any)?.color ?? '') || ''));
+    } catch {
+      setBg('');
+    }
+    try {
       const raw = Array.isArray((note as any).linkPreviews) ? (note as any).linkPreviews : [];
       const next = raw
         .map((p: any) => ({
@@ -328,7 +359,7 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
         .filter((p: any) => Number.isFinite(p.id) && p.url);
       setLinkPreviews(next);
     } catch {}
-  }, [note.id]);
+  }, [note.id, noteBg, (note as any)?.viewerColor, (note as any)?.color]);
 
   // Keep collaborators in sync with server-provided note data.
   React.useEffect(() => {
@@ -2057,9 +2088,20 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
   }
   const dialogStyle: React.CSSProperties = {} as any;
   const text: string | undefined = undefined;
+  const titleTextColor = contrastColorForBackground(bg);
+  const titleStripStyle: React.CSSProperties | undefined = bg
+    ? {
+        background: bg,
+        color: titleTextColor || 'inherit',
+        borderRadius: 8,
+        padding: '8px 10px',
+        marginBottom: 8,
+      }
+    : undefined;
 
   async function onPickColor(color: string) {
     const next = color || '';
+    setBg(next);
     const result = await requestJsonOrQueue({
       method: 'PATCH',
       path: `/api/notes/${note.id}/prefs`,
@@ -2282,7 +2324,7 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
                 </div>
               );
             })()}
-            <div style={{ display: 'flex', gap: 12, marginBottom: 8 }}>
+            <div style={{ display: 'flex', gap: 12, marginBottom: 8, ...(titleStripStyle || {}) }}>
               <input
                 className={`note-title-input${!String(title || '').trim() ? ' note-title-input-missing' : ''}`}
                 placeholder="Checklist title"

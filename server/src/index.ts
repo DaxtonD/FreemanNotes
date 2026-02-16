@@ -81,16 +81,41 @@ async function start() {
 
     // Wire Yjs persistence to Prisma so rooms load from/stay in sync with DB
     try {
+      const parseCollabRoom = (docName: string): { noteId: number; stamp: string | null } | null => {
+        const last = String(docName || '').split('/').pop() || String(docName || '');
+        const m = /^note-(\d+)(?:-c([0-9a-z]+))?$/i.exec(last);
+        if (!m) return null;
+        const noteId = Number(m[1]);
+        if (!Number.isFinite(noteId) || noteId <= 0) return null;
+        const stamp = (m[2] ? String(m[2]).toLowerCase() : null);
+        return { noteId, stamp };
+      };
+      const collabStampFromCreatedAt = (createdAt: unknown): string | null => {
+        try {
+          const d = createdAt instanceof Date ? createdAt : new Date(String(createdAt || ''));
+          const ms = d.getTime();
+          if (!Number.isFinite(ms) || ms <= 0) return null;
+          return ms.toString(36);
+        } catch {
+          return null;
+        }
+      };
+
       setPersistence({
         bindState: async (docName: string, ydoc: Y.Doc) => {
-          // y-websocket uses the URL path as docName (e.g., "collab/note-123").
-          // We only need the final segment for note ID parsing.
-          const last = docName.split('/').pop() || docName;
-          const m = /^note-(\d+)(?:-c[0-9a-z]+)?$/i.exec(last);
-          if (m) {
-            const noteId = Number(m[1]);
+          const parsed = parseCollabRoom(docName);
+          if (parsed) {
+            const noteId = Number(parsed.noteId);
             try {
               const note = await prisma.note.findUnique({ where: { id: noteId }, include: { items: true } });
+              if (!note) return;
+              const expectedStamp = collabStampFromCreatedAt((note as any).createdAt);
+              // Reject legacy/incorrect rooms so note ID reuse after DB reset cannot
+              // attach stale in-memory collaboration state to a new note.
+              if (!expectedStamp || !parsed.stamp || String(parsed.stamp) !== String(expectedStamp)) {
+                console.warn('Ignoring non-canonical collab room', { docName, noteId, expectedStamp, gotStamp: parsed.stamp || null });
+                return;
+              }
               const persisted = note?.yData as unknown as Buffer | null;
               const hasPersisted = !!(persisted && persisted.length > 0);
               if (hasPersisted) {
@@ -160,11 +185,14 @@ async function start() {
           }
         },
         writeState: async (docName: string, ydoc: Y.Doc) => {
-          const last = docName.split('/').pop() || docName;
-          const m = /^note-(\d+)(?:-c[0-9a-z]+)?$/i.exec(last);
-          if (!m) return;
-          const noteId = Number(m[1]);
+          const parsed = parseCollabRoom(docName);
+          if (!parsed) return;
+          const noteId = Number(parsed.noteId);
           try {
+            const note = await prisma.note.findUnique({ where: { id: noteId }, select: { createdAt: true } });
+            if (!note) return;
+            const expectedStamp = collabStampFromCreatedAt((note as any).createdAt);
+            if (!expectedStamp || !parsed.stamp || String(parsed.stamp) !== String(expectedStamp)) return;
             const snapshot = Y.encodeStateAsUpdate(ydoc);
             await prisma.note.updateMany({ where: { id: noteId }, data: { yData: Buffer.from(snapshot) } });
           } catch (e) {
