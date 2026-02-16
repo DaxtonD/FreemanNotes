@@ -351,6 +351,9 @@ export default function RichTextEditor({ note, onClose, onSaved, noteBg, onImage
   React.useEffect(() => {
     lastSavedTitleRef.current = note.title || '';
     setTitle(note.title || '');
+    seededOnceRef.current = false;
+    syncedRef.current = false;
+    dirtyRef.current = false;
   }, [note.id]);
 
   const saveTitleNow = React.useCallback(async (nextTitle?: string) => {
@@ -474,6 +477,31 @@ export default function RichTextEditor({ note, onClose, onSaved, noteBg, onImage
     while (depth > 0 && !$from.node(depth).isBlock) depth--;
     const from = $from.start(depth);
     const to = $from.end(depth);
+
+    // Empty line: toggle the stored mark so upcoming typed text uses this style.
+    let hasTextInBlock = false;
+    try {
+      editor.state.doc.nodesBetween(from, to, (node: any) => {
+        if (node?.isText && String(node.text || '').length > 0) hasTextInBlock = true;
+      });
+    } catch {}
+    if (!hasTextInBlock) {
+      const chain: any = editor.chain().focus();
+      const active = !!editor.isActive(mark);
+      if (mark === 'bold') {
+        if (active) chain.unsetBold();
+        else chain.setBold();
+      } else if (mark === 'italic') {
+        if (active) chain.unsetItalic();
+        else chain.setItalic();
+      } else {
+        if (active) chain.unsetUnderline();
+        else chain.setUnderline();
+      }
+      chain.run();
+      return;
+    }
+
     const chain = editor.chain().focus().setTextSelection({ from, to });
     if (mark === 'bold') chain.toggleBold().run();
     else if (mark === 'italic') chain.toggleItalic().run();
@@ -493,7 +521,63 @@ export default function RichTextEditor({ note, onClose, onSaved, noteBg, onImage
     } catch {}
   }, [ (note as any).images ]);
 
-  // Server is authoritative; clients never seed initial content.
+  // Fallback seed for offline/open-race cases:
+  // retry seeding for a short window so provider sync races don't leave an empty editor.
+  React.useEffect(() => {
+    if (!editor) return;
+    const rawBody = String((note as any)?.body || '');
+    if (!rawBody.trim()) return;
+    let attempts = 0;
+    const MAX_ATTEMPTS = 8;
+
+    const trySeed = () => {
+      try {
+        const currentText = String(editor.getText?.() || '').trim();
+        if (currentText) {
+          seededOnceRef.current = true;
+          return true;
+        }
+        if (dirtyRef.current) return true;
+
+        let parsed: any = null;
+        try {
+          parsed = JSON.parse(rawBody);
+        } catch {
+          parsed = rawBody;
+        }
+
+        if (parsed && typeof parsed === 'object') {
+          editor.commands.setContent(parsed as any, { emitUpdate: false } as any);
+          return false;
+        }
+
+        const text = String(parsed || '').trim();
+        if (!text) return true;
+        editor.commands.setContent({
+          type: 'doc',
+          content: [{ type: 'paragraph', content: [{ type: 'text', text }] }],
+        } as any, { emitUpdate: false } as any);
+      } catch {}
+      return false;
+    };
+
+    const initialTimer = window.setTimeout(() => {
+      trySeed();
+    }, 120);
+
+    const interval = window.setInterval(() => {
+      attempts += 1;
+      const done = trySeed();
+      if (done || attempts >= MAX_ATTEMPTS) {
+        try { window.clearInterval(interval); } catch {}
+      }
+    }, 250);
+
+    return () => {
+      try { window.clearTimeout(initialTimer); } catch {}
+      try { window.clearInterval(interval); } catch {}
+    };
+  }, [editor, note.id, (note as any).body]);
 
   const [, setToolbarTick] = React.useState(0);
   React.useEffect(() => {
@@ -682,44 +766,23 @@ export default function RichTextEditor({ note, onClose, onSaved, noteBg, onImage
         onClose();
         return;
       }
-      const bodySnapshot = (() => { try { return JSON.stringify(editor?.getJSON() || {}); } catch { return note.body || ''; } })();
+      const bodySnapshot = (() => {
+        try {
+          const next = JSON.stringify(editor?.getJSON() || {});
+          if (!dirtyRef.current && !txt && String(note.body || '').trim()) return String(note.body || '');
+          return next;
+        } catch {
+          return note.body || '';
+        }
+      })();
       onSaved && onSaved({ title, body: bodySnapshot });
     } catch {}
     onClose();
   }
 
-  // Contrast color for adaptive text/icon colors
-  function contrastColor(hex?: string | null) {
-    if (!hex) return undefined;
-    const h = hex.replace('#', '');
-    const full = h.length === 3 ? h.split('').map(ch => ch + ch).join('') : h;
-    if (full.length !== 6) return undefined;
-    const r = parseInt(full.slice(0, 2), 16) / 255;
-    const g = parseInt(full.slice(2, 4), 16) / 255;
-    const b = parseInt(full.slice(4, 6), 16) / 255;
-    const srgbToLin = (c: number) => (c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4));
-    const R = srgbToLin(r), G = srgbToLin(g), B = srgbToLin(b);
-    const L = 0.2126 * R + 0.7152 * G + 0.0722 * B;
-    const contrastWithWhite = (1 + 0.05) / (L + 0.05);
-    const contrastWithBlack = (L + 0.05) / (0 + 0.05);
-    return contrastWithWhite >= contrastWithBlack ? '#ffffff' : '#000000';
-  }
-
-  // Match note color in dialog; prefer viewer-specific color, and set text color accordingly
+  // Keep editor dialog on current app theme colors.
   const dialogStyle: React.CSSProperties = {} as any;
-  const [bg, setBg] = React.useState<string>(noteBg ?? ((note as any).viewerColor || note.color || ''));
-  const textColor = bg ? (contrastColor(bg) || 'var(--muted)') : undefined;
-  React.useEffect(() => { setBg(noteBg ?? ((note as any).viewerColor || note.color || '')); }, [noteBg, (note as any).viewerColor, note.color]);
-  if (bg) {
-    (dialogStyle as any)['--checkbox-bg'] = bg;
-    (dialogStyle as any)['--checkbox-border'] = textColor || undefined;
-    (dialogStyle as any)['--checkbox-stroke'] = textColor || undefined;
-    (dialogStyle as any)['--checkbox-checked-bg'] = bg;
-    (dialogStyle as any)['--checkbox-checked-mark'] = textColor || undefined;
-    (dialogStyle as any)['--editor-surface'] = bg;
-    dialogStyle.background = bg;
-    if (textColor) dialogStyle.color = textColor;
-  }
+  const textColor: string | undefined = undefined;
 
   async function onPickColor(color: string) {
     const nextBg = color || '';
@@ -732,14 +795,13 @@ export default function RichTextEditor({ note, onClose, onSaved, noteBg, onImage
       console.error('Failed to save color preference');
       window.alert('Failed to save color preference');
     }
-    setBg(nextBg);
     try { (onColorChanged as any)?.(nextBg); } catch {}
   }
 
   function onAddImageUrl(url?: string | null) {
     setShowImageDialog(false);
     if (!url) return;
-    const tempId = -Date.now();
+    const tempId = -Math.floor(Date.now() + Math.random() * 1000000);
     // Optimistically show immediately
     setImagesWithNotify((s) => {
       const exists = s.some((x) => String(x.url) === String(url));
@@ -786,6 +848,15 @@ export default function RichTextEditor({ note, onClose, onSaved, noteBg, onImage
         await queueForLater();
       }
     })();
+  }
+
+  function onAddImageUrls(urls?: string[] | null) {
+    setShowImageDialog(false);
+    const list = Array.isArray(urls)
+      ? urls.map((u) => String(u || '').trim()).filter((u) => !!u)
+      : [];
+    if (!list.length) return;
+    for (const u of list) onAddImageUrl(u);
   }
 
   function onCollaboratorSelect(u: { id:number; email:string; name?: string; userImageUrl?: string }) {
@@ -1241,7 +1312,7 @@ export default function RichTextEditor({ note, onClose, onSaved, noteBg, onImage
       onRemove={onRemoveCollaborator}
     />
   )}
-  {showImageDialog && <ImageDialog onClose={() => setShowImageDialog(false)} onAdd={onAddImageUrl} />}
+  {showImageDialog && <ImageDialog onClose={() => setShowImageDialog(false)} onAdd={onAddImageUrl} onAddMany={onAddImageUrls} />}
 
   if (typeof document !== 'undefined') {
     const portal = createPortal(dialog, document.body);
@@ -1305,7 +1376,7 @@ export default function RichTextEditor({ note, onClose, onSaved, noteBg, onImage
           onRemove={onRemoveCollaborator}
         />
       )}
-      {showImageDialog && <ImageDialog onClose={() => setShowImageDialog(false)} onAdd={onAddImageUrl} />}
+      {showImageDialog && <ImageDialog onClose={() => setShowImageDialog(false)} onAdd={onAddImageUrl} onAddMany={onAddImageUrls} />}
       <UrlEntryModal
         open={!!urlModal}
         title="Add URL preview"

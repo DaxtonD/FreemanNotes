@@ -482,7 +482,18 @@ body{
 .take-note-sticky .take-note-bar{ margin: 0 auto; }
 .notes-sticky-search{ display:none; }
 
+/* Keep first-row note corner icons clear of the sticky take-note surface. */
+.notes-area > .take-note-sticky + .notes-section .notes-grid,
+.notes-area > .take-note-sticky + .notes-section .notes-masonry{
+  margin-top: 20px;
+}
+
 @media (pointer: coarse), (any-pointer: coarse) {
+  .notes-area > .take-note-sticky + .notes-section .notes-grid,
+  .notes-area > .take-note-sticky + .notes-section .notes-masonry{
+    margin-top: 0;
+  }
+
   .app-root.phone,
   .app-root.phone .app-body,
   .app-root.phone .main-area{
@@ -746,10 +757,19 @@ body{
 
   .note-title{
     margin: -10px -10px 8px -10px;
-    padding: 26px 10px 8px;
+    padding: clamp(7px, calc(var(--card-title-size-effective, 18px) * 0.55), 14px) 8px clamp(0px, calc(var(--card-title-size-effective, 18px) * 0.06), 4px);
     border-top-left-radius: 6px;
     border-top-right-radius: 6px;
   }
+  .notes-grid:not(.notes-grid--list) .note-title.note-title--with-icons{
+    padding-top: calc(clamp(7px, calc(var(--card-title-size-effective, 18px) * 0.55), 14px) + 5px);
+  }
+
+  .notes-grid:not(.notes-grid--list) .note-card.has-header-icons,
+  .notes-masonry .note-card.has-header-icons{
+    margin-top: 10px;
+  }
+
 }
 .section-title{color:var(--muted);font-weight:600;margin:0 0 8px 0;padding-left:6px;font-size:13px}
 .notes-section + .notes-section{
@@ -803,11 +823,12 @@ body{
 .notes-area--list .notes-grid.notes-grid--list .note-card{
   width: 100%;
   padding: 0;
-  background: transparent;
+  background: transparent !important;
   box-shadow: none;
   border-radius: 0;
   border: none;
   outline: none;
+  color: inherit !important;
 }
 .notes-area--list .notes-grid.notes-grid--list .note-body,
 .notes-area--list .notes-grid.notes-grid--list .note-link-previews{
@@ -831,8 +852,14 @@ body{
   padding-top: 9px;
   padding-bottom: 8px;
   padding-right: 170px;
+  color: inherit;
+  background: rgba(255,255,255,0.07);
   border-bottom: none;
   border-radius: 8px;
+}
+:root[data-theme="light"] .notes-area--list .notes-grid.notes-grid--list .note-title{
+  color: inherit;
+  background: linear-gradient(180deg, rgba(0,0,0,0.085), rgba(0,0,0,0.055));
 }
 .notes-area--list .notes-grid.notes-grid--list .note-meta,
 .notes-area--list .notes-grid.notes-grid--list .note-images-toggle{
@@ -852,6 +879,16 @@ body{
   transform: translateY(-50%);
   margin: 0;
   z-index: 35;
+}
+
+/* List view: icon-only summary chips (remove numeric +n/count text). */
+.notes-area--list .notes-grid.notes-grid--list .chip.chip--meta > span{
+  display: none;
+}
+
+/* List view: remove reminder-clear check control from header icons. */
+.notes-area--list .notes-grid.notes-grid--list .note-reminder-clear-control{
+  display: none !important;
 }
 .notes-area--list .notes-grid.notes-grid--list .note-meta-bar{
   display: grid;
@@ -973,6 +1010,18 @@ body{
     align-items: center;
     justify-content: flex-end;
   }
+
+  /* Desktop 2-column list: no footer/dock hover controls and no meta chips. */
+  .notes-area--list-2 .notes-grid.notes-grid--list .note-footer,
+  .notes-area--list-2 .notes-grid.notes-grid--list .footer-hover-zone{
+    display: none !important;
+  }
+  .notes-area--list-2 .notes-grid.notes-grid--list .note-meta{
+    display: none !important;
+  }
+  .notes-area--list-2 .notes-grid.notes-grid--list .note-title{
+    padding-right: 40px;
+  }
   .notes-area--list-1 .notes-grid.notes-grid--list .chip.chip--meta,
   .notes-area--list-1 .notes-grid.notes-grid--list .chip.chip--meta.chip--meta-collections{
     min-width: 0;
@@ -1090,6 +1139,136 @@ body{
   .notes-area--list-2 .notes-grid.notes-grid--list .note-title{
     min-height: 44px;
     padding-right: 40px;
+  }
+}
+
+/* Single-column list refinement:
+   - keep full-width header strip
+   - limit title text to left half (wrapping allowed)
+   - keep right side for one horizontal chip row (no 2x2 grouping) */
+.notes-area--list-1 .notes-grid.notes-grid--list .note-title{
+  display: flex;
+  align-items: center;
+  min-height: 0;
+  line-clamp: unset;
+  -webkit-line-clamp: unset;
+  padding-top: 6px;
+  padding-bottom: 6px;
+  padding-right: calc(46% + 10px);
+}
+.notes-area--list-1 .notes-grid.notes-grid--list .note-title-text{
+  display: block;
+  flex: 1 1 auto;
+  max-width: none;
+  overflow: visible !important;
+  text-overflow: clip !important;
+  white-space: normal !important;
+  line-height: 1.24;
+  overflow-wrap: anywhere;
+}
+.notes-area--list-1 .notes-grid.notes-grid--list .note-meta{
+  right: 44px;
+  max-width: calc(54% - 44px);
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+/* Keep list-view chips/icons vertically centered on the header row. */
+.notes-area--list .notes-grid.notes-grid--list .note-corner-icons,
+.notes-area--list .notes-grid.notes-grid--list .note-meta{
+  top: calc(50% - 3px) !important;
+  transform: translateY(-50%) !important;
+}
+.notes-area--list-1 .notes-grid.notes-grid--list .note-meta-bar{
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 6px;
+  align-items: center;
+  justify-content: flex-end;
+  max-width: 100%;
+  overflow: hidden;
+}
+
+/* Two-column list refinement:
+   keep rows as short as possible, but allow natural growth when title wraps. */
+.notes-area--list-2 .notes-grid.notes-grid--list .note-title{
+  min-height: 0 !important;
+  line-clamp: unset;
+  -webkit-line-clamp: unset;
+  align-items: flex-start;
+  padding-top: 6px;
+  padding-bottom: 6px;
+}
+.notes-area--list-2 .notes-grid.notes-grid--list .note-title-text{
+  white-space: normal !important;
+  overflow: visible !important;
+  text-overflow: clip !important;
+  line-height: 1.24;
+  overflow-wrap: anywhere;
+}
+
+/* List views: compact chip containers + larger icons for readability. */
+.notes-area--list .notes-grid.notes-grid--list .chip.chip--meta,
+.notes-area--list .notes-grid.notes-grid--list .chip.chip--meta.chip--meta-collections{
+  position: relative;
+  top: -2px;
+  width: 28px;
+  min-width: 28px;
+  height: 28px;
+  min-height: 28px;
+  padding: 0;
+  gap: 0;
+}
+.notes-area--list .notes-grid.notes-grid--list .chip.chip--meta .meta-fa-icon{
+  width: 14px;
+  height: 14px;
+  opacity: 0.92;
+}
+
+/* Desktop-only single-column list:
+   match mobile concept (wrapped title + compact header chips) and disable footer dock hover. */
+@media (pointer: fine) and (hover: hover) {
+  .notes-area--list .notes-grid.notes-grid--list .chip.chip--meta,
+  .notes-area--list .notes-grid.notes-grid--list .chip.chip--meta.chip--meta-collections{
+    top: 2px;
+    width: auto;
+    min-width: 36px;
+    height: auto;
+    min-height: 26px;
+    padding: 4px 10px;
+    border-radius: 999px;
+    gap: 4px;
+  }
+
+  .notes-area--list-1 .notes-grid.notes-grid--list .note-footer,
+  .notes-area--list-1 .notes-grid.notes-grid--list .footer-hover-zone{
+    display: none !important;
+  }
+
+  .notes-area--list-1 .notes-grid.notes-grid--list .note-title{
+    min-height: 0 !important;
+    line-clamp: unset;
+    -webkit-line-clamp: unset;
+    align-items: center;
+    padding-top: 6px;
+    padding-bottom: 6px;
+    padding-right: calc(46% + 10px);
+  }
+
+  .notes-area--list-1 .notes-grid.notes-grid--list .note-title-text{
+    white-space: normal !important;
+    overflow: visible !important;
+    text-overflow: clip !important;
+    line-height: 1.24;
+    overflow-wrap: anywhere;
+  }
+
+  .notes-area--list-1 .notes-grid.notes-grid--list .note-meta-bar{
+    display: flex;
+    flex-wrap: nowrap;
+    gap: 6px;
+    align-items: center;
+    justify-content: flex-end;
   }
 }
 
@@ -1340,7 +1519,7 @@ html.is-preferences-open .mobile-add-note{
   font-weight: 600;
 }
 .take-note-expanded{
-  background: var(--card);
+  color: var(--note-title-color, inherit);
   border-radius: 8px;
   box-shadow: 0 6px 20px rgba(0,0,0,0.6);
   width: min(600px, 100%);
@@ -1505,7 +1684,8 @@ html.is-preferences-open .mobile-add-note{
   align-items:center;
   justify-content:center;
   position: relative;
-  width: max(var(--checklist-drag-handle-width), var(--checklist-checkbox-size));
+  color: var(--note-title-color, inherit);
+  background: var(--editor-surface, var(--card));
   min-width: max(var(--checklist-drag-handle-width), var(--checklist-checkbox-size));
   /*
     Don't force a fixed row height.
@@ -1812,6 +1992,8 @@ html.is-preferences-open .mobile-add-note{
   --checklist-checkbox-size: var(--card-checklist-checkbox-size);
   --checklist-text-size: var(--card-checklist-text-size);
   --note-line-height: var(--card-note-line-height);
+  --checklist-text-size-effective: calc(var(--card-checklist-text-size) * var(--browser-font-scale));
+  --note-line-height-effective: calc(var(--card-note-line-height, 1.38) * var(--browser-line-height-scale));
   /* fill the grid cell width; keep height/content independent to avoid overlap */
   width: 100%;
   position: relative;
@@ -1837,7 +2019,7 @@ html.is-preferences-open .mobile-add-note{
   font-weight: 750;
   font-size: var(--card-title-size-effective, 1.18em);
   letter-spacing: 0.1px;
-  color: inherit;
+  color: var(--note-title-color, inherit);
   overflow: hidden;
   display: -webkit-box;
   -webkit-box-orient: vertical;
@@ -1846,11 +2028,14 @@ html.is-preferences-open .mobile-add-note{
 
   /* Edge-to-edge title strip inside the padded card */
   margin: -12px -12px 10px -12px;
-  padding: 30px 12px 10px;
+  padding: clamp(8px, calc(var(--card-title-size-effective, 20px) * 0.62), 18px) 10px clamp(1px, calc(var(--card-title-size-effective, 20px) * 0.08), 6px);
   background: var(--note-title-bg, rgba(255,255,255,0.07));
   border-bottom: 1px solid rgba(255,255,255,0.06);
   border-top-left-radius: 8px;
   border-top-right-radius: 8px;
+}
+.notes-grid:not(.notes-grid--list) .note-title.note-title--with-icons{
+  padding-top: calc(clamp(8px, calc(var(--card-title-size-effective, 20px) * 0.62), 18px) + 5px);
 }
 .note-type-icon{
   display: none;
@@ -1902,6 +2087,8 @@ html.is-preferences-open .mobile-add-note{
   --checklist-checkbox-size: var(--editor-checklist-checkbox-size);
   --checklist-text-size: var(--editor-checklist-text-size);
   --note-line-height: var(--editor-note-line-height);
+  --checklist-text-size-effective: calc(var(--editor-checklist-text-size) * var(--browser-font-scale));
+  --note-line-height-effective: calc(var(--editor-note-line-height, 1.38) * var(--browser-line-height-scale));
 }
 
 /* Subtle "more" indicator when the preview is clipped.
@@ -3309,48 +3496,74 @@ button.chip:focus{outline:2px solid rgba(255,255,255,0.18);outline-offset:2px;}
 /* Note corner indicators (pin + reminder bell) */
 .note-corner-icons{
   position:absolute;
-  top:10px;
-  right:10px;
+  top:-12px;
+  right:8px;
   display:flex;
-  gap:6px;
+  gap:4px;
   align-items:center;
   color: var(--muted);
-  opacity: 0.85;
+  opacity: 1;
   pointer-events: none;
+  z-index: 38;
 }
-.note-reminder-clear-control{
-  pointer-events: auto;
-  width: 18px;
-  height: 18px;
+
+/* Coarse pointers: increase icon spacing for easier touch targeting on card view.
+   Keep list-mode rows unchanged/compact. */
+@media (pointer: coarse), (any-pointer: coarse) {
+  .notes-grid:not(.notes-grid--list) .note-card .note-corner-icons,
+  .notes-masonry .note-card .note-corner-icons{
+    gap: 16px;
+  }
+}
+
+.note-card .note-corner-icons > .note-pin-icon,
+.note-card .note-corner-icons > .note-reminder-bell,
+.note-card .note-corner-icons > .note-reminder-clear-control{
+  width: 24px;
+  height: 24px;
+  border-radius: 999px;
+  border: 1px solid rgba(255,255,255,0.30);
+  background: rgba(255,255,255,0.22);
+  box-shadow: 0 2px 10px rgba(0,0,0,0.35);
+  backdrop-filter: blur(2px);
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border-radius: 999px;
-  border: 1px solid rgba(255,255,255,0.24);
-  background: rgba(255,255,255,0.08);
+}
+.note-reminder-clear-control{
+  pointer-events: auto;
+  border-color: rgba(255,255,255,0.34);
+  background: rgba(255,255,255,0.28);
   color: rgba(235, 248, 255, 0.98);
   padding: 0;
   cursor: pointer;
 }
 .note-reminder-clear-control svg{
-  width: 13px;
-  height: 13px;
+  width: 14px;
+  height: 14px;
   display: block;
 }
 .note-reminder-clear-control:hover,
 .note-reminder-clear-control:focus-visible{
-  background: rgba(255,255,255,0.16);
-  border-color: rgba(255,255,255,0.38);
+  background: rgba(255,255,255,0.28);
+  border-color: rgba(255,255,255,0.44);
 }
 :root[data-theme="light"] .note-reminder-clear-control{
-  border-color: rgba(0,0,0,0.18);
-  background: rgba(0,0,0,0.06);
+  border-color: rgba(0,0,0,0.20);
+  background: rgba(0,0,0,0.12);
   color: rgba(26, 34, 42, 0.95);
 }
 :root[data-theme="light"] .note-reminder-clear-control:hover,
 :root[data-theme="light"] .note-reminder-clear-control:focus-visible{
-  background: rgba(0,0,0,0.12);
+  background: rgba(0,0,0,0.18);
   border-color: rgba(0,0,0,0.30);
+}
+:root[data-theme="light"] .note-card .note-corner-icons > .note-pin-icon,
+:root[data-theme="light"] .note-card .note-corner-icons > .note-reminder-bell,
+:root[data-theme="light"] .note-card .note-corner-icons > .note-reminder-clear-control{
+  border-color: rgba(0,0,0,0.16);
+  background: rgba(255,255,255,0.88);
+  box-shadow: 0 2px 8px rgba(0,0,0,0.14);
 }
 .note-reminder-due{
   display: inline-flex;
@@ -3447,21 +3660,41 @@ button.chip:focus{outline:2px solid rgba(255,255,255,0.18);outline-offset:2px;}
 }
 .note-reminder-bell,
 .note-pin-icon{
-  width:18px;
-  height:18px;
+  width: 24px;
+  height: 24px;
 }
 .note-reminder-bell svg,
 .note-pin-icon svg{ width:100%; height:100%; display:block; }
+
+.note-pin-icon svg,
+.note-reminder-bell svg{
+  width: 14px;
+  height: 14px;
+}
 
 /* Keep card-view reminder bell neutral; urgency color is represented by the reminder chip. */
 .note-corner-icons .note-reminder-bell.note-reminder-due--red,
 .note-corner-icons .note-reminder-bell.note-reminder-due--orange,
 .note-corner-icons .note-reminder-bell.note-reminder-due--yellow{
+  color: var(--muted);
+}
+
+/* Keep list rows compact and unchanged. */
+.notes-area--list .notes-grid.notes-grid--list .note-corner-icons > .note-pin-icon,
+.notes-area--list .notes-grid.notes-grid--list .note-corner-icons > .note-reminder-bell,
+.notes-area--list .notes-grid.notes-grid--list .note-corner-icons > .note-reminder-clear-control{
+  width: 18px;
+  height: 18px;
   border: none;
   background: transparent;
-  color: var(--muted);
-  padding: 0;
-  border-radius: 0;
+  box-shadow: none;
+  backdrop-filter: none;
+}
+.notes-area--list .notes-grid.notes-grid--list .note-reminder-clear-control svg,
+.notes-area--list .notes-grid.notes-grid--list .note-pin-icon svg,
+.notes-area--list .notes-grid.notes-grid--list .note-reminder-bell svg{
+  width: 13px;
+  height: 13px;
 }
 
 .notes-area--list .notes-grid.notes-grid--list .note-reminder-bell.note-reminder-due--red{

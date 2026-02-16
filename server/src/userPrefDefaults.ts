@@ -9,7 +9,7 @@ const BUILTIN_USER_DEFAULTS: PrefMap = {
   chipDisplayMode: 'image+text',
   checklistSpacing: 15,
   checkboxSize: 20,
-  checklistTextSize: 17,
+  checklistTextSize: 15,
   noteWidth: 288,
   noteLineSpacing: 1.38,
   disableNoteCardLinks: false,

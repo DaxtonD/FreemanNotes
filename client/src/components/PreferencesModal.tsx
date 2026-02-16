@@ -463,10 +463,10 @@ export default function PreferencesModal({ onClose }: { onClose: () => void }) {
     document.documentElement.style.setProperty('--editor-checklist-text-size', `${pendingEditorTextSize}px`);
     document.documentElement.style.setProperty('--editor-note-line-height', String(pendingEditorNoteLineSpacing));
 
-    // Legacy vars (global) fall back to card values.
+    // Legacy vars (global) are aligned to editor values so editor typography remains independent from card-only sizing.
     document.documentElement.style.setProperty('--checklist-gap', `${pendingCardChecklistSpacing}px`);
     document.documentElement.style.setProperty('--checklist-checkbox-size', `${pendingCardCheckboxSize}px`);
-    document.documentElement.style.setProperty('--checklist-text-size', `${pendingCardTextSize}px`);
+    document.documentElement.style.setProperty('--checklist-text-size', `${pendingEditorTextSize}px`);
     document.documentElement.style.setProperty('--note-line-height', String(pendingCardNoteLineSpacing));
     // Note width preference is disabled on phones (layout auto-fits card width).
     if (!isPhone) {
@@ -489,7 +489,7 @@ export default function PreferencesModal({ onClose }: { onClose: () => void }) {
     // Legacy keys (kept for backward compatibility)
     try { localStorage.setItem('prefs.checklistSpacing', String(pendingCardChecklistSpacing)); } catch {}
     try { localStorage.setItem('prefs.checkboxSize', String(pendingCardCheckboxSize)); } catch {}
-    try { localStorage.setItem('prefs.checklistTextSize', String(pendingCardTextSize)); } catch {}
+    try { localStorage.setItem('prefs.checklistTextSize', String(pendingEditorTextSize)); } catch {}
     try { localStorage.setItem('prefs.noteLineSpacing', String(pendingCardNoteLineSpacing)); } catch {}
     if (!isPhone) {
       try { localStorage.setItem('prefs.noteWidth', String(pendingNoteWidth)); } catch {}

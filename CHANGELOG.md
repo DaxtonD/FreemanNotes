@@ -15,6 +15,22 @@ Adheres to Semantic Versioning (MAJOR.MINOR.PATCH).
 ### Fixed
 - 
 
+## [0.8.2] - 2026-02-16
+
+### Added
+- Sticky inline-format toolbar behavior in editors: `B`, `I`, and `U` now remain active at empty cursor positions and apply to newly typed text.
+
+### Changed
+- Split card/editor typography scoping now uses surface-specific effective CSS variables, keeping note-card and editor text metrics independent.
+- Version bump and release packaging updates for `0.8.2`.
+
+### Fixed
+- Decoupled card text-size preference from editor text-size rendering.
+- Restored editor line-spacing preference behavior where it could be ignored by shared fallback variables.
+- Editor mark toggles now reliably clear stored formatting on empty lines/items when de-selected.
+- Checklist toolbar active-state detection improved when focus temporarily shifts to toolbar controls.
+- Added extra top clearance below sticky quick-create so top-row card corner icons (pin/reminder) are not clipped.
+
 ## [0.8.1] - 2026-02-16
 
 ### Added

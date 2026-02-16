@@ -11,7 +11,7 @@ import MoreMenu from "./MoreMenu";
 import MoveToCollectionModal from "./MoveToCollectionModal";
 import UrlEntryModal from "./UrlEntryModal";
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faPalette, faUsers, faTag, faFolder, faImage, faUser, faNoteSticky, faListCheck } from '@fortawesome/free-solid-svg-icons';
+import { faPalette, faUsers, faTag, faFolder, faImage, faUser, faNoteSticky, faListCheck, faPaperclip } from '@fortawesome/free-solid-svg-icons';
 import LabelsDialog from "./LabelsDialog";
 import ColorPalette from "./ColorPalette";
 import ImageDialog from "./ImageDialog";
@@ -158,8 +158,6 @@ export default function NoteCard({
   const theme = (() => { try { return useTheme(); } catch { return { effective: 'dark' } as any; } })();
 
   const [bg, setBg] = useState<string>((note as any).viewerColor || note.color || ""); // empty = theme card color
-  // default text color for "Default" palette will use CSS var --muted so it matches original layout
-  const [textColor, setTextColor] = useState<string | undefined>(((note as any).viewerColor || note.color) ? contrastColorForBackground(((note as any).viewerColor || note.color) as string) : undefined);
   const [archived, setArchived] = useState(false);
   const [pinned, setPinned] = useState(false);
   const [images, setImages] = useState<Array<{ id:number; url:string }>>((note.images as any) || []);
@@ -169,6 +167,7 @@ export default function NoteCard({
   const [imagesDownTop, setImagesDownTop] = React.useState<number>(0);
   const [noteItems, setNoteItems] = useState<any[]>(note.items || []);
   const [title, setTitle] = useState<string>(note.title || '');
+  const [textBody, setTextBody] = useState<string>(note.body || '');
 
   React.useEffect(() => {
     try {
@@ -583,7 +582,7 @@ export default function NoteCard({
         snapRafRef.current = null;
       }
     };
-  }, [note.id, title, noteItems.length, showCompleted, rtHtmlFromY, note.body, images.length, labels.length, scheduleSnapPreview]);
+  }, [note.id, title, noteItems.length, showCompleted, rtHtmlFromY, textBody, images.length, labels.length, scheduleSnapPreview]);
 
   React.useEffect(() => {
     const el = imagesWrapRef.current;
@@ -1126,7 +1125,7 @@ export default function NoteCard({
   }, [note.id, note.type, ydoc]);
   // Render a minimal formatted HTML preview from TipTap JSON stored in note.body
   function bodyHtmlPreview(): string {
-    const raw = note.body || '';
+    const raw = textBody || '';
     const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
     const renderMarks = (text: string, marks?: any[]): string => {
       if (!marks || !marks.length) return esc(text);
@@ -1187,16 +1186,16 @@ export default function NoteCard({
     return plain.length > 0;
   }
 
-  // keep local bg/textColor in sync when the parent reloads the note (e.g., after page refresh)
+  // keep local bg in sync when the parent reloads the note (e.g., after page refresh)
   React.useEffect(() => {
     const base = ((note as any).viewerColor || note.color || '') as string;
     setBg(base || '');
-    setTextColor(base ? contrastColorForBackground(base) : undefined);
   }, [note.id, (note as any).viewerColor, note.color]);
   React.useEffect(() => {
     setLabels((note.noteLabels || []).map((nl:any) => nl.label).filter((l:any) => l && typeof l.id === 'number' && typeof l.name === 'string'));
   }, [note.noteLabels]);
   React.useEffect(() => { setTitle(note.title || ''); }, [note.title]);
+  React.useEffect(() => { setTextBody(note.body || ''); }, [note.id, note.body]);
   // Keep collaborators in sync with server-provided data on note reloads
   React.useEffect(() => {
     try {
@@ -1274,13 +1273,7 @@ export default function NoteCard({
       try { window.alert('Failed to save color preference'); } catch {}
       return;
     }
-    if (!next) {
-      setBg('');
-      setTextColor('var(--muted)');
-    } else {
-      setBg(next);
-      setTextColor(contrastColorForBackground(next));
-    }
+    setBg(next || '');
     try { notifyColor(next); } catch {}
     setShowPalette(false);
   }
@@ -1699,13 +1692,8 @@ export default function NoteCard({
     return bg;
   })();
 
-  // Derive the final text color from the effective background; for theme-default bg use inherit
-  const finalTextColor: string | undefined = normalizedBg ? contrastColorForBackground(normalizedBg) : undefined;
-
-  // compute chip background so it's visible against selected background/text color
-  const chipBg = (finalTextColor === "#ffffff" || finalTextColor === "var(--muted)")
-    ? "rgba(0,0,0,0.12)"
-    : "rgba(255,255,255,0.06)";
+  // When a custom note color is selected, apply it to the title/header strip only.
+  const titleTextColor: string | undefined = normalizedBg ? contrastColorForBackground(normalizedBg) : undefined;
 
     // Compute participant chips (owner + collaborators), excluding current user
     const chipParticipants: Array<{ key: string | number; userId: number; name: string; email: string; userImageUrl?: string }> = [];
@@ -1725,39 +1713,23 @@ export default function NoteCard({
     } catch {}
 
     const styleVars: React.CSSProperties = {
-      background: normalizedBg || undefined,
-      color: finalTextColor || undefined,
       opacity: archived ? 0.6 : 1,
       position: 'relative',
       // eslint-disable-next-line @typescript-eslint/ban-ts-comment
       // @ts-ignore
-      ['--chip-bg' as any]: chipBg,
+      ['--note-title-bg' as any]: normalizedBg || undefined,
+      // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+      // @ts-ignore
+      ['--note-title-color' as any]: titleTextColor || undefined,
     } as React.CSSProperties;
-    // Only override checkbox vars when the note has an explicit background color.
-    if (normalizedBg) {
-      // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-      // @ts-ignore
-      styleVars['--checkbox-bg'] = normalizedBg;
-      // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-      // @ts-ignore
-      styleVars['--checkbox-border'] = contrastColorForBackground(normalizedBg);
-      // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-      // @ts-ignore
-      styleVars['--checkbox-stroke'] = contrastColorForBackground(normalizedBg);
-      // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-      // @ts-ignore
-      styleVars['--checkbox-checked-bg'] = normalizedBg;
-      // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-      // @ts-ignore
-      styleVars['--checkbox-checked-mark'] = contrastColorForBackground(normalizedBg);
-    }
 
     const isChecklistType = note.type === 'CHECKLIST' || (noteItems && noteItems.length > 0);
+    const hasHeaderIcons = !!(pinned || (note as any)?.reminderDueAt);
 
     return (
     <article
       ref={(el) => { noteRef.current = el as HTMLElement | null; }}
-      className={`note-card${expandedMeta ? ' is-meta-expanded' : ''}${imagesExpanded ? ' is-images-expanded' : ''}${labels.length > 0 ? ' has-labels' : ''}${viewerCollections.length > 0 ? ' has-collections' : ''}${(noteItems && noteItems.length > 0) ? ' has-checklist' : ''}`}
+      className={`note-card${expandedMeta ? ' is-meta-expanded' : ''}${imagesExpanded ? ' is-images-expanded' : ''}${labels.length > 0 ? ' has-labels' : ''}${viewerCollections.length > 0 ? ' has-collections' : ''}${(noteItems && noteItems.length > 0) ? ' has-checklist' : ''}${hasHeaderIcons ? ' has-header-icons' : ''}`}
       style={styleVars}
       {...(!title ? (dragHandleAttributes || {}) : {})}
       {...(!title ? (() => {
@@ -1793,9 +1765,7 @@ export default function NoteCard({
           <div className="note-corner-icons">
             {showPin && (
               <div className="note-pin-icon" title="Pinned" aria-hidden>
-                <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden>
-                  <path d="M14 2H10v2H8v2h.17l1.12 9.05L7 17.4V20h10v-2.6l-2.29-2.35L15.83 6H16V4h-2V2Zm-1.95 4 1.15 9.3L15 17.1V18H9v-.9l1.8-1.8L11.05 6h1Z" />
-                </svg>
+                <FontAwesomeIcon icon={faPaperclip} />
               </div>
             )}
             {showBell && (
@@ -1828,7 +1798,7 @@ export default function NoteCard({
       })()}
 
       <div
-        className={`note-title${!String(title || '').trim() ? ' note-title--empty' : ''}`}
+        className={`note-title${!String(title || '').trim() ? ' note-title--empty' : ''}${hasHeaderIcons ? ' note-title--with-icons' : ''}`}
         {...(dragHandleAttributes || {})}
         {...(() => {
           const ls: any = dragHandleListeners || {};
@@ -2245,7 +2215,7 @@ export default function NoteCard({
             )}
           </div>
         ) : (
-          (hasVisibleHtmlContent(rtHtmlFromY) || note.body) ? (
+          (hasVisibleHtmlContent(rtHtmlFromY) || textBody) ? (
             <div className="note-html" dangerouslySetInnerHTML={{ __html: (hasVisibleHtmlContent(rtHtmlFromY) ? String(rtHtmlFromY) : bodyHtmlPreview()) }} />
           ) : null
         )}
@@ -2598,7 +2568,6 @@ export default function NoteCard({
             try {
               const v = String(next || '');
               setBg(v);
-              setTextColor(v ? contrastColorForBackground(v) : 'var(--muted)');
               notifyColor(v);
             } catch {}
           }}
@@ -2622,19 +2591,18 @@ export default function NoteCard({
       )}
       {showTextEditor && (
         <RichTextEditor
-          note={{ ...note, images }}
+          note={{ ...note, images, body: textBody }}
           noteBg={bg}
           onCollaboratorsChanged={(next) => { try { setCollaborators(next as any); } catch {} }}
           onColorChanged={(next: string) => {
             try {
               const v = String(next || '');
               setBg(v);
-              setTextColor(v ? contrastColorForBackground(v) : 'var(--muted)');
               notifyColor(v);
             } catch {}
           }}
           onClose={() => setShowTextEditor(false)}
-          onSaved={({ title, body }) => { setTitle(title); note.body = body; }}
+          onSaved={({ title, body }) => { setTitle(title); setTextBody(String(body || '')); }}
           onImagesUpdated={(imgs) => { setImagesWithNotify(() => imgs); }}
           moreMenu={{
             onDelete: onDeleteNote,

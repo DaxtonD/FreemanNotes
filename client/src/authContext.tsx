@@ -115,8 +115,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         if (typeof (user as any).cardChecklistTextSize === 'number') {
           document.documentElement.style.setProperty('--card-checklist-text-size', String((user as any).cardChecklistTextSize) + 'px');
           localStorage.setItem('prefs.cardChecklistTextSize', String((user as any).cardChecklistTextSize));
-          document.documentElement.style.setProperty('--checklist-text-size', String((user as any).cardChecklistTextSize) + 'px');
-          localStorage.setItem('prefs.checklistTextSize', String((user as any).cardChecklistTextSize));
         }
         if (typeof (user as any).cardNoteLineSpacing === 'number') {
           document.documentElement.style.setProperty('--card-note-line-height', String((user as any).cardNoteLineSpacing));
@@ -136,6 +134,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         if (typeof (user as any).editorChecklistTextSize === 'number') {
           document.documentElement.style.setProperty('--editor-checklist-text-size', String((user as any).editorChecklistTextSize) + 'px');
           localStorage.setItem('prefs.editorChecklistTextSize', String((user as any).editorChecklistTextSize));
+          // Keep legacy global key aligned with editor sizing so editor surfaces stay independent from card-only sizing.
+          document.documentElement.style.setProperty('--checklist-text-size', String((user as any).editorChecklistTextSize) + 'px');
+          localStorage.setItem('prefs.checklistTextSize', String((user as any).editorChecklistTextSize));
         }
         if (typeof (user as any).editorNoteLineSpacing === 'number') {
           document.documentElement.style.setProperty('--editor-note-line-height', String((user as any).editorNoteLineSpacing));

@@ -230,8 +230,7 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
   const [title, setTitle] = useState<string>(note.title || '');
   const lastSavedTitleRef = useRef<string>(note.title || '');
   const titleSaveTimerRef = useRef<number | null>(null);
-  // prefer explicit `noteBg` passed from the parent (NoteCard); fallback to viewer-specific color
-  const [bg, setBg] = useState<string>(noteBg ?? ((note as any).viewerColor || note.color || ''));
+  // Keep editor dialog on current app theme colors.
   const [showPalette, setShowPalette] = useState(false);
   const [showReminderPicker, setShowReminderPicker] = useState(false);
   const [showCollaborator, setShowCollaborator] = useState(false);
@@ -439,7 +438,12 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
 
   function getCurrentChecklistEditor(): any | null {
     let ed = activeChecklistEditor.current as any;
-    if (ed && (ed as any).isFocused) return ed;
+    if (ed) {
+      try {
+        const stillMounted = itemEditorRefs.current.includes(ed);
+        if (stillMounted) return ed;
+      } catch {}
+    }
     const selNode = typeof document !== 'undefined' ? (document.getSelection()?.anchorNode || null) : null;
     if (selNode) {
       const bySel = itemEditorRefs.current.find((x) => {
@@ -644,6 +648,31 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
       to = $from.end(depth);
     } catch (e) {}
 
+    // Empty line: toggle stored mark so new typing keeps the selected style.
+    let hasTextInBlock = false;
+    try {
+      ed.state.doc.nodesBetween(from, to, (node: any) => {
+        if (node?.isText && String(node.text || '').length > 0) hasTextInBlock = true;
+      });
+    } catch (e) {}
+    if (!hasTextInBlock) {
+      const chain: any = ed.chain().focus();
+      const active = !!ed.isActive?.(mark);
+      if (mark === 'bold') {
+        if (active) chain.unsetBold();
+        else chain.setBold();
+      } else if (mark === 'italic') {
+        if (active) chain.unsetItalic();
+        else chain.setItalic();
+      } else {
+        if (active) chain.unsetUnderline();
+        else chain.setUnderline();
+      }
+      chain.run();
+      try { setToolbarTick(t => t + 1); } catch (e) {}
+      return;
+    }
+
     const chain = ed.chain().focus().setTextSelection({ from, to });
     if (mark === 'bold') chain.toggleBold();
     else if (mark === 'italic') chain.toggleItalic();
@@ -681,7 +710,10 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
         }
       });
     } catch {}
-    return hasText && allMarked;
+    if (!hasText) {
+      try { return !!ed.isActive?.(mark); } catch { return false; }
+    }
+    return allMarked;
   }
 
   // Yjs collaboration state for checklist items
@@ -2021,50 +2053,8 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
       onClose();
     } catch (err) { console.error('Failed to save checklist', err); window.alert('Failed to save checklist'); } finally { setSaving(false); }
   }
-  // compute inline styles for the dialog to reflect note color (so editor shows same background)
-  function contrastColor(hex?: string | null) {
-    if (!hex) return undefined;
-    const h = hex.replace('#', '');
-    const full = h.length === 3 ? h.split('').map(ch => ch + ch).join('') : h;
-    if (full.length !== 6) return undefined;
-    const r = parseInt(full.slice(0, 2), 16) / 255;
-    const g = parseInt(full.slice(2, 4), 16) / 255;
-    const b = parseInt(full.slice(4, 6), 16) / 255;
-    const srgbToLin = (c: number) => (c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4));
-    const R = srgbToLin(r), G = srgbToLin(g), B = srgbToLin(b);
-    const L = 0.2126 * R + 0.7152 * G + 0.0722 * B;
-    const contrastWithWhite = (1 + 0.05) / (L + 0.05);
-    const contrastWithBlack = (L + 0.05) / (0 + 0.05);
-    return contrastWithWhite >= contrastWithBlack ? '#ffffff' : '#000000';
-  }
-
   const dialogStyle: React.CSSProperties = {} as any;
-  const text = bg ? (contrastColor(bg) || 'var(--muted)') : undefined;
-  // Expose checkbox CSS variables on the dialog only when the note provides a color.
-  // If no note color is present, leave the app-level vars intact so user prefs apply.
-  // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-  // @ts-ignore
-  if (bg) dialogStyle['--checkbox-bg'] = bg;
-  // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-  // @ts-ignore
-  if (text) dialogStyle['--checkbox-border'] = text;
-  // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-  // @ts-ignore
-  if (text) dialogStyle['--checkbox-stroke'] = text;
-  // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-  // @ts-ignore
-  if (bg) dialogStyle['--checkbox-checked-bg'] = bg;
-  // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-  // @ts-ignore
-  if (text) dialogStyle['--checkbox-checked-mark'] = text;
-  if (bg) {
-    dialogStyle.background = bg;
-    if (text) dialogStyle.color = text;
-    // Used by sticky title/toolbar backgrounds.
-    // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-    // @ts-ignore
-    dialogStyle['--editor-surface'] = bg;
-  }
+  const text: string | undefined = undefined;
 
   async function onPickColor(color: string) {
     const next = color || '';
@@ -2077,7 +2067,6 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
       console.error('Failed to save color preference');
       window.alert('Failed to save color preference');
     }
-    setBg(next);
     try { (onColorChanged as any)?.(next); } catch {}
   }
 

@@ -2180,8 +2180,6 @@ export default function NotesGrid({
                 if (typeof (payload as any).cardChecklistTextSize === 'number') {
                   document.documentElement.style.setProperty('--card-checklist-text-size', `${Number((payload as any).cardChecklistTextSize)}px`);
                   try { localStorage.setItem('prefs.cardChecklistTextSize', String(Number((payload as any).cardChecklistTextSize))); } catch {}
-                  document.documentElement.style.setProperty('--checklist-text-size', `${Number((payload as any).cardChecklistTextSize)}px`);
-                  try { localStorage.setItem('prefs.checklistTextSize', String(Number((payload as any).cardChecklistTextSize))); } catch {}
                 }
                 if (typeof (payload as any).cardNoteLineSpacing === 'number') {
                   document.documentElement.style.setProperty('--card-note-line-height', String(Number((payload as any).cardNoteLineSpacing)));
@@ -2201,6 +2199,8 @@ export default function NotesGrid({
                 if (typeof (payload as any).editorChecklistTextSize === 'number') {
                   document.documentElement.style.setProperty('--editor-checklist-text-size', `${Number((payload as any).editorChecklistTextSize)}px`);
                   try { localStorage.setItem('prefs.editorChecklistTextSize', String(Number((payload as any).editorChecklistTextSize))); } catch {}
+                  document.documentElement.style.setProperty('--checklist-text-size', `${Number((payload as any).editorChecklistTextSize)}px`);
+                  try { localStorage.setItem('prefs.checklistTextSize', String(Number((payload as any).editorChecklistTextSize))); } catch {}
                 }
                 if (typeof (payload as any).editorNoteLineSpacing === 'number') {
                   document.documentElement.style.setProperty('--editor-note-line-height', String(Number((payload as any).editorNoteLineSpacing)));
