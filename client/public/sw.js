@@ -1,5 +1,5 @@
-const SHELL_CACHE = 'freemannotes-shell-v1';
-const RUNTIME_CACHE = 'freemannotes-runtime-v1';
+const SHELL_CACHE = 'freemannotes-shell-v2';
+const RUNTIME_CACHE = 'freemannotes-runtime-v2';
 const PRECACHE_URLS = [
   '/',
   '/index.html',
@@ -65,6 +65,14 @@ self.addEventListener('fetch', (event) => {
 
   const url = new URL(req.url);
   const sameOrigin = isSameOrigin(req.url);
+
+  // Never cache Vite/dev module graph requests.
+  // Mixed stale module cache can produce runtime React/hook mismatches.
+  if (sameOrigin) {
+    const p = url.pathname || '';
+    const isViteDevPath = p.startsWith('/@vite/') || p.startsWith('/src/') || p.includes('/.vite/') || p.startsWith('/node_modules/');
+    if (isViteDevPath) return;
+  }
 
   // Keep API/network requests live (no SW cache for API responses).
   if (sameOrigin && url.pathname.startsWith('/api/')) return;

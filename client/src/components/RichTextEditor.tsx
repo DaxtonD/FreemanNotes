@@ -152,6 +152,17 @@ export default function RichTextEditor({ note, onClose, onSaved, noteBg, onImage
   const [showCollaborator, setShowCollaborator] = React.useState(false);
   const [showImageDialog, setShowImageDialog] = React.useState(false);
   const [images, setImages] = React.useState<Array<{ id:number; url:string }>>(((note as any).images || []).map((i:any)=>({ id:Number(i.id), url:String(i.url) })));
+  const setImagesWithNotify = React.useCallback((updater: (prev: Array<{ id:number; url:string }>) => Array<{ id:number; url:string }>) => {
+    setImages((prev) => {
+      const next = updater(prev);
+      try {
+        window.setTimeout(() => {
+          try { onImagesUpdated && onImagesUpdated(next); } catch {}
+        }, 0);
+      } catch {}
+      return next;
+    });
+  }, [onImagesUpdated]);
   const editorThumbRequestSize = React.useMemo(() => {
     try {
       const root = document.documentElement;
@@ -165,10 +176,13 @@ export default function RichTextEditor({ note, onClose, onSaved, noteBg, onImage
     }
   }, []);
   const getEditorImageThumbSrc = React.useCallback((img: { id: number; url: string }) => {
+    const noteIdNum = Number((note as any)?.id);
     const id = Number((img as any)?.id);
+    if (!Number.isFinite(noteIdNum) || noteIdNum <= 0) return String((img as any)?.url || '');
     if (!Number.isFinite(id) || id <= 0) return String((img as any)?.url || '');
-    return `/api/notes/${Number(note.id)}/images/${id}/thumb?w=${editorThumbRequestSize}&q=74`;
-  }, [note.id, editorThumbRequestSize]);
+    if (!token) return String((img as any)?.url || '');
+    return `/api/notes/${noteIdNum}/images/${id}/thumb?w=${editorThumbRequestSize}&q=74&token=${encodeURIComponent(String(token))}`;
+  }, [note.id, editorThumbRequestSize, token]);
   const defaultImagesOpen = (() => {
     try {
       const stored = localStorage.getItem('prefs.editorImagesExpandedByDefault');
@@ -397,7 +411,7 @@ export default function RichTextEditor({ note, onClose, onSaved, noteBg, onImage
       const data = await res.json();
       const next = (((data && data.images) || []).map((i: any) => ({ id: Number(i.id), url: String(i.url) })));
       setImages(next);
-      onImagesUpdated && onImagesUpdated(next);
+      try { onImagesUpdated && onImagesUpdated(next); } catch {}
     } catch {}
   }, [note.id, token, onImagesUpdated]);
 
@@ -727,10 +741,9 @@ export default function RichTextEditor({ note, onClose, onSaved, noteBg, onImage
     if (!url) return;
     const tempId = -Date.now();
     // Optimistically show immediately
-    setImages((s) => {
+    setImagesWithNotify((s) => {
       const exists = s.some((x) => String(x.url) === String(url));
       const next = exists ? s : [...s, { id: tempId, url: String(url) }];
-      onImagesUpdated && onImagesUpdated(next);
       return next;
     });
     try { setImagesOpen(true); } catch {}
@@ -757,14 +770,13 @@ export default function RichTextEditor({ note, onClose, onSaved, noteBg, onImage
         const data = await res.json();
         const img = data.image || null;
         if (img && img.id && img.url) {
-          setImages((s) => {
+          setImagesWithNotify((s) => {
             const serverId = Number(img.id);
             const serverUrl = String(img.url);
             // Replace the optimistic temp entry if present; otherwise merge by url/id.
             const replaced = s.map((x) => (Number(x.id) === tempId || String(x.url) === String(url)) ? ({ id: serverId, url: serverUrl }) : x);
             const hasServer = replaced.some((x) => Number(x.id) === serverId);
             const next = hasServer ? replaced : [...replaced, { id: serverId, url: serverUrl }];
-            onImagesUpdated && onImagesUpdated(next);
             return next;
           });
           broadcastImagesChanged();
@@ -1093,7 +1105,6 @@ export default function RichTextEditor({ note, onClose, onSaved, noteBg, onImage
                         alt="note image"
                         loading="lazy"
                         decoding="async"
-                        fetchPriority="low"
                         draggable={false}
                         onContextMenu={(e) => {
                           if (!isCoarsePointer) return;

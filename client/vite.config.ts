@@ -29,6 +29,13 @@ function collectAllowedHosts(): string[] {
 export default defineConfig({
   root: path.resolve(__dirname),
   plugins: [react()],
+  resolve: {
+    dedupe: ['react', 'react-dom'],
+    alias: {
+      react: path.resolve(__dirname, '..', 'node_modules', 'react'),
+      'react-dom': path.resolve(__dirname, '..', 'node_modules', 'react-dom'),
+    },
+  },
   define: {
     __APP_VERSION__: JSON.stringify(appVersion)
   },

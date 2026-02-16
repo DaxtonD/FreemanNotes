@@ -33,10 +33,13 @@ export default function NoteImagesModal({
     }
   }, []);
   const getModalImageThumbSrc = React.useCallback((img: { id: number; url: string }) => {
+    const noteIdNum = Number(noteId);
     const id = Number((img as any)?.id);
+    if (!Number.isFinite(noteIdNum) || noteIdNum <= 0) return String((img as any)?.url || '');
     if (!Number.isFinite(id) || id <= 0) return String((img as any)?.url || '');
-    return `/api/notes/${Number(noteId)}/images/${id}/thumb?w=${modalThumbRequestSize}&q=74`;
-  }, [noteId, modalThumbRequestSize]);
+    if (!token) return String((img as any)?.url || '');
+    return `/api/notes/${noteIdNum}/images/${id}/thumb?w=${modalThumbRequestSize}&q=74&token=${encodeURIComponent(String(token))}`;
+  }, [noteId, modalThumbRequestSize, token]);
   const onCloseRef = React.useRef(onClose);
   const onImagesChangedRef = React.useRef<typeof onImagesChanged>(onImagesChanged);
 
@@ -72,9 +75,14 @@ export default function NoteImagesModal({
   }, []);
 
   const refreshImages = React.useCallback(async () => {
+    const noteIdNum = Number(noteId);
+    if (!Number.isFinite(noteIdNum) || noteIdNum <= 0) {
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     try {
-      const res = await fetch(`/api/notes/${noteId}/images`, {
+      const res = await fetch(`/api/notes/${noteIdNum}/images`, {
         headers: { Authorization: token ? `Bearer ${token}` : '' },
       });
       if (!res.ok) return;
@@ -201,7 +209,6 @@ export default function NoteImagesModal({
                       alt="note image"
                       loading="lazy"
                       decoding="async"
-                      fetchPriority="low"
                       draggable={false}
                     />
                     <button

@@ -13,6 +13,16 @@ import sharp from 'sharp';
 
 const router = Router();
 
+const PG_INT4_MIN = -2147483648;
+const PG_INT4_MAX = 2147483647;
+
+function parsePositiveInt4Id(value: unknown): number | null {
+  const n = Number(value);
+  if (!Number.isInteger(n)) return null;
+  if (n < 1 || n > PG_INT4_MAX || n < PG_INT4_MIN) return null;
+  return n;
+}
+
 async function getParticipantIdsForNote(noteId: number, note?: { ownerId: number } | null): Promise<number[]> {
   try {
     const n = note || await prisma.note.findUnique({ where: { id: noteId }, select: { ownerId: true } });
@@ -438,8 +448,9 @@ router.post('/api/notes', async (req: Request, res: Response) => {
 router.post('/api/notes/:id/images', async (req: Request, res: Response) => {
   const user = await getUserFromToken(req);
   if (!user) return res.status(401).json({ error: 'unauthenticated' });
-  const id = Number(req.params.id);
+  const id = parsePositiveInt4Id(req.params.id);
   const { url } = req.body || {};
+  if (id == null) return res.status(400).json({ error: 'invalid id' });
   if (!url || typeof url !== 'string') return res.status(400).json({ error: 'image url required' });
   try {
     const note = await prisma.note.findUnique({ where: { id } });
@@ -474,9 +485,9 @@ router.post('/api/notes/:id/images', async (req: Request, res: Response) => {
 router.post('/api/notes/:id/images/:imageId/ocr', async (req: Request, res: Response) => {
   const user = await getUserFromToken(req);
   if (!user) return res.status(401).json({ error: 'unauthenticated' });
-  const id = Number(req.params.id);
-  const imageId = Number(req.params.imageId);
-  if (!Number.isInteger(id) || !Number.isInteger(imageId)) return res.status(400).json({ error: 'invalid id' });
+  const id = parsePositiveInt4Id(req.params.id);
+  const imageId = parsePositiveInt4Id(req.params.imageId);
+  if (id == null || imageId == null) return res.status(400).json({ error: 'invalid id' });
   try {
     const note = await prisma.note.findUnique({ where: { id } });
     if (!note) return res.status(404).json({ error: 'not found' });
@@ -500,8 +511,8 @@ router.post('/api/notes/:id/images/:imageId/ocr', async (req: Request, res: Resp
 router.get('/api/notes/:id/images', async (req: Request, res: Response) => {
   const user = await getUserFromToken(req);
   if (!user) return res.status(401).json({ error: 'unauthenticated' });
-  const id = Number(req.params.id);
-  if (!Number.isInteger(id)) return res.status(400).json({ error: 'invalid id' });
+  const id = parsePositiveInt4Id(req.params.id);
+  if (id == null) return res.status(400).json({ error: 'invalid id' });
   try {
     const note = await prisma.note.findUnique({ where: { id } });
     if (!note) return res.status(404).json({ error: 'not found' });
@@ -540,9 +551,9 @@ router.get('/api/notes/:id/images/:imageId/thumb', async (req: Request, res: Res
   const user = await getUserFromToken(req);
   if (!user) return res.status(401).json({ error: 'unauthenticated' });
 
-  const id = Number(req.params.id);
-  const imageId = Number(req.params.imageId);
-  if (!Number.isInteger(id) || !Number.isInteger(imageId)) return res.status(400).json({ error: 'invalid id' });
+  const id = parsePositiveInt4Id(req.params.id);
+  const imageId = parsePositiveInt4Id(req.params.imageId);
+  if (id == null || imageId == null) return res.status(400).json({ error: 'invalid id' });
 
   const rawW = Number(req.query.w);
   const rawQ = Number(req.query.q);
@@ -833,9 +844,9 @@ router.delete('/api/notes/:id/link-preview', async (req: Request, res: Response)
 router.delete('/api/notes/:id/images/:imageId', async (req: Request, res: Response) => {
   const user = await getUserFromToken(req);
   if (!user) return res.status(401).json({ error: 'unauthenticated' });
-  const id = Number(req.params.id);
-  const imageId = Number(req.params.imageId);
-  if (!Number.isInteger(id) || !Number.isInteger(imageId)) return res.status(400).json({ error: 'invalid ids' });
+  const id = parsePositiveInt4Id(req.params.id);
+  const imageId = parsePositiveInt4Id(req.params.imageId);
+  if (id == null || imageId == null) return res.status(400).json({ error: 'invalid ids' });
   try {
     const note = await prisma.note.findUnique({ where: { id } });
     if (!note) return res.status(404).json({ error: 'not found' });
