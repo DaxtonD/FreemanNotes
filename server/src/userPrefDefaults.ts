@@ -6,11 +6,13 @@ const BUILTIN_USER_DEFAULTS: PrefMap = {
   fontFamily: 'Calibri, system-ui, Arial, sans-serif',
   dragBehavior: 'swap',
   animationSpeed: 'normal',
+  chipDisplayMode: 'image+text',
   checklistSpacing: 15,
   checkboxSize: 20,
   checklistTextSize: 17,
   noteWidth: 288,
   noteLineSpacing: 1.38,
+  disableNoteCardLinks: false,
 };
 
 const BUILTIN_DEVICE_DEFAULTS: PrefMap = {
@@ -21,46 +23,92 @@ const BUILTIN_DEVICE_DEFAULTS: PrefMap = {
   editorImageThumbSize: 115,
   editorImagesExpandedByDefault: false,
   disableNoteCardLinks: false,
+  chipDisplayMode: 'image+text',
 };
 
 // Hard-coded registration-time device defaults.
 // Edit these values directly to control first-time defaults by device class.
 const HARD_CODED_DEVICE_BUCKET_DEFAULTS: Record<'mobile' | 'tablet' | 'desktop', PrefMap> = {
   mobile: {
-    cardChecklistSpacing: 16,
-    cardCheckboxSize: 21,
-    cardChecklistTextSize: 18,
-    cardNoteLineSpacing: 1.42,
-    editorChecklistSpacing: 16,
-    editorCheckboxSize: 21,
-    editorChecklistTextSize: 18,
-    editorNoteLineSpacing: 1.42,
-    imageThumbSize: 92,
-    editorImageThumbSize: 106,
-  },
-  tablet: {
+    // Note Card Preferences
+    cardTitleSize: 20,
+    cardNoteLineSpacing: 1.38,
     cardChecklistSpacing: 15,
     cardCheckboxSize: 20,
     cardChecklistTextSize: 17,
-    cardNoteLineSpacing: 1.4,
-    editorChecklistSpacing: 15,
-    editorCheckboxSize: 20,
-    editorChecklistTextSize: 17,
-    editorNoteLineSpacing: 1.4,
+    // Note Editor Preferences
+    editorNoteLineSpacing: 1.38,
+    editorChecklistSpacing: 8,
+    editorCheckboxSize: 18,
+    editorChecklistTextSize: 14,
+    // Shared device fallback prefs
+    noteLineSpacing: 1.38,
+    checklistSpacing: 15,
+    checkboxSize: 20,
+    checklistTextSize: 17,
+    // Layout
+    noteWidth: 288,
     imageThumbSize: 96,
-    editorImageThumbSize: 112,
+    editorImageThumbSize: 115,
+    // Other device-scoped prefs
+    editorImagesExpandedByDefault: false,
+    disableNoteCardLinks: false,
+    chipDisplayMode: 'image+text',
+    fontFamily: 'Calibri, system-ui, Arial, sans-serif',
+  },
+  tablet: {
+    // Note Card Preferences
+    cardTitleSize: 20,
+    cardNoteLineSpacing: 1.38,
+    cardChecklistSpacing: 15,
+    cardCheckboxSize: 20,
+    cardChecklistTextSize: 17,
+    // Note Editor Preferences
+    editorNoteLineSpacing: 1.38,
+    editorChecklistSpacing: 8,
+    editorCheckboxSize: 18,
+    editorChecklistTextSize: 14,
+    // Shared device fallback prefs
+    noteLineSpacing: 1.38,
+    checklistSpacing: 15,
+    checkboxSize: 20,
+    checklistTextSize: 17,
+    // Layout
+    noteWidth: 288,
+    imageThumbSize: 96,
+    editorImageThumbSize: 115,
+    // Other device-scoped prefs
+    editorImagesExpandedByDefault: false,
+    disableNoteCardLinks: false,
+    chipDisplayMode: 'image+text',
+    fontFamily: 'Calibri, system-ui, Arial, sans-serif',
   },
   desktop: {
-    cardChecklistSpacing: 14,
-    cardCheckboxSize: 18,
-    cardChecklistTextSize: 16,
-    cardNoteLineSpacing: 1.36,
-    editorChecklistSpacing: 14,
+    // Note Card Preferences
+    cardTitleSize: 20,
+    cardNoteLineSpacing: 1.38,
+    cardChecklistSpacing: 15,
+    cardCheckboxSize: 20,
+    cardChecklistTextSize: 17,
+    // Note Editor Preferences
+    editorNoteLineSpacing: 1.38,
+    editorChecklistSpacing: 8,
     editorCheckboxSize: 18,
-    editorChecklistTextSize: 16,
-    editorNoteLineSpacing: 1.36,
-    imageThumbSize: 100,
-    editorImageThumbSize: 120,
+    editorChecklistTextSize: 14,
+    // Shared device fallback prefs
+    noteLineSpacing: 1.38,
+    checklistSpacing: 15,
+    checkboxSize: 20,
+    checklistTextSize: 17,
+    // Layout
+    noteWidth: 288,
+    imageThumbSize: 96,
+    editorImageThumbSize: 115,
+    // Other device-scoped prefs
+    editorImagesExpandedByDefault: false,
+    disableNoteCardLinks: false,
+    chipDisplayMode: 'image+text',
+    fontFamily: 'Calibri, system-ui, Arial, sans-serif',
   },
 };
 

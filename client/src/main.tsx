@@ -76,6 +76,27 @@ document.addEventListener('visibilitychange', () => {
 	if (!document.hidden) applyStandaloneFlag();
 });
 
+function applyBrowserEngineFlag() {
+	try {
+		const ua = String(navigator.userAgent || '').toLowerCase();
+		const isFirefox = ua.includes('firefox') || ua.includes('fxios');
+		const isChromium = !isFirefox && (ua.includes('chrome') || ua.includes('crios') || ua.includes('chromium') || ua.includes('edg/') || ua.includes('opr/'));
+		const coarse = !!window.matchMedia?.('(pointer: coarse)')?.matches;
+		const mobileUa = /android|iphone|ipad|ipod|mobile/.test(ua);
+		const mobileLike = coarse || mobileUa;
+
+		const root = document.documentElement;
+		if (isChromium) root.setAttribute('data-browser-engine', 'chromium');
+		else if (isFirefox) root.setAttribute('data-browser-engine', 'firefox');
+		else root.setAttribute('data-browser-engine', 'other');
+		root.setAttribute('data-mobile-browser', mobileLike ? 'true' : 'false');
+	} catch {}
+}
+
+applyBrowserEngineFlag();
+window.addEventListener('pageshow', applyBrowserEngineFlag);
+window.addEventListener('resize', applyBrowserEngineFlag);
+
 // Service worker: Safari/iOS-hardened registration path.
 try {
 	if ('serviceWorker' in navigator && window.isSecureContext) {

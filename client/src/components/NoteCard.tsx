@@ -50,6 +50,60 @@ type Note = {
   cardSpan?: number;
 };
 
+function formatReminderDueIdentifier(dueMs: number): string {
+  if (!Number.isFinite(dueMs) || dueMs <= 0) return 'Due soon';
+  const now = Date.now();
+  const diff = dueMs - now;
+  const dueDate = new Date(dueMs);
+  const time = dueDate.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+
+  const startOfToday = new Date();
+  startOfToday.setHours(0, 0, 0, 0);
+  const startOfTomorrow = new Date(startOfToday.getTime() + 24 * 60 * 60 * 1000);
+  const startOfDayAfterTomorrow = new Date(startOfTomorrow.getTime() + 24 * 60 * 60 * 1000);
+
+  if (diff < 0) {
+    const overdueMs = Math.abs(diff);
+    const mins = Math.max(1, Math.round(overdueMs / 60000));
+    if (mins < 60) return `Overdue ${mins}m`;
+    const hours = Math.max(1, Math.round(mins / 60));
+    if (hours < 24) return `Overdue ${hours}h`;
+    const days = Math.max(1, Math.round(hours / 24));
+    return `Overdue ${days}d`;
+  }
+
+  if (dueDate >= startOfToday && dueDate < startOfTomorrow) return `Due today ${time}`;
+  if (dueDate >= startOfTomorrow && dueDate < startOfDayAfterTomorrow) return `Due tomorrow ${time}`;
+
+  const withinWeek = dueMs - now <= (7 * 24 * 60 * 60 * 1000);
+  if (withinWeek) {
+    const weekday = dueDate.toLocaleDateString([], { weekday: 'short' });
+    return `Due ${weekday} ${time}`;
+  }
+
+  const date = dueDate.toLocaleDateString([], { month: 'short', day: 'numeric' });
+  return `Due ${date} ${time}`;
+}
+
+function reminderDueColorClass(dueMs: number): string {
+  if (!Number.isFinite(dueMs) || dueMs <= 0) return '';
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const due = new Date(dueMs);
+  due.setHours(0, 0, 0, 0);
+  const dayMs = 24 * 60 * 60 * 1000;
+  const dayDiff = Math.floor((due.getTime() - today.getTime()) / dayMs);
+
+  // Overdue, due today, or due tomorrow => red.
+  if (dayDiff <= 1) return 'note-reminder-due--red';
+  // 3 days through 1 week => orange.
+  if (dayDiff >= 3 && dayDiff <= 7) return 'note-reminder-due--orange';
+  // 1-2 weeks => yellow.
+  if (dayDiff >= 8 && dayDiff <= 14) return 'note-reminder-due--yellow';
+  return '';
+}
+
 /** choose '#000' or '#fff' based on best WCAG contrast vs provided hex color */
 function contrastColorForBackground(hex?: string | null): string | undefined {
   if (!hex) return undefined;
@@ -76,6 +130,7 @@ export default function NoteCard({
   onChange,
   openRequest,
   onOpenRequestHandled,
+  showDueIdentifier = true,
   dragHandleAttributes,
   dragHandleListeners,
 }: {
@@ -83,6 +138,7 @@ export default function NoteCard({
   onChange?: (ev?: any) => void;
   openRequest?: number;
   onOpenRequestHandled?: (noteId: number) => void;
+  showDueIdentifier?: boolean;
   dragHandleAttributes?: Record<string, any>;
   dragHandleListeners?: Record<string, any>;
 }) {
@@ -1577,11 +1633,11 @@ export default function NoteCard({
         const showBell = !!due;
         const showPin = !!pinned;
         if (!showBell && !showPin) return null;
+        const dueMs = showBell ? Date.parse(String(due)) : NaN;
 
         const bellTitle = (() => {
           if (!showBell) return '';
-          const ms = Date.parse(String(due));
-          const d = Number.isFinite(ms) ? new Date(ms) : null;
+          const d = Number.isFinite(dueMs) ? new Date(dueMs) : null;
           return d ? `Reminder: ${d.toLocaleString()}` : 'Reminder set';
         })();
 
@@ -1647,6 +1703,20 @@ export default function NoteCard({
         </span>
         <span className="note-title-text">{!String(title || '').trim() ? 'Add a title....' : title}</span>
       </div>
+
+      {(() => {
+        const due = (note as any)?.reminderDueAt;
+        if (!showDueIdentifier || !due) return null;
+        const dueMs = Date.parse(String(due));
+        if (!Number.isFinite(dueMs)) return null;
+        const fullTitle = `Reminder: ${new Date(dueMs).toLocaleString()}`;
+        const urgencyClass = reminderDueColorClass(dueMs);
+        return (
+          <div className={`note-reminder-due note-reminder-due--inline${urgencyClass ? ` ${urgencyClass}` : ''}`} title={fullTitle}>
+            {formatReminderDueIdentifier(dueMs)}
+          </div>
+        );
+      })()}
 
       {(() => {
         const imageCount = (() => {

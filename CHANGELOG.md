@@ -15,6 +15,24 @@ Adheres to Semantic Versioning (MAJOR.MINOR.PATCH).
 ### Fixed
 - 
 
+## [0.7.3] - 2026-02-15
+
+### Added
+- Due-date indicator pill on note cards for reminders, now shown across all card views with relative labels (for example: Due today / Due tomorrow / Overdue).
+- Urgency color coding for reminder indicators: red (today/tomorrow/overdue), orange (3–7 days), yellow (1–2 weeks).
+- Firefox-friendly Preferences support for PWA install: “Install app” is now shown with manual install guidance when native install prompt APIs are unavailable.
+
+### Changed
+- Header/profile avatars and registration/appearance photo previews now use rounded-square corners for consistent icon language.
+- Header avatar sizing was normalized to 34×34 to match adjacent header icon controls.
+- Mobile/tablet/PWA Images view spacing increased between active filter chips and gallery content for improved touch readability.
+- Mobile FAB theme tokenization now keeps the same FAB color in both dark and light themes.
+- Mobile/PWA typography normalization pass to reduce Chrome/Firefox rendering drift (root scaling/adjustment and inherited control typography).
+
+### Fixed
+- Due indicator placement no longer collides with note titles; indicator is rendered in a readable inline position below the title strip.
+- Smart filter wiring in sidebar/notes grid updated so “Due soon”, “Least accessed”, and “Most edited” behaviors are fully active and clearable.
+
 ## [0.7.2] - 2026-02-15
 
 ### Added

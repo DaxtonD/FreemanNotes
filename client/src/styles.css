@@ -31,6 +31,7 @@
   --checkbox-border-default: #ffffff;
   --checkbox-border: var(--checkbox-border-default);
   --accent:#ffcc00;
+  --mobile-fab-bg: #ffcc00;
   /* Hyperlinks (user preference can override via CSS vars) */
   --link-color-dark: #8ab4f8;
   --link-color-light: #0b57d0;
@@ -49,7 +50,19 @@
   /* Multi-line clamp for plain-text preview (TEXT notes). */
   --note-text-preview-lines: 14;
   --app-font-family: Inter, system-ui, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  /* Browser tuning hooks (set by main.tsx). */
+  --browser-font-scale: 1;
+  --browser-line-height-scale: 1;
+  --checklist-text-size-effective: calc(var(--checklist-text-size) * var(--browser-font-scale));
+  --card-title-size-effective: calc(var(--card-title-size) * var(--browser-font-scale));
+  --note-line-height-effective: calc(var(--note-line-height, 1.38) * var(--browser-line-height-scale));
   --header-height: 64px;
+}
+
+:root[data-browser-engine="chromium"][data-mobile-browser="true"]{
+  /* Chrome mobile/PWA tends to render slightly larger than Firefox on same prefs. */
+  --browser-font-scale: 0.94;
+  --browser-line-height-scale: 0.96;
 }
 
 @media (pointer: coarse) {
@@ -81,8 +94,23 @@
 *{box-sizing:border-box}
 html,body,#root{height:100%;margin:0;font-family:var(--app-font-family)}
 html{
+  /* Cross-browser baseline to reduce mobile/PWA text metric drift. */
+  font-size: 16px;
+  line-height: 1.4;
+  -moz-text-size-adjust: 100%;
   -webkit-text-size-adjust: 100%;
   text-size-adjust: 100%;
+}
+body{
+  font-size: 1rem;
+  line-height: 1.4;
+}
+button,
+input,
+select,
+textarea{
+  font: inherit;
+  letter-spacing: inherit;
 }
 
 /* Shared orange accent used in preferences controls and title focus ring */
@@ -143,7 +171,7 @@ body{
 .search::placeholder{ color: var(--muted); }
 :root[data-theme="light"] .search{ background:#ffffff; border:1px solid rgba(0,0,0,0.1); color:#000 }
 .icon-btn{background:transparent;border:none;color:var(--muted);font-size:18px;margin-left:8px}
-.avatar{width:33px;height:33px;border-radius:50%;background:linear-gradient(90deg,#2ea7ff,#9b59ff);display:flex;align-items:center;justify-content:center}
+.avatar{width:34px;height:34px;border-radius:50%;background:linear-gradient(90deg,#2ea7ff,#9b59ff);display:flex;align-items:center;justify-content:center}
 .header-right{display:flex;align-items:center;gap:10px}
 .view-toggle-btn,
 .menu-btn{
@@ -513,7 +541,7 @@ body{
   height: 56px;
   border-radius: 999px;
   border: none;
-  background: var(--accent);
+  background: var(--mobile-fab-bg);
   color: #000;
   display: inline-flex;
   align-items: center;
@@ -1190,7 +1218,7 @@ html.is-preferences-open .mobile-add-note{
   box-shadow: inset 0 0 0 2px var(--prefs-accent);
 }
 .rt-item { min-height: 22px; padding: 4px 6px; border-radius: 4px; background: transparent; color: inherit; }
-.rt-item p { margin: 0; font-size: var(--checklist-text-size); }
+.rt-item p { margin: 0; font-size: var(--checklist-text-size-effective); }
 
 /* Checklist rows: keep handle/checkbox/text aligned.
    We keep rows `flex-start` so wrapped text stays top-left aligned, but remove
@@ -1219,9 +1247,9 @@ html.is-preferences-open .mobile-add-note{
   margin-top: 1px;
 }
 .rt-editor h1, .rt-editor h2, .rt-editor h3 { margin: 8px 0; font-weight: 700; line-height: 1.22; }
-.rt-editor p { margin: 6px 0; font-size: var(--checklist-text-size); line-height: var(--note-line-height, 1.38); }
+.rt-editor p { margin: 6px 0; font-size: var(--checklist-text-size-effective); line-height: var(--note-line-height-effective); }
 .rt-editor ul, .rt-editor ol { margin: 8px 0 8px 20px; }
-.note-html { font-size: var(--checklist-text-size); line-height: var(--note-line-height, 1.38); }
+.note-html { font-size: var(--checklist-text-size-effective); line-height: var(--note-line-height-effective); }
 .note-html h1, .note-html h2, .note-html h3 { margin: 8px 0; font-weight: 700; }
 .note-html p { margin: 6px 0; }
 .note-html ul, .note-html ol { margin: 8px 0 8px 20px; }
@@ -1321,7 +1349,7 @@ html.is-preferences-open .mobile-add-note{
    visually align with the first text line across engines. */
 .image-dialog.checklist-editor .checklist-item,
 .take-note-expanded .checklist-item{
-  --checklist-first-line-center-offset: calc((var(--checklist-text-size) * var(--note-line-height, 1.38) - var(--checklist-checkbox-size)) / 2);
+  --checklist-first-line-center-offset: calc((var(--checklist-text-size-effective) * var(--note-line-height-effective) - var(--checklist-checkbox-size)) / 2);
 }
 .image-dialog.checklist-editor .checklist-item .drag-gutter,
 .take-note-expanded .checklist-item .drag-gutter{
@@ -1375,7 +1403,7 @@ html.is-preferences-open .mobile-add-note{
   /* Center handle + checkbox to the first checklist text line (not the full multi-line block). */
   .image-dialog.checklist-editor .checklist-item,
   .take-note-expanded .checklist-item{
-    --checklist-first-line-center-offset: calc((var(--checklist-text-size) * var(--note-line-height, 1.38) - var(--checklist-checkbox-size)) / 2);
+    --checklist-first-line-center-offset: calc((var(--checklist-text-size-effective) * var(--note-line-height-effective) - var(--checklist-checkbox-size)) / 2);
   }
   .image-dialog.checklist-editor .checklist-item .drag-gutter,
   .take-note-expanded .checklist-item .drag-gutter{
@@ -1396,12 +1424,12 @@ html.is-preferences-open .mobile-add-note{
 .image-dialog.checklist-editor .checklist-item.completed .rt-html li,
 .image-dialog.checklist-editor .checklist-item.completed .rt-html ul,
 .image-dialog.checklist-editor .checklist-item.completed .rt-html ol {
-  font-size: var(--checklist-text-size);
-  line-height: var(--note-line-height, 1.38);
+  font-size: var(--checklist-text-size-effective);
+  line-height: var(--note-line-height-effective);
   font-weight: 400;
 }
 .checklist-item .drag-gutter, .checklist-item .drag-handle{ touch-action:none; }
-.take-note-input{ padding:4px 6px; border-radius:4px; font-size: var(--checklist-text-size); resize: none; width:100%; min-height:22px; background: transparent; border: none; color: inherit; outline: none; font-family: inherit; }
+.take-note-input{ padding:4px 6px; border-radius:4px; font-size: var(--checklist-text-size-effective); resize: none; width:100%; min-height:22px; background: transparent; border: none; color: inherit; outline: none; font-family: inherit; }
 .take-note-input{ overflow: hidden; }
 .take-note-input::placeholder{ color: var(--muted); }
 
@@ -1466,7 +1494,7 @@ html.is-preferences-open .mobile-add-note{
 /* subtle shift classes used during drag-over to animate neighbors */
 .checklist-item.shift-up { transform: translateY(calc(-1 * var(--checklist-item-shift))); }
 .checklist-item.shift-down { transform: translateY(var(--checklist-item-shift)); }
-.note-body .note-item { font-size: var(--checklist-text-size); }
+.note-body .note-item { font-size: var(--checklist-text-size-effective); }
 /* Ensure note preview items use the same spacing as the checklist editor */
 .note-item { margin-bottom: var(--checklist-gap); }
 /* Normalize paragraph spacing inside checklist item HTML so preferences control spacing */
@@ -1553,8 +1581,8 @@ html.is-preferences-open .mobile-add-note{
 .checklist-ghost .rt-html,
 .checklist-ghost .rt-item p,
 .checklist-ghost .rt-html p{
-  font-size: var(--checklist-text-size);
-  line-height: var(--note-line-height, 1.38);
+  font-size: var(--checklist-text-size-effective);
+  line-height: var(--note-line-height-effective);
 }
 
 /* Provide a fallback so neighbor-shift still animates even if JS can't measure height. */
@@ -1621,7 +1649,7 @@ html.is-preferences-open .mobile-add-note{
 .notes-grid > div { display: block; width: 100%; margin: 0; transition: transform 300ms cubic-bezier(.2,.9,.2,1); will-change: transform; }
 .note-title{
   font-weight: 750;
-  font-size: var(--card-title-size, 1.18em);
+  font-size: var(--card-title-size-effective, 1.18em);
   letter-spacing: 0.1px;
   color: inherit;
   overflow: hidden;
@@ -1672,8 +1700,8 @@ html.is-preferences-open .mobile-add-note{
 }
 .note-body{
   color:inherit;
-  font-size: var(--checklist-text-size);
-  line-height: var(--note-line-height, 1.38);
+  font-size: var(--checklist-text-size-effective);
+  line-height: var(--note-line-height-effective);
   /* Clamp content to card max-height and show "..." indicator via overlay */
   overflow: hidden;
   flex: 1 1 auto;
@@ -1744,7 +1772,7 @@ html.is-preferences-open .mobile-add-note{
 
 /* Checklist preview: allow wrapping up to 4 lines per item */
 .note-item-text{
-  font-size: var(--checklist-text-size);
+  font-size: var(--checklist-text-size-effective);
   overflow: hidden;
   min-width: 0;
   flex: 1 1 auto;
@@ -2399,6 +2427,16 @@ button.chip:focus{outline:2px solid rgba(255,255,255,0.18);outline-offset:2px;}
 }
 
 /* Sidebar Images view (full photo grid in Notes area) */
+.notes-section--images{
+  margin-top: 0;
+}
+
+@media (pointer: coarse), (any-pointer: coarse), (display-mode: standalone) {
+  .notes-section--images{
+    margin-top: 10px;
+  }
+}
+
 .images-gallery-empty{
   color: var(--muted);
   text-align: center;
@@ -3093,6 +3131,63 @@ button.chip:focus{outline:2px solid rgba(255,255,255,0.18);outline-offset:2px;}
   color: var(--muted);
   opacity: 0.85;
   pointer-events: none;
+}
+.note-reminder-due{
+  display: inline-flex;
+  align-items: center;
+  max-width: 170px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  font-size: 11px;
+  line-height: 1.2;
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  border: 1px solid rgba(255,255,255,0.16);
+  background: rgba(255,255,255,0.08);
+}
+.note-reminder-due--inline{
+  margin: -2px 0 8px;
+  max-width: calc(100% - 2px);
+  pointer-events: none;
+}
+:root[data-theme="light"] .note-reminder-due{
+  border-color: rgba(0,0,0,0.18);
+  background: rgba(0,0,0,0.06);
+}
+
+.note-reminder-due--red{
+  border-color: rgba(255, 108, 108, 0.55);
+  background: rgba(255, 82, 82, 0.22);
+  color: #ffd8d8;
+}
+:root[data-theme="light"] .note-reminder-due--red{
+  border-color: rgba(176, 0, 32, 0.40);
+  background: rgba(176, 0, 32, 0.12);
+  color: rgba(128, 0, 24, 0.98);
+}
+
+.note-reminder-due--orange{
+  border-color: rgba(255, 180, 96, 0.55);
+  background: rgba(255, 152, 64, 0.20);
+  color: #ffe3c6;
+}
+:root[data-theme="light"] .note-reminder-due--orange{
+  border-color: rgba(194, 105, 0, 0.42);
+  background: rgba(194, 105, 0, 0.12);
+  color: rgba(120, 64, 0, 0.98);
+}
+
+.note-reminder-due--yellow{
+  border-color: rgba(255, 226, 115, 0.55);
+  background: rgba(255, 214, 64, 0.18);
+  color: #fff1b8;
+}
+:root[data-theme="light"] .note-reminder-due--yellow{
+  border-color: rgba(146, 120, 0, 0.42);
+  background: rgba(146, 120, 0, 0.12);
+  color: rgba(94, 78, 0, 0.98);
 }
 .note-reminder-bell,
 .note-pin-icon{

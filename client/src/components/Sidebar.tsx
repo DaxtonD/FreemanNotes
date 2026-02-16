@@ -85,8 +85,6 @@ export default function Sidebar({
 
   const isSortKeyActive = (key: SortKey) => sortConfig.sortKey === key;
 
-  const disabledStyle: React.CSSProperties = { color: 'var(--muted)', opacity: 0.7, cursor: 'not-allowed' };
-
   const resetToDefault = () => {
     try {
       onSortConfigChange && onSortConfigChange(DEFAULT_SORT_CONFIG);
@@ -568,14 +566,16 @@ export default function Sidebar({
             </div>
             {filtersListOpen && (
               <div style={{ paddingLeft: 10 }}>
-                <div className="sidebar-item" style={disabledStyle} title="Coming soon"><span className="text">Due soon</span></div>
-                <div className="sidebar-item" style={disabledStyle} title="Coming soon"><span className="text">Least accessed</span></div>
-                <div className="sidebar-item" style={disabledStyle} title="Coming soon"><span className="text">Most edited</span></div>
-                <div className="sidebar-item" style={disabledStyle} title="Coming soon"><span className="text">“At risk”</span></div>
-                {/* preserve state channel for future filter behavior */}
-                <div style={{ display: 'none' }}>
-                  <button onClick={() => setSmartFilter('none')}>none</button>
+                <div className="sidebar-item" style={{ cursor: 'pointer', fontWeight: sortConfig.smartFilter === 'dueSoon' ? 700 : undefined }} onClick={() => setSmartFilter('dueSoon')} title="Reminders due soon">
+                  <span className="text">Due soon</span>
                 </div>
+                <div className="sidebar-item" style={{ cursor: 'pointer', fontWeight: sortConfig.smartFilter === 'leastAccessed' ? 700 : undefined }} onClick={() => setSmartFilter('leastAccessed')} title="Least accessed notes">
+                  <span className="text">Least accessed</span>
+                </div>
+                <div className="sidebar-item" style={{ cursor: 'pointer', fontWeight: sortConfig.smartFilter === 'mostEdited' ? 700 : undefined }} onClick={() => setSmartFilter('mostEdited')} title="Most edited notes">
+                  <span className="text">Most edited</span>
+                </div>
+                <button className="btn" style={{ marginTop: 6, width: '100%' }} onClick={() => setSmartFilter('none')}>Clear</button>
               </div>
             )}
 

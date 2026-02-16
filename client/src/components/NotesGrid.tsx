@@ -2332,6 +2332,30 @@ export default function NotesGrid({
       }
       if (!key || key === 'none') return true;
 
+      if (key === 'dueSoon') {
+        const dueMs = reminderDueMs(n);
+        if (!dueMs) return false;
+        const nowMs = Date.now();
+        const soonMs = nowMs + (7 * 24 * 60 * 60 * 1000);
+        return dueMs >= nowMs && dueMs <= soonMs;
+      }
+
+      if (key === 'leastAccessed') {
+        // Heuristic: no explicit access counter is stored yet, so use stale update age.
+        const updatedMs = parseDateMaybe((n as any)?.updatedAt || (n as any)?.createdAt);
+        if (!updatedMs) return false;
+        const cutoff = Date.now() - (30 * 24 * 60 * 60 * 1000);
+        return updatedMs <= cutoff;
+      }
+
+      if (key === 'mostEdited') {
+        // Heuristic: no explicit edit counter is stored yet, so use recent update activity.
+        const updatedMs = parseDateMaybe((n as any)?.updatedAt || (n as any)?.createdAt);
+        if (!updatedMs) return false;
+        const cutoff = Date.now() - (7 * 24 * 60 * 60 * 1000);
+        return updatedMs >= cutoff;
+      }
+
       if (key === 'remindersAll') {
         return reminderDueMs(n) > 0;
       }
@@ -2525,7 +2549,6 @@ export default function NotesGrid({
         if (cfg.smartFilter === 'dueSoon') return 'Filter: Due soon';
         if (cfg.smartFilter === 'leastAccessed') return 'Filter: Least accessed';
         if (cfg.smartFilter === 'mostEdited') return 'Filter: Most edited';
-        if (cfg.smartFilter === 'atRisk') return 'Filter: At risk';
         if (cfg.smartFilter === 'images') return 'Images';
         if (cfg.smartFilter === 'trash') return 'Trash';
         if (cfg.smartFilter === 'remindersAll') return 'Reminders: All';
@@ -3624,7 +3647,7 @@ export default function NotesGrid({
       />
 
       {isImagesView ? (
-        <div className="notes-section">
+        <div className="notes-section notes-section--images">
           {imageEntries.length === 0 ? (
             <div className="images-gallery-empty">No images match the current filters.</div>
           ) : (

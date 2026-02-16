@@ -28,6 +28,40 @@ export default function PreferencesModal({ onClose }: { onClose: () => void }) {
   const auth = (() => { try { return useAuth(); } catch { return null as any; } })();
   const themeCtx = (() => { try { return useTheme(); } catch { return null as any; } })();
   const { canInstall, isInstalled, promptInstall } = usePwaInstall();
+  const isFirefox = React.useMemo(() => {
+    try {
+      const ua = String(navigator.userAgent || '').toLowerCase();
+      return ua.includes('firefox') || ua.includes('fxios');
+    } catch {
+      return false;
+    }
+  }, []);
+  const canShowInstallApp = !isInstalled && (canInstall || isFirefox);
+
+  const onInstallApp = React.useCallback(async () => {
+    try {
+      if (canInstall) {
+        await promptInstall();
+        return;
+      }
+      if (!isFirefox) return;
+
+      const mobileLike = (() => {
+        try {
+          const ua = String(navigator.userAgent || '').toLowerCase();
+          return /android|iphone|ipad|ipod|mobile/.test(ua) || !!window.matchMedia?.('(pointer: coarse)')?.matches;
+        } catch {
+          return false;
+        }
+      })();
+
+      if (mobileLike) {
+        window.alert('Firefox install:\nOpen the browser menu (⋮) and choose "Install" (or "Add to Home screen").');
+      } else {
+        window.alert('Firefox install:\nUse the address-bar install icon (if shown), or open the browser menu and choose "Install this site as an app" / "Install".');
+      }
+    } catch {}
+  }, [canInstall, isFirefox, promptInstall]);
   const effectiveTheme = (themeCtx && (themeCtx as any).effective) || 'dark';
   const themeChoice = (themeCtx && (themeCtx as any).choice) || 'system';
   const setThemeChoice: (t: any) => void = (themeCtx && (themeCtx as any).setChoice) || (() => {});
@@ -626,11 +660,11 @@ export default function PreferencesModal({ onClose }: { onClose: () => void }) {
             isPhone ? (
               <div className="prefs-mobile-root">
                 <div className="prefs-list" role="list">
-                  {!isInstalled && canInstall && (
+                  {canShowInstallApp && (
                     <button
                       className="prefs-item"
                       type="button"
-                      onClick={async () => { try { await promptInstall(); } catch {} }}
+                      onClick={onInstallApp}
                       role="listitem"
                       title="Install Freeman Notes"
                     >
@@ -688,8 +722,8 @@ export default function PreferencesModal({ onClose }: { onClose: () => void }) {
             ) : (
               <div>
                 <div style={{ display: 'grid', gap: 10 }}>
-                  {!isInstalled && canInstall && (
-                    <button className="btn" type="button" onClick={async () => { try { await promptInstall(); } catch {} }}>Install app</button>
+                  {canShowInstallApp && (
+                    <button className="btn" type="button" onClick={onInstallApp}>Install app</button>
                   )}
                   <button className="btn" type="button" onClick={() => setActiveSection('about')}>About</button>
                   <button className="btn" type="button" onClick={() => setActiveSection('appearance')}>Appearance</button>
@@ -937,11 +971,11 @@ export default function PreferencesModal({ onClose }: { onClose: () => void }) {
                 <h5 style={{ margin: 0, color: 'var(--muted)' }}>Profile Photo</h5>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
                   { photoPreviewUrl ? (
-                    <img src={photoPreviewUrl} alt="Profile preview" style={{ width: 55, height: 55, borderRadius: '50%', objectFit: 'cover' }} />
+                    <img src={photoPreviewUrl} alt="Profile preview" style={{ width: 55, height: 55, borderRadius: 10, objectFit: 'cover' }} />
                   ) : (auth?.user as any)?.userImageUrl ? (
-                    <img src={(auth?.user as any).userImageUrl} alt="Profile" style={{ width: 55, height: 55, borderRadius: '50%', objectFit: 'cover' }} />
+                    <img src={(auth?.user as any).userImageUrl} alt="Profile" style={{ width: 55, height: 55, borderRadius: 10, objectFit: 'cover' }} />
                   ) : (
-                    <div className="avatar" style={{ width: 55, height: 55, borderRadius: '50%', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
+                    <div className="avatar" style={{ width: 55, height: 55, borderRadius: 10, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
                       {((auth?.user as any)?.name || (auth?.user as any)?.email || 'U')[0]}
                     </div>
                   )}

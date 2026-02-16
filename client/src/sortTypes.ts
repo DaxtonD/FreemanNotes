@@ -9,7 +9,6 @@ export type SmartFilterKey =
   | 'dueSoon'
   | 'leastAccessed'
   | 'mostEdited'
-  | 'atRisk'
   | 'remindersAll'
   | 'remindersToday'
   | 'remindersThisWeek'

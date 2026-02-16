@@ -112,7 +112,7 @@ export default function RegisterModal({ onClose }: { onClose: () => void }) {
             <img
               src={photoPreviewUrl}
               alt="Selected profile preview"
-              style={{ width: 64, height: 64, borderRadius: '50%', objectFit: 'cover' }}
+              style={{ width: 64, height: 64, borderRadius: 10, objectFit: 'cover' }}
             />
             <div style={{ color: 'var(--muted)', fontSize: 13 }}>Preview</div>
           </div>
