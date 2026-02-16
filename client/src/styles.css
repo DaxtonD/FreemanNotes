@@ -4342,8 +4342,12 @@ html.is-note-more-menu-open *{
   margin-right: -12px;
 }
 .note-card .link-preview-row{
-  padding-left: 12px;
-  padding-right: 12px;
+  padding-left: 0;
+  padding-right: 0;
+}
+.note-card .link-preview,
+.note-card .link-preview-image{
+  border-radius: 0;
 }
 :root[data-theme="light"] .link-preview{
   border:1px solid rgba(0,0,0,0.10);
@@ -4431,6 +4435,18 @@ html.is-note-more-menu-open *{
 
 /* Mobile: rely on long-press/context menu instead of the 3-dot button */
 @media (pointer: coarse) {
+  .link-preview{
+    gap: 8px;
+    padding: 6px 9px;
+  }
+  .link-preview-image{
+    width: 38px;
+    height: 38px;
+    border-radius: 10px;
+  }
+  .link-preview-image svg{ width: 18px; height: 18px; }
+  .link-preview-title{ font-size: 12px; }
+  .link-preview-domain{ font-size: 11px; }
   .link-preview-row .link-preview{ padding-right: 10px; }
   .link-preview-menu{ display: none; }
 }

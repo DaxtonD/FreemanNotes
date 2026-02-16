@@ -1,0 +1,54 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>FreemanNotes</Name>
+  <Repository>ghcr.io/daxtond/freemannotes:latest</Repository>
+  <Registry>https://ghcr.io</Registry>
+  <Network>bridge</Network>
+  <MyIP/>
+  <Shell>sh</Shell>
+  <Privileged>false</Privileged>
+  <Support>https://github.com/daxtond/FreemanNotes/issues</Support>
+  <Project>https://github.com/daxtond/FreemanNotes</Project>
+  <Overview>FreemanNotes is an offline-capable notes app with rich text, checklists, reminders, collaboration, OCR search, and PWA support.&lt;br&gt;&lt;br&gt;Required: PostgreSQL DATABASE_URL and JWT_SECRET.&lt;br&gt;&lt;br&gt;First account bootstrap: the first user created on a fresh database is automatically admin.</Overview>
+  <Category>Productivity:</Category>
+  <WebUI>http://[IP]:[PORT:4000]</WebUI>
+  <TemplateURL>https://raw.githubusercontent.com/daxtond/FreemanNotes/main/docs/unraid/FreemanNotes.xml</TemplateURL>
+  <Icon>https://raw.githubusercontent.com/daxtond/FreemanNotes/main/client/public/icons/freemannotes.png</Icon>
+  <ExtraParams/>
+  <PostArgs/>
+  <CPUset/>
+  <DateInstalled/>
+  <DonateText/>
+  <DonateLink/>
+  <Requires>PostgreSQL database (recommended: PostgreSQL 14+)</Requires>
+
+  <Config Name="Web UI Port" Target="4000" Default="4000" Mode="tcp" Description="Container port for FreemanNotes web UI/API." Type="Port" Display="always" Required="true" Mask="false">4000</Config>
+
+  <Config Name="Uploads Storage" Target="/app/uploads" Default="/mnt/user/appdata/freemannotes/uploads" Mode="rw" Description="Persistent storage for avatars and note images." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/freemannotes/uploads</Config>
+  <Config Name="PaddleOCR Cache Storage" Target="/app/paddleocr-home" Default="/mnt/user/appdata/freemannotes/paddleocr" Mode="rw" Description="Optional persistent cache/models for OCR. Keeps OCR model downloads across restarts." Type="Path" Display="advanced" Required="false" Mask="false">/mnt/user/appdata/freemannotes/paddleocr</Config>
+
+  <Config Name="DATABASE_URL" Target="DATABASE_URL" Default="postgresql://freeman:freemanpass@postgres:5432/freemannotes" Description="Required. PostgreSQL connection string." Type="Variable" Display="always" Required="true" Mask="true">postgresql://freeman:freemanpass@postgres:5432/freemannotes</Config>
+  <Config Name="JWT_SECRET" Target="JWT_SECRET" Default="" Description="Required. Long random string used to sign auth tokens." Type="Variable" Display="always" Required="true" Mask="true"></Config>
+
+  <Config Name="APP_URL" Target="APP_URL" Default="http://[IP]:[PORT:4000]" Description="Public app URL used for invite/cors host logic fallback." Type="Variable" Display="always" Required="false" Mask="false">http://[IP]:[PORT:4000]</Config>
+  <Config Name="APP_BASE_URL" Target="APP_BASE_URL" Default="" Description="Optional canonical base URL for invite links (overrides APP_URL in some paths)." Type="Variable" Display="advanced" Required="false" Mask="false"></Config>
+  <Config Name="USER_REGISTRATION_ENABLED" Target="USER_REGISTRATION_ENABLED" Default="true" Description="Set true to allow open registration after first-user bootstrap; false to require invites/admin workflow." Type="Variable" Display="always" Required="false" Mask="false">true</Config>
+
+  <Config Name="VAPID_PUBLIC_KEY" Target="VAPID_PUBLIC_KEY" Default="" Description="Optional Web Push public key." Type="Variable" Display="advanced" Required="false" Mask="false"></Config>
+  <Config Name="VAPID_PRIVATE_KEY" Target="VAPID_PRIVATE_KEY" Default="" Description="Optional Web Push private key." Type="Variable" Display="advanced" Required="false" Mask="true"></Config>
+  <Config Name="VAPID_SUBJECT" Target="VAPID_SUBJECT" Default="mailto:admin@example.com" Description="Optional Web Push contact subject (mailto: or URL)." Type="Variable" Display="advanced" Required="false" Mask="false">mailto:admin@example.com</Config>
+
+  <Config Name="SMTP_HOST" Target="SMTP_HOST" Default="" Description="Optional SMTP host for invite emails." Type="Variable" Display="advanced" Required="false" Mask="false"></Config>
+  <Config Name="SMTP_PORT" Target="SMTP_PORT" Default="587" Description="Optional SMTP port." Type="Variable" Display="advanced" Required="false" Mask="false">587</Config>
+  <Config Name="SMTP_USER" Target="SMTP_USER" Default="" Description="Optional SMTP username." Type="Variable" Display="advanced" Required="false" Mask="false"></Config>
+  <Config Name="SMTP_PASS" Target="SMTP_PASS" Default="" Description="Optional SMTP password." Type="Variable" Display="advanced" Required="false" Mask="true"></Config>
+  <Config Name="INVITE_FROM" Target="INVITE_FROM" Default="" Description="Optional sender address used for invites." Type="Variable" Display="advanced" Required="false" Mask="false"></Config>
+
+  <Config Name="MAX_IMAGE_UPLOAD_MB" Target="MAX_IMAGE_UPLOAD_MB" Default="10" Description="Maximum JSON body size for image upload payloads (MB)." Type="Variable" Display="advanced" Required="false" Mask="false">10</Config>
+  <Config Name="PADDLEOCR_HOME" Target="PADDLEOCR_HOME" Default="/app/paddleocr-home" Description="OCR model/cache directory inside container." Type="Variable" Display="advanced" Required="false" Mask="false">/app/paddleocr-home</Config>
+  <Config Name="OCR_LOG_LEVEL" Target="OCR_LOG_LEVEL" Default="info" Description="OCR logging level: silent|error|warn|info|debug|trace." Type="Variable" Display="advanced" Required="false" Mask="false">info</Config>
+
+  <Config Name="PUID" Target="PUID" Default="99" Description="Optional. Run app process as this user id." Type="Variable" Display="advanced" Required="false" Mask="false">99</Config>
+  <Config Name="PGID" Target="PGID" Default="100" Description="Optional. Run app process as this group id." Type="Variable" Display="advanced" Required="false" Mask="false">100</Config>
+  <Config Name="UMASK" Target="UMASK" Default="002" Description="Optional process umask applied by entrypoint." Type="Variable" Display="advanced" Required="false" Mask="false">002</Config>
+</Container>

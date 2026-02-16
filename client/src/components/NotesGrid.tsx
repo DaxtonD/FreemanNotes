@@ -2606,6 +2606,17 @@ export default function NotesGrid({
       if (items.some((it: any) => normalizeForSearch(it.content || '').includes(q))) return true;
       const images = Array.isArray((n as any).images) ? (n as any).images : [];
       if (images.some((img: any) => normalizeForSearch(img?.ocrSearchText || img?.ocrText || '').includes(q))) return true;
+      const previews = Array.isArray((n as any).linkPreviews) ? (n as any).linkPreviews : [];
+      if (previews.some((p: any) =>
+        normalizeForSearch(p?.url || '').includes(q)
+        || normalizeForSearch(p?.title || '').includes(q)
+        || normalizeForSearch(p?.description || '').includes(q)
+        || normalizeForSearch(p?.domain || '').includes(q)
+      )) return true;
+      if (normalizeForSearch((n as any).linkPreviewUrl || '').includes(q)) return true;
+      if (normalizeForSearch((n as any).linkPreviewTitle || '').includes(q)) return true;
+      if (normalizeForSearch((n as any).linkPreviewDescription || '').includes(q)) return true;
+      if (normalizeForSearch((n as any).linkPreviewDomain || '').includes(q)) return true;
       const labels = Array.isArray(n.noteLabels) ? n.noteLabels : [];
       if (labels.some((nl: any) => normalizeForSearch(nl.label?.name || '').includes(q))) return true;
       return false;
