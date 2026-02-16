@@ -19,6 +19,7 @@ import Underline from '@tiptap/extension-underline';
 import Link from '@tiptap/extension-link';
 import UrlEntryModal from './UrlEntryModal';
 import { enqueueHttpJsonMutation, enqueueImageUpload, kickOfflineSync } from '../lib/offline';
+import { noteCollabRoom } from '../lib/collabRoom';
 
 export default function TakeNoteBar({
   onCreated,
@@ -814,6 +815,7 @@ export default function TakeNoteBar({
       }
 
       let noteId: number | null = null;
+      let noteCreatedAt: unknown = null;
       try {
         const res = await fetch('/api/notes', {
           method: 'POST',
@@ -823,6 +825,7 @@ export default function TakeNoteBar({
         if (!res.ok) throw new Error(await res.text());
         const data = await res.json();
         noteId = Number(data?.note?.id);
+        noteCreatedAt = data?.note?.createdAt ?? null;
       } catch {
         await queueCreateForLater('Network issue. Note creation has been queued and will retry automatically.');
         return;
@@ -851,7 +854,7 @@ export default function TakeNoteBar({
       if (noteId && mode === 'text') {
         try {
           const ydoc = new Y.Doc();
-          const room = `note-${noteId}`;
+          const room = noteCollabRoom(Number(noteId), noteCreatedAt);
           const provider = new WebsocketProvider(makeWebSocketUrl('/collab'), room, ydoc);
           // Create a headless temporary editor bound to the Yjs doc and set content
           const tempEditor = new Editor({

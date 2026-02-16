@@ -25,6 +25,7 @@ import Link from '@tiptap/extension-link';
 import TextAlign from '@tiptap/extension-text-align';
 import Collaboration from '@tiptap/extension-collaboration';
 import { bindYDocPersistence, enqueueHttpJsonMutation, enqueueImageUpload, kickOfflineSync } from '../lib/offline';
+import { noteCollabRoomFromNote } from '../lib/collabRoom';
 
 type NoteItem = {
   id: number;
@@ -1005,6 +1006,7 @@ export default function NoteCard({
   }, [token, viewerCollections, neededCollectionIdsKey, collectionPathById]);
   // Subscribe to Yjs checklist for live card updates
   const ydoc = React.useMemo(() => new Y.Doc(), [note.id]);
+  const collabRoom = React.useMemo(() => noteCollabRoomFromNote(note), [note.id, (note as any)?.createdAt]);
   const providerRef = React.useRef<WebsocketProvider | null>(null);
   const yarrayRef = React.useRef<Y.Array<Y.Map<any>> | null>(null);
 
@@ -1014,7 +1016,7 @@ export default function NoteCard({
 
     (async () => {
       try {
-        cleanup = await bindYDocPersistence(`note-${note.id}`, ydoc);
+        cleanup = await bindYDocPersistence(collabRoom, ydoc);
         if (disposed && cleanup) {
           try { cleanup(); } catch {}
           cleanup = null;
@@ -1026,10 +1028,10 @@ export default function NoteCard({
       disposed = true;
       try { cleanup && cleanup(); } catch {}
     };
-  }, [note.id, ydoc]);
+  }, [collabRoom, ydoc]);
 
   React.useEffect(() => {
-    const room = `note-${note.id}`;
+    const room = collabRoom;
     const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
     const serverUrl = `${proto}://${window.location.host}/collab`;
     const provider = new WebsocketProvider(serverUrl, room, ydoc);
@@ -1052,7 +1054,7 @@ export default function NoteCard({
     yarr.observeDeep(updateFromY);
     provider.on('sync', (isSynced: boolean) => { if (isSynced) updateFromY(); });
     return () => { try { yarr.unobserveDeep(updateFromY as any); } catch {}; try { provider.destroy(); } catch {}; };
-  }, [note.id, ydoc]);
+  }, [collabRoom, ydoc]);
 
   React.useEffect(() => {
     const onUploadSuccess = (evt: Event) => {

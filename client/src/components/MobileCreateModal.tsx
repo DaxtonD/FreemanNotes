@@ -21,6 +21,7 @@ import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faLink, faPalette } from '@fortawesome/free-solid-svg-icons';
 import UrlEntryModal from './UrlEntryModal';
 import { enqueueHttpJsonMutation, enqueueImageUpload, kickOfflineSync } from '../lib/offline';
+import { noteCollabRoom } from '../lib/collabRoom';
 
 export default function MobileCreateModal({
   open,
@@ -416,6 +417,7 @@ export default function MobileCreateModal({
       }
 
       let noteId: number | null = null;
+      let noteCreatedAt: unknown = null;
       try {
         const res = await fetch('/api/notes', {
           method: 'POST',
@@ -425,6 +427,7 @@ export default function MobileCreateModal({
         if (!res.ok) throw new Error(await res.text());
         const data = await res.json();
         noteId = Number(data?.note?.id);
+        noteCreatedAt = data?.note?.createdAt ?? null;
       } catch {
         await queueCreateForLater('Network issue. Note creation has been queued and will retry automatically.');
         return;
@@ -454,7 +457,7 @@ export default function MobileCreateModal({
       if (noteId && mode === 'text') {
         try {
           const ydoc = new Y.Doc();
-          const room = `note-${noteId}`;
+          const room = noteCollabRoom(Number(noteId), noteCreatedAt);
           const provider = new WebsocketProvider(makeWebSocketUrl('/collab'), room, ydoc);
           const tempEditor = new Editor({
             extensions: [

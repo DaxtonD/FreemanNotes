@@ -1,3 +1,4 @@
+import { noteCollabRoomFromNote } from '../lib/collabRoom';
 import React, { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useAuth } from '../authContext';
@@ -718,6 +719,7 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
 
   // Yjs collaboration state for checklist items
   const ydoc = React.useMemo(() => new Y.Doc(), [note.id]);
+  const collabRoom = React.useMemo(() => noteCollabRoomFromNote(note), [note.id, (note as any)?.createdAt]);
   const providerRef = React.useRef<WebsocketProvider | null>(null);
   const yarrayRef = React.useRef<Y.Array<Y.Map<any>> | null>(null);
   const ymetaRef = React.useRef<Y.Map<any> | null>(null);
@@ -731,7 +733,7 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
 
     (async () => {
       try {
-        cleanup = await bindYDocPersistence(`note-${note.id}`, ydoc);
+        cleanup = await bindYDocPersistence(collabRoom, ydoc);
         if (disposed && cleanup) {
           try { cleanup(); } catch {}
           cleanup = null;
@@ -743,7 +745,7 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
       disposed = true;
       try { cleanup && cleanup(); } catch {}
     };
-  }, [note.id, ydoc]);
+  }, [collabRoom, ydoc]);
 
   React.useEffect(() => {
     const onUploadSuccess = (evt: Event) => {
@@ -1240,7 +1242,7 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
 
   // Setup Yjs provider and bind checklist CRDT
   useEffect(() => {
-    const room = `note-${note.id}`;
+    const room = collabRoom;
     const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
     const serverUrl = `${proto}://${window.location.host}/collab`;
     const provider = new WebsocketProvider(serverUrl, room, ydoc);
@@ -1388,7 +1390,7 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
       try { if (linkPreviewTimerRef.current) window.clearTimeout(linkPreviewTimerRef.current); } catch {}
       try { provider.destroy(); } catch {}
     };
-  }, [note.id, token, ydoc]);
+  }, [collabRoom, note.id, token, ydoc]);
 
   const broadcastImagesChanged = React.useCallback(() => {
     try {

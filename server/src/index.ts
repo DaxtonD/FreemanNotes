@@ -86,7 +86,7 @@ async function start() {
           // y-websocket uses the URL path as docName (e.g., "collab/note-123").
           // We only need the final segment for note ID parsing.
           const last = docName.split('/').pop() || docName;
-          const m = /^note-(\d+)$/.exec(last);
+          const m = /^note-(\d+)(?:-c[0-9a-z]+)?$/i.exec(last);
           if (m) {
             const noteId = Number(m[1]);
             try {
@@ -161,7 +161,7 @@ async function start() {
         },
         writeState: async (docName: string, ydoc: Y.Doc) => {
           const last = docName.split('/').pop() || docName;
-          const m = /^note-(\d+)$/.exec(last);
+          const m = /^note-(\d+)(?:-c[0-9a-z]+)?$/i.exec(last);
           if (!m) return;
           const noteId = Number(m[1]);
           try {

@@ -21,6 +21,7 @@ import { faLink, faPalette } from '@fortawesome/free-solid-svg-icons';
 import MoreMenu from './MoreMenu';
 import UrlEntryModal from './UrlEntryModal';
 import { enqueueHttpJsonMutation, enqueueImageUpload, kickOfflineSync } from '../lib/offline';
+import { noteCollabRoomFromNote } from '../lib/collabRoom';
 
 function formatReminderDueIdentifier(dueMs: number): string {
   if (!Number.isFinite(dueMs)) return 'Reminder set';
@@ -387,7 +388,7 @@ export default function RichTextEditor({ note, onClose, onSaved, noteBg, onImage
   const ydoc = React.useMemo(() => new Y.Doc(), [note.id]);
   const providerRef = React.useRef<WebsocketProvider | null>(null);
   React.useEffect(() => {
-    const room = `note-${note.id}`;
+    const room = noteCollabRoomFromNote(note);
     const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
     const serverUrl = `${proto}://${window.location.host}/collab`;
     const provider = new WebsocketProvider(serverUrl, room, ydoc);
