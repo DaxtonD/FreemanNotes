@@ -24,6 +24,7 @@ import StarterKit from '@tiptap/starter-kit';
 import Link from '@tiptap/extension-link';
 import TextAlign from '@tiptap/extension-text-align';
 import Collaboration from '@tiptap/extension-collaboration';
+import { bindYDocPersistence, enqueueHttpJsonMutation, enqueueImageUpload, kickOfflineSync } from '../lib/offline';
 
 type NoteItem = {
   id: number;
@@ -48,6 +49,10 @@ type Note = {
   images?: Array<{ id: number; url?: string; ocrSearchText?: string | null; ocrText?: string | null; ocrStatus?: string | null }>
   imagesCount?: number;
   cardSpan?: number;
+  offlinePendingCreate?: boolean;
+  offlineOpId?: string;
+  offlineSyncFailed?: boolean;
+  offlineSyncError?: string;
 };
 
 function formatReminderDueIdentifier(dueMs: number): string {
@@ -88,17 +93,18 @@ function formatReminderDueIdentifier(dueMs: number): string {
 function reminderDueColorClass(dueMs: number): string {
   if (!Number.isFinite(dueMs) || dueMs <= 0) return '';
 
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
+  const now = new Date();
   const due = new Date(dueMs);
-  due.setHours(0, 0, 0, 0);
-  const dayMs = 24 * 60 * 60 * 1000;
-  const dayDiff = Math.floor((due.getTime() - today.getTime()) / dayMs);
+  const todayUtc = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate());
+  const dueUtc = Date.UTC(due.getFullYear(), due.getMonth(), due.getDate());
+  const calendarDayDiff = Math.trunc((dueUtc - todayUtc) / 86400000);
+  const elapsedDayDiff = Math.max(0, Math.ceil((dueMs - Date.now()) / 86400000));
+  const dayDiff = Math.max(calendarDayDiff, elapsedDayDiff);
 
   // Overdue, due today, or due tomorrow => red.
   if (dayDiff <= 1) return 'note-reminder-due--red';
-  // 3 days through 1 week => orange.
-  if (dayDiff >= 3 && dayDiff <= 7) return 'note-reminder-due--orange';
+  // 2 days through 1 week => orange.
+  if (dayDiff >= 2 && dayDiff <= 7) return 'note-reminder-due--orange';
   // 1-2 weeks => yellow.
   if (dayDiff >= 8 && dayDiff <= 14) return 'note-reminder-due--yellow';
   return '';
@@ -716,15 +722,13 @@ export default function NoteCard({
   }, [note.id, (note as any).viewerImagesExpanded]);
 
   async function persistImagesExpanded(next: boolean) {
-    try {
-      const res = await fetch(`/api/notes/${note.id}/prefs`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json', Authorization: token ? `Bearer ${token}` : '' },
-        body: JSON.stringify({ imagesExpanded: !!next })
-      });
-      if (!res.ok) throw new Error(await res.text());
-    } catch (err) {
-      console.error('Failed to save image preview preference', err);
+    const result = await requestJsonOrQueue({
+      method: 'PATCH',
+      path: `/api/notes/${note.id}/prefs`,
+      body: { imagesExpanded: !!next },
+    });
+    if (result.status === 'failed') {
+      console.error('Failed to save image preview preference');
     }
   }
   const disableNoteCardLinks = (() => {
@@ -859,17 +863,23 @@ export default function NoteCard({
   }, [previewMenu]);
 
   async function deletePreview(previewId: number) {
+    const previous = Array.isArray((note as any)?.linkPreviews) ? (note as any).linkPreviews : [];
+    const optimistic = previous.filter((p: any) => Number(p?.id) !== Number(previewId));
+    try { onChange?.({ type: 'linkPreviews', noteId: note.id, linkPreviews: optimistic }); } catch {}
+
     try {
-      const res = await fetch(`/api/notes/${note.id}/link-previews/${previewId}`, {
+      const result = await requestJsonOrQueue({
         method: 'DELETE',
-        headers: { Authorization: token ? `Bearer ${token}` : '' },
+        path: `/api/notes/${note.id}/link-previews/${previewId}`,
       });
-      if (!res.ok) throw new Error(await res.text());
-      const data = await res.json();
-      const previews = Array.isArray(data?.previews) ? data.previews : [];
-      try { onChange?.({ type: 'linkPreviews', noteId: note.id, linkPreviews: previews }); } catch {}
+      if (result.status === 'failed') throw new Error('Failed to delete URL');
+      if (result.status === 'ok') {
+        const previews = Array.isArray(result.data?.previews) ? result.data.previews : optimistic;
+        try { onChange?.({ type: 'linkPreviews', noteId: note.id, linkPreviews: previews }); } catch {}
+      }
     } catch (e) {
       console.error(e);
+      try { onChange?.({ type: 'linkPreviews', noteId: note.id, linkPreviews: previous }); } catch {}
       window.alert('Failed to delete URL');
     }
   }
@@ -886,18 +896,27 @@ export default function NoteCard({
   }
 
   async function submitEditPreview(previewId: number, nextUrl: string) {
+    const previous = Array.isArray((note as any)?.linkPreviews) ? (note as any).linkPreviews : [];
+    const optimistic = previous.map((p: any) => {
+      if (Number(p?.id) !== Number(previewId)) return p;
+      return { ...p, url: String(nextUrl || '').trim() };
+    });
+    try { onChange?.({ type: 'linkPreviews', noteId: note.id, linkPreviews: optimistic }); } catch {}
+
     try {
-      const res = await fetch(`/api/notes/${note.id}/link-previews/${previewId}`, {
+      const result = await requestJsonOrQueue({
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json', Authorization: token ? `Bearer ${token}` : '' },
-        body: JSON.stringify({ url: nextUrl }),
+        path: `/api/notes/${note.id}/link-previews/${previewId}`,
+        body: { url: nextUrl },
       });
-      if (!res.ok) throw new Error(await res.text());
-      const data = await res.json();
-      const previews = Array.isArray(data?.previews) ? data.previews : [];
-      try { onChange?.({ type: 'linkPreviews', noteId: note.id, linkPreviews: previews }); } catch {}
+      if (result.status === 'failed') throw new Error('Failed to edit URL');
+      if (result.status === 'ok') {
+        const previews = Array.isArray(result.data?.previews) ? result.data.previews : optimistic;
+        try { onChange?.({ type: 'linkPreviews', noteId: note.id, linkPreviews: previews }); } catch {}
+      }
     } catch (e) {
       console.error(e);
+      try { onChange?.({ type: 'linkPreviews', noteId: note.id, linkPreviews: previous }); } catch {}
       window.alert('Failed to edit URL');
     }
   }
@@ -989,6 +1008,27 @@ export default function NoteCard({
   const ydoc = React.useMemo(() => new Y.Doc(), [note.id]);
   const providerRef = React.useRef<WebsocketProvider | null>(null);
   const yarrayRef = React.useRef<Y.Array<Y.Map<any>> | null>(null);
+
+  React.useEffect(() => {
+    let disposed = false;
+    let cleanup: (() => void) | null = null;
+
+    (async () => {
+      try {
+        cleanup = await bindYDocPersistence(`note-${note.id}`, ydoc);
+        if (disposed && cleanup) {
+          try { cleanup(); } catch {}
+          cleanup = null;
+        }
+      } catch {}
+    })();
+
+    return () => {
+      disposed = true;
+      try { cleanup && cleanup(); } catch {}
+    };
+  }, [note.id, ydoc]);
+
   React.useEffect(() => {
     const room = `note-${note.id}`;
     const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
@@ -1014,6 +1054,31 @@ export default function NoteCard({
     provider.on('sync', (isSynced: boolean) => { if (isSynced) updateFromY(); });
     return () => { try { yarr.unobserveDeep(updateFromY as any); } catch {}; try { provider.destroy(); } catch {}; };
   }, [note.id, ydoc]);
+
+  React.useEffect(() => {
+    const onUploadSuccess = (evt: Event) => {
+      try {
+        const detail = (evt as CustomEvent<any>).detail || {};
+        if (Number(detail.noteId) !== Number(note.id)) return;
+        const image = detail.image || null;
+        if (!image || typeof image !== 'object') return;
+        const imageId = Number((image as any).id);
+        const imageUrl = String((image as any).url || '');
+        if (!Number.isFinite(imageId) || !imageUrl) return;
+        const tempId = Number(detail.tempClientId);
+        setImagesWithNotify((prev) => {
+          const filtered = Number.isFinite(tempId)
+            ? prev.filter((it: any) => Number(it?.id) !== tempId)
+            : prev;
+          if (filtered.some((it: any) => Number(it?.id) === imageId)) return filtered;
+          return [...filtered, { id: imageId, url: imageUrl }];
+        });
+      } catch {}
+    };
+
+    window.addEventListener('freemannotes:offline-upload/success', onUploadSuccess as EventListener);
+    return () => window.removeEventListener('freemannotes:offline-upload/success', onUploadSuccess as EventListener);
+  }, [note.id]);
 
   // Subscribe to Yjs text doc for real-time HTML preview on cards (TEXT notes)
   React.useEffect(() => {
@@ -1139,20 +1204,61 @@ export default function NoteCard({
   const pointerStartRef = React.useRef<{ x: number; y: number } | null>(null);
   const pointerMovedRef = React.useRef(false);
 
+  async function requestJsonOrQueue(input: {
+    method: 'PATCH' | 'PUT' | 'POST' | 'DELETE';
+    path: string;
+    body?: any;
+  }): Promise<{ status: 'ok' | 'queued' | 'failed'; data?: any }> {
+    const method = String(input.method || 'PATCH').toUpperCase() as any;
+    const path = String(input.path || '');
+    const body = input.body;
+    if (!path) return { status: 'failed' };
+
+    const queueNow = async () => {
+      try {
+        await enqueueHttpJsonMutation({ method, path, body });
+        void kickOfflineSync();
+        return { status: 'queued' as const };
+      } catch {
+        return { status: 'failed' as const };
+      }
+    };
+
+    if (navigator.onLine === false) {
+      return await queueNow();
+    }
+
+    try {
+      const hasBody = typeof body !== 'undefined';
+      const res = await fetch(path, {
+        method,
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: token ? `Bearer ${token}` : '',
+        },
+        body: hasBody ? JSON.stringify(body) : undefined,
+      });
+      if (!res.ok) throw new Error(await res.text());
+      let data: any = null;
+      try { data = await res.json(); } catch {}
+      return { status: 'ok', data };
+    } catch {
+      return await queueNow();
+    }
+  }
+
   async function onPickColor(color: string) {
     // first palette entry is the "Default" swatch (empty string).
     // Selecting it restores the app's default background and sets text to the original muted color.
     const next = color || '';
-    try {
-      const res = await fetch(`/api/notes/${note.id}/prefs`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json', Authorization: token ? `Bearer ${token}` : '' },
-        body: JSON.stringify({ color: next })
-      });
-      if (!res.ok) throw new Error(await res.text());
-    } catch (err) {
-      console.error('Failed to save color preference', err);
-      window.alert('Failed to save color preference');
+    const saveResult = await requestJsonOrQueue({
+      method: 'PATCH',
+      path: `/api/notes/${note.id}/prefs`,
+      body: { color: next },
+    });
+    if (saveResult.status === 'failed') {
+      try { window.alert('Failed to save color preference'); } catch {}
+      return;
     }
     if (!next) {
       setBg('');
@@ -1166,8 +1272,38 @@ export default function NoteCard({
   }
 
   async function attachImageUrl(url: string) {
+    const normalizedUrl = String(url || '').trim();
+    if (!normalizedUrl) return;
+    const tempClientId = Date.now() + Math.floor(Math.random() * 1000);
+
+    const addOptimistic = () => {
+      setImagesWithNotify((s) => {
+        const exists = s.some(x => String(x.url) === normalizedUrl || Number(x.id) === tempClientId);
+        if (exists) return s;
+        return [...s, { id: tempClientId, url: normalizedUrl }];
+      });
+    };
+
+    const queueForLater = async (reason?: string) => {
+      try {
+        addOptimistic();
+        await enqueueImageUpload(Number(note.id), normalizedUrl, tempClientId);
+        void kickOfflineSync();
+      } catch (err) {
+        console.error('Failed to queue image upload', err);
+      }
+      if (reason) {
+        try { window.alert(reason); } catch {}
+      }
+    };
+
+    if (navigator.onLine === false) {
+      await queueForLater('You are offline. Image queued and will upload automatically when back online.');
+      return;
+    }
+
     try {
-      const res = await fetch(`/api/notes/${note.id}/images`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: token ? `Bearer ${token}` : '' }, body: JSON.stringify({ url }) });
+      const res = await fetch(`/api/notes/${note.id}/images`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: token ? `Bearer ${token}` : '' }, body: JSON.stringify({ url: normalizedUrl }) });
       if (!res.ok) throw new Error(await res.text());
       const data = await res.json();
       const img = data.image || null;
@@ -1180,13 +1316,7 @@ export default function NoteCard({
       }
     } catch (err) {
       console.error('Failed to attach image', err);
-      // Fallback: show locally even if save fails
-      setImagesWithNotify((s) => {
-        const exists = s.some(x => String(x.url) === String(url));
-        if (exists) return s;
-        return [...s, { id: Date.now() + Math.floor(Math.random() * 1000), url }];
-      });
-      window.alert('Failed to attach image to server; showing locally');
+      await queueForLater('Upload failed right now. Image queued and will retry automatically.');
     }
   }
 
@@ -1249,13 +1379,13 @@ export default function NoteCard({
     if (typeof itemId !== 'number') return;
 
     // Fallback to REST if Yjs not available
-    try {
-      const res = await fetch(`/api/notes/${note.id}/items/${itemId}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ checked }) });
-      if (!res.ok) throw new Error(await res.text());
-      setNoteItems(s => s.map(it => it.id === itemId ? { ...it, checked } : it));
-    } catch (err) {
-      console.error(err);
-      window.alert('Failed to update checklist item — please try again.');
+    const result = await requestJsonOrQueue({
+      method: 'PATCH',
+      path: `/api/notes/${note.id}/items/${itemId}`,
+      body: { checked },
+    });
+    if (result.status === 'failed') {
+      try { window.alert('Failed to update checklist item — please try again.'); } catch {}
     }
   }
 
@@ -1273,14 +1403,13 @@ export default function NoteCard({
         }
       } catch {}
 
-      const res = await fetch(`/api/notes/${note.id}`, {
+      const result = await requestJsonOrQueue({
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json', Authorization: token ? `Bearer ${token}` : '' },
-        body: JSON.stringify({ reminderDueAt: draft.dueAtIso, reminderOffsetMinutes: draft.offsetMinutes }),
+        path: `/api/notes/${note.id}`,
+        body: { reminderDueAt: draft.dueAtIso, reminderOffsetMinutes: draft.offsetMinutes },
       });
-      if (!res.ok) throw new Error(await res.text());
-      const data = await res.json();
-      const updated = data?.note || {};
+      if (result.status === 'failed') throw new Error('Failed to set reminder');
+      const updated = result.status === 'ok' ? (result.data?.note || {}) : {};
       try {
         (onChange as any)?.({
           type: 'reminder',
@@ -1305,12 +1434,12 @@ export default function NoteCard({
       return;
     }
     try {
-      const res = await fetch(`/api/notes/${note.id}`, {
+      const result = await requestJsonOrQueue({
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json', Authorization: token ? `Bearer ${token}` : '' },
-        body: JSON.stringify({ reminderDueAt: null }),
+        path: `/api/notes/${note.id}`,
+        body: { reminderDueAt: null },
       });
-      if (!res.ok) throw new Error(await res.text());
+      if (result.status === 'failed') throw new Error('Failed to clear reminder');
       try { (onChange as any)?.({ type: 'reminder', noteId: Number(note.id), reminderDueAt: null, reminderAt: null }); }
       catch { onChange && onChange(); }
     } catch (err) {
@@ -1332,19 +1461,17 @@ export default function NoteCard({
 
     const prev = archived;
     setArchived(next);
-    try {
-      const res = await fetch(`/api/notes/${note.id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json', Authorization: token ? `Bearer ${token}` : '' },
-        body: JSON.stringify({ archived: next }),
-      });
-      if (!res.ok) throw new Error(await res.text());
-      try { (onChange as any)?.({ type: 'archive', noteId: Number(note.id), archived: next }); } catch { onChange && onChange(); }
-    } catch (e) {
-      console.error(e);
+    const result = await requestJsonOrQueue({
+      method: 'PATCH',
+      path: `/api/notes/${note.id}`,
+      body: { archived: next },
+    });
+    if (result.status === 'failed') {
       setArchived(prev);
-      window.alert('Failed to archive note');
+      try { window.alert('Failed to archive note'); } catch {}
+      return;
     }
+    try { (onChange as any)?.({ type: 'archive', noteId: Number(note.id), archived: next }); } catch { onChange && onChange(); }
   }
 
   const isTrashed = !!((note as any)?.trashedAt);
@@ -1361,19 +1488,17 @@ export default function NoteCard({
     const next = !pinned;
     const prev = pinned;
     setPinned(next);
-    try {
-      const res = await fetch(`/api/notes/${note.id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json', Authorization: token ? `Bearer ${token}` : '' },
-        body: JSON.stringify({ pinned: next }),
-      });
-      if (!res.ok) throw new Error(await res.text());
-      try { (onChange as any)?.({ type: 'pin', noteId: Number(note.id), pinned: next }); } catch { onChange && onChange(); }
-    } catch (e) {
-      console.error(e);
+    const result = await requestJsonOrQueue({
+      method: 'PATCH',
+      path: `/api/notes/${note.id}`,
+      body: { pinned: next },
+    });
+    if (result.status === 'failed') {
       setPinned(prev);
-      window.alert('Failed to update pinned state');
+      try { window.alert('Failed to update pinned state'); } catch {}
+      return;
     }
+    try { (onChange as any)?.({ type: 'pin', noteId: Number(note.id), pinned: next }); } catch { onChange && onChange(); }
   }
 
   async function onRestoreNote() {
@@ -1381,14 +1506,12 @@ export default function NoteCard({
       window.alert('Only the note owner can restore this note.');
       return;
     }
-    try {
-      const res = await fetch(`/api/notes/${note.id}/restore`, { method: 'POST', headers: { Authorization: token ? `Bearer ${token}` : '' } });
-      if (!res.ok) throw new Error(await res.text());
-      onChange && onChange();
-    } catch (err) {
-      console.error(err);
+    const result = await requestJsonOrQueue({ method: 'POST', path: `/api/notes/${note.id}/restore` });
+    if (result.status === 'failed') {
       window.alert('Failed to restore note');
+      return;
     }
+    onChange && onChange();
   }
 
   async function onDeleteNote() {
@@ -1400,8 +1523,8 @@ export default function NoteCard({
         }
         const ok = window.confirm('Delete this note permanently? This cannot be undone.');
         if (!ok) return;
-        const res = await fetch(`/api/notes/${note.id}/purge`, { method: 'DELETE', headers: { Authorization: token ? `Bearer ${token}` : '' } });
-        if (!res.ok) throw new Error(await res.text());
+        const purge = await requestJsonOrQueue({ method: 'DELETE', path: `/api/notes/${note.id}/purge` });
+        if (purge.status === 'failed') throw new Error('Failed to purge note');
         onChange && onChange();
         return;
       }
@@ -1410,8 +1533,8 @@ export default function NoteCard({
         // Collaborator: remove self from this note
         const self = collaborators.find(c => typeof c.userId === 'number' && c.userId === currentUserId);
         if (self && typeof self.collabId === 'number') {
-          const res = await fetch(`/api/notes/${note.id}/collaborators/${self.collabId}`, { method: 'DELETE', headers: { Authorization: token ? `Bearer ${token}` : '' } });
-          if (!res.ok) throw new Error(await res.text());
+          const leave = await requestJsonOrQueue({ method: 'DELETE', path: `/api/notes/${note.id}/collaborators/${self.collabId}` });
+          if (leave.status === 'failed') throw new Error('Failed to leave note');
           onChange && onChange();
           return;
         }
@@ -1419,8 +1542,8 @@ export default function NoteCard({
         return;
       }
       // Owner: move note to trash for everyone
-      const res = await fetch(`/api/notes/${note.id}`, { method: 'DELETE', headers: { Authorization: token ? `Bearer ${token}` : '' } });
-      if (!res.ok) throw new Error(await res.text());
+      const trash = await requestJsonOrQueue({ method: 'DELETE', path: `/api/notes/${note.id}` });
+      if (trash.status === 'failed') throw new Error('Failed to trash note');
       onChange && onChange();
     } catch (err) {
       console.error(err);
@@ -1448,8 +1571,12 @@ export default function NoteCard({
         }
       } catch {}
 
-      const res = await fetch(`/api/notes/${note.id}/items`, { method: 'PUT', headers: { 'Content-Type': 'application/json', Authorization: token ? `Bearer ${token}` : '' }, body: JSON.stringify({ items: updated, replaceMissing: true }) });
-      if (!res.ok) throw new Error(await res.text());
+      const result = await requestJsonOrQueue({
+        method: 'PUT',
+        path: `/api/notes/${note.id}/items`,
+        body: { items: updated, replaceMissing: true },
+      });
+      if (result.status === 'failed') throw new Error('Failed to uncheck all items');
       // no full reload needed; local state already reflects changes
     } catch (err) {
       console.error(err);
@@ -1474,8 +1601,12 @@ export default function NoteCard({
         }
       } catch {}
 
-      const res = await fetch(`/api/notes/${note.id}/items`, { method: 'PUT', headers: { 'Content-Type': 'application/json', Authorization: token ? `Bearer ${token}` : '' }, body: JSON.stringify({ items: updated, replaceMissing: true }) });
-      if (!res.ok) throw new Error(await res.text());
+      const result = await requestJsonOrQueue({
+        method: 'PUT',
+        path: `/api/notes/${note.id}/items`,
+        body: { items: updated, replaceMissing: true },
+      });
+      if (result.status === 'failed') throw new Error('Failed to check all items');
       // no full reload needed; local state already reflects changes
     } catch (err) {
       console.error(err);
@@ -1492,14 +1623,13 @@ export default function NoteCard({
     // Persist collaborator on server
     (async () => {
       try {
-        const res = await fetch(`/api/notes/${note.id}/collaborators`, {
+        const result = await requestJsonOrQueue({
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', Authorization: token ? `Bearer ${token}` : '' },
-          body: JSON.stringify({ email: selected.email })
+          path: `/api/notes/${note.id}/collaborators`,
+          body: { email: selected.email },
         });
-        if (!res.ok) throw new Error(await res.text());
-        const data = await res.json();
-        const collab = (data && (data.collaborator || null));
+        if (result.status === 'failed') throw new Error('Failed to add collaborator');
+        const collab = (result.status === 'ok') ? (result.data && (result.data.collaborator || null)) : null;
         if (collab && typeof collab.id === 'number') {
           setCollaborators((s) => s.map(c => (c.userId === selected.id ? { ...c, collabId: Number(collab.id) } : c)));
         }
@@ -1513,25 +1643,27 @@ export default function NoteCard({
   }
 
   async function onRemoveCollaborator(collabId: number) {
-    try {
-      const res = await fetch(`/api/notes/${note.id}/collaborators/${collabId}`, { method: 'DELETE', headers: { Authorization: token ? `Bearer ${token}` : '' } });
-      if (!res.ok) throw new Error(await res.text());
+      const previous = [...collaborators];
       setCollaborators((s) => s.filter(c => c.collabId !== collabId));
+    try {
+        const result = await requestJsonOrQueue({ method: 'DELETE', path: `/api/notes/${note.id}/collaborators/${collabId}` });
+        if (result.status === 'failed') throw new Error('Failed to remove collaborator');
       onChange && onChange();
     } catch (err) {
       console.error('Failed to remove collaborator', err);
+        setCollaborators(previous);
       window.alert('Failed to remove collaborator');
     }
   }
 
   async function onSetCardWidth(span: 1 | 2 | 3) {
     try {
-      const res = await fetch(`/api/notes/${note.id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json', Authorization: token ? `Bearer ${token}` : '' },
-        body: JSON.stringify({ cardSpan: span })
+        const result = await requestJsonOrQueue({
+          method: 'PATCH',
+          path: `/api/notes/${note.id}`,
+          body: { cardSpan: span },
       });
-      if (!res.ok) throw new Error(await res.text());
+        if (result.status === 'failed') throw new Error('Failed to set card width');
       // Ask grid to recalc columns/width and prompt a soft reload
       try { window.dispatchEvent(new Event('notes-grid:recalc')); } catch {}
       onChange && onChange();
@@ -1641,22 +1773,41 @@ export default function NoteCard({
           return d ? `Reminder: ${d.toLocaleString()}` : 'Reminder set';
         })();
 
+        const bellUrgencyClass = Number.isFinite(dueMs) ? reminderDueColorClass(dueMs) : '';
+
         return (
-          <div className="note-corner-icons" aria-hidden>
+          <div className="note-corner-icons">
             {showPin && (
-              <div className="note-pin-icon" title="Pinned">
+              <div className="note-pin-icon" title="Pinned" aria-hidden>
                 <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden>
                   <path d="M14 2H10v2H8v2h.17l1.12 9.05L7 17.4V20h10v-2.6l-2.29-2.35L15.83 6H16V4h-2V2Zm-1.95 4 1.15 9.3L15 17.1V18H9v-.9l1.8-1.8L11.05 6h1Z" />
                 </svg>
               </div>
             )}
             {showBell && (
-              <div className="note-reminder-bell" title={bellTitle}>
+              <div className={`note-reminder-bell${bellUrgencyClass ? ` ${bellUrgencyClass}` : ''}`} title={bellTitle} aria-hidden>
                 <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden>
                   <path d="M12 22c1.1 0 2-.9 2-2h-4a2 2 0 0 0 2 2z"/>
                   <path d="M18 8V7a6 6 0 1 0-12 0v1c0 3.5-2 5-2 5h16s-2-1.5-2-5z"/>
                 </svg>
               </div>
+            )}
+            {showBell && isOwner && !isTrashed && (
+              <button
+                type="button"
+                className={`note-reminder-clear-control${bellUrgencyClass ? ` ${bellUrgencyClass}` : ''}`}
+                title="Mark reminder complete"
+                aria-label="Mark reminder complete"
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  void onClearReminder();
+                }}
+              >
+                <svg viewBox="0 0 24 24" fill="none" aria-hidden>
+                  <path d="M5 12.5l4.2 4.2L19 7" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              </button>
             )}
           </div>
         );
@@ -1703,6 +1854,18 @@ export default function NoteCard({
         </span>
         <span className="note-title-text">{!String(title || '').trim() ? 'Add a title....' : title}</span>
       </div>
+
+      {!!(note as any)?.offlinePendingCreate && (
+        <div
+          className={`note-sync-badge note-sync-badge--inline${(note as any)?.offlineSyncFailed ? ' note-sync-badge--failed' : ''}`}
+          title={(note as any)?.offlineSyncFailed
+            ? 'Sync delayed: still retrying in background. Will keep retrying automatically.'
+            : 'Pending sync: this note was created offline and will finish syncing automatically.'}
+          aria-label={(note as any)?.offlineSyncFailed ? 'Sync delayed' : 'Pending sync'}
+        >
+          {(note as any)?.offlineSyncFailed ? 'Sync delayed' : 'Syncing…'}
+        </div>
+      )}
 
       {(() => {
         const due = (note as any)?.reminderDueAt;
@@ -1853,7 +2016,7 @@ export default function NoteCard({
                     const showImg = (mode === 'image' || mode === 'image+text') && !!p.userImageUrl;
                     const showText = (mode === 'text' || mode === 'image+text');
                     return (
-                      <div key={p.key} className={`note-meta-item${idx < metaVisibleCount ? ' is-visible' : ''}`}>
+                      <div key={`collab-${String(p.key)}-${idx}`} className={`note-meta-item${idx < metaVisibleCount ? ' is-visible' : ''}`}>
                         <button
                           type="button"
                           className="chip note-meta-chip"
@@ -1881,7 +2044,7 @@ export default function NoteCard({
               {expandedMeta === 'labels' && (
                 <div className="label-chips" aria-label="Labels">
                   {labels.map((l, idx) => (
-                    <div key={l.id} className={`note-meta-item${idx < metaVisibleCount ? ' is-visible' : ''}`}>
+                    <div key={`label-${Number(l.id)}-${idx}`} className={`note-meta-item${idx < metaVisibleCount ? ' is-visible' : ''}`}>
                       <button
                         type="button"
                         className="chip note-meta-chip"
@@ -1903,7 +2066,7 @@ export default function NoteCard({
                 <div className="note-collections" aria-label="Collections">
                   <div className="note-collections-list" role="list">
                     {withPath.map((c, idx) => (
-                      <div key={c.id} className={`note-meta-item${idx < metaVisibleCount ? ' is-visible' : ''}`}
+                      <div key={`collection-${Number(c.id)}-${idx}`} className={`note-meta-item${idx < metaVisibleCount ? ' is-visible' : ''}`}
                         role="listitem"
                       >
                         <button
@@ -1976,7 +2139,7 @@ export default function NoteCard({
             {/** Show incomplete first, then optionally completed items. Preserve indent in preview. */}
             <div className="note-items-list">
               {(noteItems.filter((it:any) => !it.checked)).map((it, idx) => (
-                <div key={typeof it.id === 'number' ? it.id : `i-${idx}`} className="note-item" style={{ display: 'flex', gap: 8, alignItems: previewRowAlignItems, marginLeft: ((it.indent || 0) * 16) }}>
+                <div key={`item-${(typeof (it as any)?.uid === 'string' && (it as any).uid) ? String((it as any).uid) : (typeof it.id === 'number' ? String(it.id) : 'i')}-${idx}`} className="note-item" style={{ display: 'flex', gap: 8, alignItems: previewRowAlignItems, marginLeft: ((it.indent || 0) * 16) }}>
                   <button
                     className={`note-checkbox ${it.checked ? 'checked' : ''}`}
                     type="button"
@@ -2033,7 +2196,7 @@ export default function NoteCard({
             {showCompleted && noteItems.some((it:any) => it.checked) && (
               <div className="note-items-list" style={{ marginTop: 6 }}>
                 {noteItems.filter((it:any) => it.checked).map((it, idx) => (
-                  <div key={`c-${typeof it.id === 'number' ? it.id : idx}`} className="note-item completed" style={{ display: 'flex', gap: 8, alignItems: previewRowAlignItems, marginLeft: ((it.indent || 0) * 16), opacity: 0.7 }}>
+                  <div key={`c-${(typeof (it as any)?.uid === 'string' && (it as any).uid) ? String((it as any).uid) : (typeof it.id === 'number' ? String(it.id) : 'i')}-${idx}`} className="note-item completed" style={{ display: 'flex', gap: 8, alignItems: previewRowAlignItems, marginLeft: ((it.indent || 0) * 16), opacity: 0.7 }}>
                     <button
                       className={`note-checkbox ${it.checked ? 'checked' : ''}`}
                       type="button"
@@ -2109,11 +2272,11 @@ export default function NoteCard({
               }}
               onClick={(e) => { try { e.stopPropagation(); } catch {} }}
             >
-              {visible.map((p: any) => {
+              {visible.map((p: any, idx: number) => {
                 const domain = (p.domain || (() => { try { return new URL(p.url).hostname.replace(/^www\./i, ''); } catch { return ''; } })());
                 return (
                   <div
-                    key={p.id}
+                    key={`preview-${Number(p.id)}-${idx}`}
                     className="link-preview-row note-link-preview"
                     onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); setPreviewMenu({ x: e.clientX, y: e.clientY, previewId: p.id }); }}
                   >
@@ -2236,6 +2399,19 @@ export default function NoteCard({
               <path d="M18 8V7a6 6 0 1 0-12 0v1c0 3.5-2 5-2 5h16s-2-1.5-2-5z"/>
             </svg>
           </button>
+
+          {!!(note as any)?.reminderDueAt && isOwner && !isTrashed && (
+            <button
+              className="tiny"
+              onClick={() => { void onClearReminder(); }}
+              aria-label="Mark reminder complete"
+              title="Mark reminder complete"
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
+                <path d="M5 12.5l4.2 4.2L19 7" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            </button>
+          )}
 
           <button className="tiny" onClick={() => setShowCollaborator(true)} aria-label="Collaborators" title="Collaborators">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
@@ -2420,6 +2596,8 @@ export default function NoteCard({
             deleteLabel: isTrashed ? 'Delete permanently' : undefined,
             onRestore: (isTrashed && isOwner) ? onRestoreNote : undefined,
             restoreLabel: 'Restore',
+            pinned,
+            onTogglePin: (!isTrashed && isOwner) ? togglePinned : undefined,
             onAddLabel: isTrashed ? undefined : onAddLabel,
             onMoveToCollection: isTrashed ? undefined : (() => setShowMoveToCollection(true)),
             onUncheckAll: isTrashed ? undefined : onUncheckAll,
@@ -2449,6 +2627,8 @@ export default function NoteCard({
             deleteLabel: isTrashed ? 'Delete permanently' : undefined,
             onRestore: (isTrashed && isOwner) ? onRestoreNote : undefined,
             restoreLabel: 'Restore',
+            pinned,
+            onTogglePin: (!isTrashed && isOwner) ? togglePinned : undefined,
             onAddLabel: isTrashed ? undefined : onAddLabel,
             onMoveToCollection: isTrashed ? undefined : (() => setShowMoveToCollection(true)),
             onSetWidth: isTrashed ? undefined : onSetCardWidth,

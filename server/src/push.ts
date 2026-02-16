@@ -62,6 +62,36 @@ router.get('/api/push/public-key', async (_req: Request, res: Response) => {
   res.json({ enabled: cfg.enabled, publicKey: cfg.publicKey, reason: cfg.reason || null });
 });
 
+router.get('/api/push/health', async (req: Request, res: Response) => {
+  const user = await getUserFromToken(req);
+  if (!user) return res.status(401).json({ error: 'unauthenticated' });
+
+  const cfg = getVapidConfig();
+  const deviceKeyRaw = (req.headers['x-device-key'] ?? req.headers['x-device-id']) as any;
+  const deviceKey = (typeof deviceKeyRaw === 'string' ? deviceKeyRaw : Array.isArray(deviceKeyRaw) ? deviceKeyRaw[0] : '').trim();
+  const dk = (deviceKey && deviceKey.length <= 128) ? deviceKey : null;
+
+  try {
+    const prismaAny = prisma as any;
+    const userSubscriptionCount = Number(await prismaAny.pushSubscription.count({ where: { userId: user.id } })) || 0;
+    const deviceSubscriptionCount = dk
+      ? (Number(await prismaAny.pushSubscription.count({ where: { userId: user.id, deviceKey: dk } })) || 0)
+      : 0;
+
+    res.json({
+      ok: true,
+      serverEnabled: cfg.enabled,
+      serverReason: cfg.reason || null,
+      userSubscriptionCount,
+      deviceSubscriptionCount,
+      hasDeviceSubscription: deviceSubscriptionCount > 0,
+      hasAnyUserSubscription: userSubscriptionCount > 0,
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'failed_push_health', detail: String(err) });
+  }
+});
+
 router.post('/api/push/subscribe', async (req: Request, res: Response) => {
   const user = await getUserFromToken(req);
   if (!user) return res.status(401).json({ error: 'unauthenticated' });

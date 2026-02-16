@@ -20,6 +20,37 @@ import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faLink, faPalette } from '@fortawesome/free-solid-svg-icons';
 import MoreMenu from './MoreMenu';
 import UrlEntryModal from './UrlEntryModal';
+import { enqueueHttpJsonMutation, enqueueImageUpload, kickOfflineSync } from '../lib/offline';
+
+function formatReminderDueIdentifier(dueMs: number): string {
+  if (!Number.isFinite(dueMs)) return 'Reminder set';
+  const due = new Date(dueMs);
+  const now = new Date();
+  const startOf = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  const dayDiff = Math.round((startOf(due).getTime() - startOf(now).getTime()) / 86400000);
+  const timeLabel = due.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+
+  if (dayDiff === 0) return `Today at ${timeLabel}`;
+  if (dayDiff === 1) return `Tomorrow at ${timeLabel}`;
+  if (dayDiff === -1) return `Yesterday at ${timeLabel}`;
+  if (dayDiff > 1 && dayDiff < 7) return `${due.toLocaleDateString([], { weekday: 'short' })} at ${timeLabel}`;
+  return due.toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+}
+
+function reminderDueColorClass(dueMs: number): string {
+  if (!Number.isFinite(dueMs)) return '';
+  const now = new Date();
+  const due = new Date(dueMs);
+  const todayUtc = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate());
+  const dueUtc = Date.UTC(due.getFullYear(), due.getMonth(), due.getDate());
+  const calendarDayDiff = Math.trunc((dueUtc - todayUtc) / 86400000);
+  const elapsedDayDiff = Math.max(0, Math.ceil((dueMs - Date.now()) / 86400000));
+  const dayDiff = Math.max(calendarDayDiff, elapsedDayDiff);
+  if (dayDiff <= 1) return 'note-reminder-due--red';
+  if (dayDiff >= 2 && dayDiff <= 7) return 'note-reminder-due--orange';
+  if (dayDiff >= 8 && dayDiff <= 14) return 'note-reminder-due--yellow';
+  return '';
+}
 
 export default function RichTextEditor({ note, onClose, onSaved, noteBg, onImagesUpdated, onColorChanged, onCollaboratorsChanged, moreMenu }:
   {
@@ -35,6 +66,8 @@ export default function RichTextEditor({ note, onClose, onSaved, noteBg, onImage
       deleteLabel?: string;
       onRestore?: () => void;
       restoreLabel?: string;
+      pinned?: boolean;
+      onTogglePin?: () => void;
       onAddLabel?: () => void;
       onMoveToCollection?: () => void;
       onSetWidth?: (span: 1 | 2 | 3) => void;
@@ -179,6 +212,61 @@ export default function RichTextEditor({ note, onClose, onSaved, noteBg, onImage
     } catch {}
   }, [(note as any).collaborators]);
 
+  function normalizeLinkPreviews(rawInput: any): any[] {
+    const raw = Array.isArray(rawInput) ? rawInput : [];
+    return raw
+      .map((p: any) => ({
+        id: Number(p?.id),
+        url: String(p?.url || ''),
+        title: (p?.title == null ? null : String(p.title)),
+        description: (p?.description == null ? null : String(p.description)),
+        imageUrl: (p?.imageUrl == null ? null : String(p.imageUrl)),
+        domain: (p?.domain == null ? null : String(p.domain)),
+      }))
+      .filter((p: any) => Number.isFinite(p.id) && p.url);
+  }
+
+  async function requestJsonOrQueue(input: {
+    method: 'PATCH' | 'PUT' | 'POST' | 'DELETE';
+    path: string;
+    body?: any;
+  }): Promise<{ status: 'ok' | 'queued' | 'failed'; data?: any }> {
+    const method = String(input.method || 'PATCH').toUpperCase() as any;
+    const path = String(input.path || '');
+    const body = input.body;
+    if (!path) return { status: 'failed' };
+
+    const queueNow = async () => {
+      try {
+        await enqueueHttpJsonMutation({ method, path, body });
+        void kickOfflineSync();
+        return { status: 'queued' as const };
+      } catch {
+        return { status: 'failed' as const };
+      }
+    };
+
+    if (navigator.onLine === false) return await queueNow();
+
+    try {
+      const hasBody = typeof body !== 'undefined';
+      const res = await fetch(path, {
+        method,
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: token ? `Bearer ${token}` : '',
+        },
+        body: hasBody ? JSON.stringify(body) : undefined,
+      });
+      if (!res.ok) throw new Error(await res.text());
+      let data: any = null;
+      try { data = await res.json(); } catch {}
+      return { status: 'ok', data };
+    } catch {
+      return await queueNow();
+    }
+  }
+
   async function onConfirmReminder(draft: ReminderDraft) {
     setShowReminderPicker(false);
     if (!isOwner) {
@@ -192,12 +280,12 @@ export default function RichTextEditor({ note, onClose, onSaved, noteBg, onImage
         }
       } catch {}
 
-      const res = await fetch(`/api/notes/${note.id}`, {
+      const result = await requestJsonOrQueue({
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json', Authorization: token ? `Bearer ${token}` : '' },
-        body: JSON.stringify({ reminderDueAt: draft.dueAtIso, reminderOffsetMinutes: draft.offsetMinutes }),
+        path: `/api/notes/${note.id}`,
+        body: { reminderDueAt: draft.dueAtIso, reminderOffsetMinutes: draft.offsetMinutes },
       });
-      if (!res.ok) throw new Error(await res.text());
+      if (result.status === 'failed') throw new Error('Failed to set reminder');
     } catch (err) {
       console.error(err);
       window.alert('Failed to set reminder');
@@ -211,12 +299,12 @@ export default function RichTextEditor({ note, onClose, onSaved, noteBg, onImage
       return;
     }
     try {
-      const res = await fetch(`/api/notes/${note.id}`, {
+      const result = await requestJsonOrQueue({
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json', Authorization: token ? `Bearer ${token}` : '' },
-        body: JSON.stringify({ reminderDueAt: null }),
+        path: `/api/notes/${note.id}`,
+        body: { reminderDueAt: null },
       });
-      if (!res.ok) throw new Error(await res.text());
+      if (result.status === 'failed') throw new Error('Failed to clear reminder');
     } catch (err) {
       console.error(err);
       window.alert('Failed to clear reminder');
@@ -239,19 +327,19 @@ export default function RichTextEditor({ note, onClose, onSaved, noteBg, onImage
     if ((lastSavedTitleRef.current || '') === (t || '')) return;
     lastSavedTitleRef.current = t || '';
     try {
-      const r1 = await fetch(`/api/notes/${note.id}` as any, {
+      const result = await requestJsonOrQueue({
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ title: t || '' }),
+        path: `/api/notes/${note.id}`,
+        body: { title: t || '' },
       });
-      if (!r1.ok) throw new Error(await r1.text());
+      if (result.status === 'failed') throw new Error('Failed to update title');
     } catch (err) {
       // revert saved pointer so we retry on next change
       lastSavedTitleRef.current = note.title || '';
       console.error('Failed to update title', err);
       window.alert('Failed to update title');
     }
-  }, [note.id, note.title, title, token]);
+  }, [note.id, note.title, title]);
 
   React.useEffect(() => {
     if ((note.title || '') === (title || '')) return;
@@ -404,51 +492,32 @@ export default function RichTextEditor({ note, onClose, onSaved, noteBg, onImage
   }
   async function requestLinkPreview(url: string) {
     try {
-      const res = await fetch(`/api/notes/${note.id}/link-preview`, {
+      const result = await requestJsonOrQueue({
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: token ? `Bearer ${token}` : '' },
-        body: JSON.stringify({ url }),
+        path: `/api/notes/${note.id}/link-preview`,
+        body: { url },
       });
-      if (!res.ok) return;
-      const data = await res.json();
-      const raw = Array.isArray(data?.previews) ? data.previews : [];
-      const next = raw
-        .map((p: any) => ({
-          id: Number(p?.id),
-          url: String(p?.url || ''),
-          title: (p?.title == null ? null : String(p.title)),
-          description: (p?.description == null ? null : String(p.description)),
-          imageUrl: (p?.imageUrl == null ? null : String(p.imageUrl)),
-          domain: (p?.domain == null ? null : String(p.domain)),
-        }))
-        .filter((p: any) => Number.isFinite(p.id) && p.url);
-      setLinkPreviews(next);
+      if (result.status === 'ok') {
+        setLinkPreviews(normalizeLinkPreviews(result.data?.previews));
+      }
     } catch {}
   }
 
   async function submitEditPreview(previewId: number, nextUrl: string) {
+    const previous = [...linkPreviews];
+    const optimistic = previous.map((p: any) => (Number(p?.id) === Number(previewId) ? { ...p, url: String(nextUrl || '').trim() } : p));
+    setLinkPreviews(optimistic);
     try {
-      const res = await fetch(`/api/notes/${note.id}/link-previews/${previewId}`, {
+      const result = await requestJsonOrQueue({
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json', Authorization: token ? `Bearer ${token}` : '' },
-        body: JSON.stringify({ url: nextUrl }),
+        path: `/api/notes/${note.id}/link-previews/${previewId}`,
+        body: { url: nextUrl },
       });
-      if (!res.ok) throw new Error(await res.text());
-      const data = await res.json();
-      const raw = Array.isArray(data?.previews) ? data.previews : [];
-      const next = raw
-        .map((p: any) => ({
-          id: Number(p?.id),
-          url: String(p?.url || ''),
-          title: (p?.title == null ? null : String(p.title)),
-          description: (p?.description == null ? null : String(p.description)),
-          imageUrl: (p?.imageUrl == null ? null : String(p.imageUrl)),
-          domain: (p?.domain == null ? null : String(p.domain)),
-        }))
-        .filter((p: any) => Number.isFinite(p.id) && p.url);
-      setLinkPreviews(next);
+      if (result.status === 'failed') throw new Error('Failed to edit URL');
+      if (result.status === 'ok') setLinkPreviews(normalizeLinkPreviews(result.data?.previews));
     } catch (e) {
       console.error(e);
+      setLinkPreviews(previous);
       window.alert('Failed to edit URL');
     }
   }
@@ -489,37 +558,26 @@ export default function RichTextEditor({ note, onClose, onSaved, noteBg, onImage
     };
   }, [previewMenu]);
   async function deletePreview(previewId: number) {
+    const previous = [...linkPreviews];
+    const optimistic = previous.filter((p: any) => Number(p?.id) !== Number(previewId));
+    setLinkPreviews(optimistic);
     try {
-      const res = await fetch(`/api/notes/${note.id}/link-previews/${previewId}`, {
+      const result = await requestJsonOrQueue({
         method: 'DELETE',
-        headers: { Authorization: token ? `Bearer ${token}` : '' },
+        path: `/api/notes/${note.id}/link-previews/${previewId}`,
       });
-      if (!res.ok) throw new Error(await res.text());
-      const data = await res.json();
-      const raw = Array.isArray(data?.previews) ? data.previews : [];
-      setLinkPreviews(raw);
+      if (result.status === 'failed') throw new Error('Failed to delete URL');
+      if (result.status === 'ok') setLinkPreviews(normalizeLinkPreviews(result.data?.previews));
     } catch (e) {
       console.error(e);
+      setLinkPreviews(previous);
       window.alert('Failed to delete URL');
     }
   }
   async function editPreview(previewId: number) {
     const nextUrl = window.prompt('Edit URL:');
     if (!nextUrl) return;
-    try {
-      const res = await fetch(`/api/notes/${note.id}/link-previews/${previewId}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json', Authorization: token ? `Bearer ${token}` : '' },
-        body: JSON.stringify({ url: nextUrl }),
-      });
-      if (!res.ok) throw new Error(await res.text());
-      const data = await res.json();
-      const raw = Array.isArray(data?.previews) ? data.previews : [];
-      setLinkPreviews(raw);
-    } catch (e) {
-      console.error(e);
-      window.alert('Failed to edit URL');
-    }
+    await submitEditPreview(previewId, nextUrl);
   }
 
   // Debounced derived preview sync: keep `note.body` updated from Yjs for cards/search
@@ -570,7 +628,9 @@ export default function RichTextEditor({ note, onClose, onSaved, noteBg, onImage
       const isEmpty = !String(title || '').trim() && !txt;
       if (isEmpty && (dirtyRef.current || ((note.title || '') !== (title || '')))) {
         // Discard empty notes instead of saving.
-        try { fetch(`/api/notes/${note.id}`, { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } }); } catch {}
+        try {
+          void requestJsonOrQueue({ method: 'DELETE', path: `/api/notes/${note.id}` });
+        } catch {}
         onClose();
         return;
       }
@@ -615,15 +675,13 @@ export default function RichTextEditor({ note, onClose, onSaved, noteBg, onImage
 
   async function onPickColor(color: string) {
     const nextBg = color || '';
-    try {
-      const res = await fetch(`/api/notes/${note.id}/prefs`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ color: nextBg })
-      });
-      if (!res.ok) throw new Error(await res.text());
-    } catch (err) {
-      console.error('Failed to save color preference', err);
+    const result = await requestJsonOrQueue({
+      method: 'PATCH',
+      path: `/api/notes/${note.id}/prefs`,
+      body: { color: nextBg },
+    });
+    if (result.status === 'failed') {
+      console.error('Failed to save color preference');
       window.alert('Failed to save color preference');
     }
     setBg(nextBg);
@@ -643,8 +701,24 @@ export default function RichTextEditor({ note, onClose, onSaved, noteBg, onImage
     });
     try { setImagesOpen(true); } catch {}
     (async () => {
+      const normalized = String(url || '').trim();
+      if (!normalized) return;
+      const queueForLater = async () => {
+        try {
+          await enqueueImageUpload(Number(note.id), normalized, tempId);
+          void kickOfflineSync();
+        } catch (err) {
+          console.error('Failed to queue image upload', err);
+        }
+      };
+
+      if (navigator.onLine === false) {
+        await queueForLater();
+        return;
+      }
+
       try {
-        const res = await fetch(`/api/notes/${note.id}/images`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ url }) });
+        const res = await fetch(`/api/notes/${note.id}/images`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ url: normalized }) });
         if (!res.ok) throw new Error(await res.text());
         const data = await res.json();
         const img = data.image || null;
@@ -663,8 +737,7 @@ export default function RichTextEditor({ note, onClose, onSaved, noteBg, onImage
         }
       } catch (err) {
         console.error('Failed to attach image', err);
-        // Keep optimistic image; just surface the error.
-        window.alert('Failed to attach image');
+        await queueForLater();
       }
     })();
   }
@@ -679,14 +752,13 @@ export default function RichTextEditor({ note, onClose, onSaved, noteBg, onImage
     setShowCollaborator(false);
     (async () => {
       try {
-        const res = await fetch(`/api/notes/${note.id}/collaborators`, {
+        const result = await requestJsonOrQueue({
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-          body: JSON.stringify({ email: u.email })
+          path: `/api/notes/${note.id}/collaborators`,
+          body: { email: u.email },
         });
-        if (!res.ok) throw new Error(await res.text());
-        const data = await res.json();
-        const collab = (data && (data.collaborator || null));
+        if (result.status === 'failed') throw new Error('Failed to add collaborator');
+        const collab = (result.status === 'ok') ? (result.data && (result.data.collaborator || null)) : null;
         if (collab && typeof collab.id === 'number') {
           setCollaborators((s) => {
             const next = s.map(c => (c.userId === u.id ? { ...c, collabId: Number(collab.id) } : c));
@@ -707,16 +779,19 @@ export default function RichTextEditor({ note, onClose, onSaved, noteBg, onImage
     })();
   }
   async function onRemoveCollaborator(collabId: number) {
+    const previous = [...collaborators];
+    setCollaborators((s) => {
+      const next = s.filter(c => c.collabId !== collabId);
+      try { (onCollaboratorsChanged as any)?.(next); } catch {}
+      return next;
+    });
     try {
-      const res = await fetch(`/api/notes/${note.id}/collaborators/${collabId}`, { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } });
-      if (!res.ok) throw new Error(await res.text());
-      setCollaborators((s) => {
-        const next = s.filter(c => c.collabId !== collabId);
-        try { (onCollaboratorsChanged as any)?.(next); } catch {}
-        return next;
-      });
+      const result = await requestJsonOrQueue({ method: 'DELETE', path: `/api/notes/${note.id}/collaborators/${collabId}` });
+      if (result.status === 'failed') throw new Error('Failed to remove collaborator');
     } catch (err) {
       console.error('Failed to remove collaborator', err);
+      setCollaborators(previous);
+      try { (onCollaboratorsChanged as any)?.(previous); } catch {}
       window.alert('Failed to remove collaborator');
     }
   }
@@ -727,8 +802,8 @@ export default function RichTextEditor({ note, onClose, onSaved, noteBg, onImage
     setImages(next);
     onImagesUpdated && onImagesUpdated(next);
     try {
-      const res = await deleteImageFromServer(note.id, imageId, token);
-      if (!res.ok) throw new Error(await res.text());
+      const result = await requestJsonOrQueue({ method: 'DELETE', path: `/api/notes/${note.id}/images/${imageId}` });
+      if (result.status === 'failed') throw new Error('Failed to delete image');
       broadcastImagesChanged();
     } catch (err) {
       console.error('Failed to delete image', err);
@@ -751,6 +826,17 @@ export default function RichTextEditor({ note, onClose, onSaved, noteBg, onImage
         <div className="dialog-body">
           <div className="editor-scroll-area">
           <div className="rt-sticky-header">
+            {(() => {
+              const due = (note as any)?.reminderDueAt;
+              if (!due) return null;
+              const dueMs = Date.parse(String(due));
+              const urgencyClass = Number.isFinite(dueMs) ? reminderDueColorClass(dueMs) : '';
+              return (
+                <div className={`note-reminder-due editor-reminder-chip${urgencyClass ? ` ${urgencyClass}` : ''}`} title={`Reminder: ${Number.isFinite(dueMs) ? new Date(dueMs).toLocaleString() : 'Set'}`}>
+                  {Number.isFinite(dueMs) ? formatReminderDueIdentifier(dueMs) : 'Reminder set'}
+                </div>
+              );
+            })()}
             <div style={{ display: 'flex', gap: 12, marginBottom: 8 }}>
               <input
                 className={`note-title-input${!String(title || '').trim() ? ' note-title-input-missing' : ''}`}
@@ -1115,7 +1201,13 @@ export default function RichTextEditor({ note, onClose, onSaved, noteBg, onImage
       {moreMenu && showMore && (
         <MoreMenu
           anchorRef={moreBtnRef as any}
-          itemsCount={((note as any)?.trashedAt ? 2 : (moreMenu.onMoveToCollection ? 5 : 4))}
+          itemsCount={((note as any)?.trashedAt
+            ? 2
+            : ((moreMenu.onMoveToCollection ? 1 : 0)
+              + (moreMenu.onTogglePin ? 1 : 0)
+              + 4))}
+          pinned={moreMenu.pinned}
+          onTogglePin={moreMenu.onTogglePin}
           onClose={() => setShowMore(false)}
           onDelete={moreMenu.onDelete}
           deleteLabel={moreMenu.deleteLabel}
@@ -1180,11 +1272,4 @@ export default function RichTextEditor({ note, onClose, onSaved, noteBg, onImage
     </>);
   }
   return dialog;
-}
-
-function deleteImageFromServer(noteId: number, imageId: number, token: string) {
-  return fetch(`/api/notes/${noteId}/images/${imageId}`, {
-    method: 'DELETE',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-  });
 }

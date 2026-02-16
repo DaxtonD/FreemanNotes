@@ -2,6 +2,7 @@ import React from "react";
 import { createRoot } from "react-dom/client";
 import App from "./App";
 import "./styles.css";
+import { kickOfflineSync, startOfflineSyncEngine } from "./lib/offline";
 
 function applySavedPrefs() {
 	try {
@@ -76,6 +77,10 @@ document.addEventListener('visibilitychange', () => {
 	if (!document.hidden) applyStandaloneFlag();
 });
 
+try {
+	startOfflineSyncEngine();
+} catch {}
+
 function applyBrowserEngineFlag() {
 	try {
 		const ua = String(navigator.userAgent || '').toLowerCase();
@@ -123,6 +128,23 @@ try {
 				if (reg) {
 					try { await reg.update(); } catch {}
 
+					const requestBgSync = async () => {
+						try {
+							const anyReg = reg as any;
+							if (anyReg && anyReg.sync && typeof anyReg.sync.register === 'function') {
+								await anyReg.sync.register('freemannotes-sync');
+							}
+						} catch {}
+					};
+
+					try { await requestBgSync(); } catch {}
+					try {
+						window.addEventListener('online', () => {
+							void requestBgSync();
+							void kickOfflineSync();
+						});
+					} catch {}
+
 					if (reg.waiting) {
 						try { reg.waiting.postMessage({ type: 'SKIP_WAITING' }); } catch {}
 					}
@@ -143,6 +165,15 @@ try {
 							if (sessionStorage.getItem(reloadKey)) return;
 							sessionStorage.setItem(reloadKey, '1');
 							window.location.reload();
+						} catch {}
+					});
+
+					navigator.serviceWorker.addEventListener('message', (evt: MessageEvent) => {
+						try {
+							const type = (evt as any)?.data?.type;
+							if (type === 'FN_SYNC_WAKE') {
+								void kickOfflineSync();
+							}
 						} catch {}
 					});
 				}

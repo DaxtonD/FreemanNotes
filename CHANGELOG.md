@@ -15,6 +15,46 @@ Adheres to Semantic Versioning (MAJOR.MINOR.PATCH).
 ### Fixed
 - 
 
+## [0.8.0] - 2026-02-15
+
+### Added
+- Built-in registration defaults for both user and device preferences, including hard-coded first-run defaults by device class (`mobile`, `tablet`, `desktop`).
+- New offline-first client data layer under `client/src/lib/offline`:
+	- local note cache,
+	- mutation queue,
+	- upload queue,
+	- sync engine,
+	- Dexie-backed persistence,
+	- Yjs persistence helpers.
+- Reminder completion quick-action in note cards and editors so reminders can be marked complete (cleared) in one tap/click.
+- Desktop focus treatment for note More menus with selective context emphasis (origin note/editor remains focused while menu is open).
+
+### Changed
+- Reminder UX polish across cards/list/editor views:
+	- urgency classes standardized,
+	- list-view bell coloring refined,
+	- improved reminder update propagation while repeatedly editing due dates.
+- List layouts (single and two-column) substantially refined for desktop, narrow desktop, and mobile/PWA:
+	- improved title/meta/action spacing,
+	- better chip placement,
+	- cleaner dock/footer behavior,
+	- better card-height handling at narrower widths.
+- Editor More menus now include pin/unpin actions (including unpin for already pinned notes).
+- Increased visual separation between pinned and unpinned note sections.
+- More-menu presentation refresh:
+	- desktop popup sizing and readability tweaks,
+	- hidden desktop scrollbars,
+	- stronger mobile/PWA drag/drop visual feedback around menu-related interactions.
+- Push/notification resilience improvements and diagnostics flow updates across client/server.
+
+### Fixed
+- Mobile/PWA note reorder in list mode:
+	- removed stray reminder chip appearing in drag overlays,
+	- improved drop-target highlight visibility.
+- Android/Chrome left-edge conflict where browser back-swipe could block sidebar open gesture; sidebar swipe now consistently wins in mobile/PWA contexts.
+- Reminder urgency edge-case behavior around short-term dates (today/tomorrow/2–14 day ranges).
+- Multiple UX regressions around note drag state, click-away handling, and More menu interaction lock timing.
+
 ## [0.7.3] - 2026-02-15
 
 ### Added

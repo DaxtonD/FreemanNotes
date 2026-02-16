@@ -7,7 +7,7 @@ import UserManagementModal from './UserManagementModal';
 import AvatarCropModal from './AvatarCropModal';
 import { useTheme } from '../themeContext';
 import { usePwaInstall } from '../lib/pwaInstall';
-import { ensurePushSubscribed, getPushClientStatus, sendTestPush, showLocalTestNotification, type PushClientStatus } from '../lib/pushNotifications';
+import { ensurePushSubscribed, getLastServerPushTestAt, getPushClientStatus, getPushHealth, sendTestPush, showLocalTestNotification, type PushClientStatus, type PushHealthStatus } from '../lib/pushNotifications';
 
 const APP_VERSION = typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : '0.0.0';
 const ABOUT_ICON_DARK = '/icons/darkicon.png';
@@ -565,24 +565,42 @@ export default function PreferencesModal({ onClose }: { onClose: () => void }) {
   const [photoUploading, setPhotoUploading] = useState(false);
   // activeSection declared above so Back handler can reference it.
   const [pushStatus, setPushStatus] = useState<PushClientStatus | null>(null);
+  const [pushHealth, setPushHealth] = useState<PushHealthStatus | null>(null);
+  const [lastPushTestAt, setLastPushTestAt] = useState<string | null>(() => getLastServerPushTestAt());
   const [pushBusy, setPushBusy] = useState(false);
   const [pushMsg, setPushMsg] = useState<string | null>(null);
+
+  const refreshPushDiagnostics = React.useCallback(async () => {
+    try {
+      setPushStatus(await getPushClientStatus());
+    } catch {
+      setPushStatus(null);
+    }
+    try {
+      const token = String(auth?.token || '');
+      if (token) setPushHealth(await getPushHealth(token));
+      else setPushHealth(null);
+    } catch {
+      setPushHealth(null);
+    }
+    setLastPushTestAt(getLastServerPushTestAt());
+  }, [auth?.token]);
 
   useEffect(() => {
     if (activeSection !== 'notifications') return;
     let alive = true;
     (async () => {
       try {
-        const st = await getPushClientStatus();
+        await refreshPushDiagnostics();
         if (!alive) return;
-        setPushStatus(st);
       } catch {
         if (!alive) return;
         setPushStatus(null);
+        setPushHealth(null);
       }
     })();
     return () => { alive = false; };
-  }, [activeSection]);
+  }, [activeSection, refreshPushDiagnostics]);
   async function onPhotoSelected(file: File | null) {
     try {
       if (!file) return;
@@ -760,6 +778,52 @@ export default function PreferencesModal({ onClose }: { onClose: () => void }) {
                 <div><strong>Server push:</strong> {pushStatus ? (pushStatus.serverEnabled ? 'enabled' : `disabled${pushStatus.serverReason ? ` (${pushStatus.serverReason})` : ''}`) : '…'}</div>
               </div>
 
+              {(() => {
+                const swSubscriptionOk = !!pushStatus?.subscribed;
+                const serverRowOk = !!pushHealth?.hasDeviceSubscription;
+                const serverEnabledOk = !!pushStatus?.serverEnabled;
+                const isHealthy = swSubscriptionOk && serverRowOk && serverEnabledOk;
+                const lastTs = lastPushTestAt;
+                const lastTestOk = !!lastTs;
+                const lastTsText = (() => {
+                  if (!lastTs) return 'never';
+                  try {
+                    const d = new Date(lastTs);
+                    if (!Number.isFinite(d.getTime())) return 'unknown';
+                    return d.toLocaleString();
+                  } catch {
+                    return 'unknown';
+                  }
+                })();
+
+                return (
+                  <div style={{ marginTop: 10, padding: '10px 12px', borderRadius: 10, background: 'var(--card)', border: '1px solid var(--border)' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                      <strong>Push health:</strong>
+                      <span style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: 6,
+                        borderRadius: 999,
+                        padding: '3px 10px',
+                        fontSize: 12,
+                        fontWeight: 700,
+                        background: isHealthy ? 'rgba(46, 204, 113, 0.16)' : 'rgba(255, 171, 0, 0.18)',
+                        color: isHealthy ? '#2ecc71' : '#f6c343',
+                        border: isHealthy ? '1px solid rgba(46, 204, 113, 0.35)' : '1px solid rgba(246, 195, 67, 0.35)',
+                      }}>
+                        {isHealthy ? 'Healthy' : 'Needs attention'}
+                      </span>
+                    </div>
+                    <div style={{ marginTop: 8, display: 'grid', gap: 4, fontSize: 13 }}>
+                      <div><strong>1)</strong> {swSubscriptionOk ? '✅' : '⚠️'} Active SW subscription: {swSubscriptionOk ? 'yes' : 'no'}</div>
+                      <div><strong>2)</strong> {serverRowOk ? '✅' : '⚠️'} Server row for this device: {serverRowOk ? 'yes' : 'no'}{pushHealth ? ` (device: ${pushHealth.deviceSubscriptionCount}, user: ${pushHealth.userSubscriptionCount})` : ''}</div>
+                      <div><strong>3)</strong> {lastTestOk ? '✅' : '⚠️'} Last successful push test: {lastTsText}</div>
+                    </div>
+                  </div>
+                );
+              })()}
+
               {pushMsg && (
                 <div style={{ marginTop: 10, padding: '8px 10px', borderRadius: 10, background: 'var(--card)', border: '1px solid var(--border)' }}>
                   {pushMsg}
@@ -767,6 +831,33 @@ export default function PreferencesModal({ onClose }: { onClose: () => void }) {
               )}
 
               <div style={{ marginTop: 12, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                <button
+                  className="btn"
+                  type="button"
+                  disabled={pushBusy}
+                  onClick={async () => {
+                    const token = auth?.token || '';
+                    if (!token) {
+                      setPushMsg('You must be signed in to repair push.');
+                      return;
+                    }
+                    setPushBusy(true);
+                    setPushMsg(null);
+                    try {
+                      await ensurePushSubscribed(token);
+                      await refreshPushDiagnostics();
+                      setPushMsg('Push repaired for this device.');
+                    } catch (err: any) {
+                      setPushMsg('Push repair failed: ' + String(err?.message || err));
+                    } finally {
+                      setPushBusy(false);
+                    }
+                  }}
+                  title="Re-subscribe this device and refresh push health"
+                >
+                  Repair push
+                </button>
+
                 <button
                   className="btn"
                   type="button"
@@ -785,7 +876,7 @@ export default function PreferencesModal({ onClose }: { onClose: () => void }) {
                     } catch (err: any) {
                       setPushMsg('Error enabling notifications: ' + String(err?.message || err));
                     } finally {
-                      try { setPushStatus(await getPushClientStatus()); } catch {}
+                      await refreshPushDiagnostics();
                       setPushBusy(false);
                     }
                   }}
@@ -807,7 +898,7 @@ export default function PreferencesModal({ onClose }: { onClose: () => void }) {
                     } catch (err: any) {
                       setPushMsg('Local test failed: ' + String(err?.message || err));
                     } finally {
-                      try { setPushStatus(await getPushClientStatus()); } catch {}
+                      await refreshPushDiagnostics();
                       setPushBusy(false);
                     }
                   }}
@@ -831,10 +922,11 @@ export default function PreferencesModal({ onClose }: { onClose: () => void }) {
                     try {
                       await sendTestPush(token, 'Push test from FreemanNotes');
                       setPushMsg('Sent a push test. (If you don’t see it, check Android notification settings for the app.)');
+                      setLastPushTestAt(getLastServerPushTestAt());
                     } catch (err: any) {
                       setPushMsg('Push test failed: ' + String(err?.message || err));
                     } finally {
-                      try { setPushStatus(await getPushClientStatus()); } catch {}
+                      await refreshPushDiagnostics();
                       setPushBusy(false);
                     }
                   }}

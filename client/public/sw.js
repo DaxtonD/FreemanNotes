@@ -47,6 +47,18 @@ self.addEventListener('message', (event) => {
   }
 });
 
+self.addEventListener('sync', (event) => {
+  if (!event || event.tag !== 'freemannotes-sync') return;
+  event.waitUntil((async () => {
+    try {
+      const clients = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+      for (const client of clients) {
+        try { client.postMessage({ type: 'FN_SYNC_WAKE' }); } catch {}
+      }
+    } catch {}
+  })());
+});
+
 self.addEventListener('fetch', (event) => {
   const req = event.request;
   if (!req || req.method !== 'GET') return;

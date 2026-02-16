@@ -19,6 +19,37 @@ import UrlEntryModal from './UrlEntryModal';
 import { draggable, dropTargetForElements } from '@atlaskit/pragmatic-drag-and-drop/element/adapter';
 import { setCustomNativeDragPreview } from '@atlaskit/pragmatic-drag-and-drop/element/set-custom-native-drag-preview';
 import { preserveOffsetOnSource } from '@atlaskit/pragmatic-drag-and-drop/element/preserve-offset-on-source';
+import { bindYDocPersistence, enqueueHttpJsonMutation, enqueueImageUpload, kickOfflineSync } from '../lib/offline';
+
+function formatReminderDueIdentifier(dueMs: number): string {
+  if (!Number.isFinite(dueMs)) return 'Reminder set';
+  const due = new Date(dueMs);
+  const now = new Date();
+  const startOf = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  const dayDiff = Math.round((startOf(due).getTime() - startOf(now).getTime()) / 86400000);
+  const timeLabel = due.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+
+  if (dayDiff === 0) return `Today at ${timeLabel}`;
+  if (dayDiff === 1) return `Tomorrow at ${timeLabel}`;
+  if (dayDiff === -1) return `Yesterday at ${timeLabel}`;
+  if (dayDiff > 1 && dayDiff < 7) return `${due.toLocaleDateString([], { weekday: 'short' })} at ${timeLabel}`;
+  return due.toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+}
+
+function reminderDueColorClass(dueMs: number): string {
+  if (!Number.isFinite(dueMs)) return '';
+  const now = new Date();
+  const due = new Date(dueMs);
+  const todayUtc = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate());
+  const dueUtc = Date.UTC(due.getFullYear(), due.getMonth(), due.getDate());
+  const calendarDayDiff = Math.trunc((dueUtc - todayUtc) / 86400000);
+  const elapsedDayDiff = Math.max(0, Math.ceil((dueMs - Date.now()) / 86400000));
+  const dayDiff = Math.max(calendarDayDiff, elapsedDayDiff);
+  if (dayDiff <= 1) return 'note-reminder-due--red';
+  if (dayDiff >= 2 && dayDiff <= 7) return 'note-reminder-due--orange';
+  if (dayDiff >= 8 && dayDiff <= 14) return 'note-reminder-due--yellow';
+  return '';
+}
 
 export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImagesUpdated, onColorChanged, onCollaboratorsChanged, moreMenu }:
   {
@@ -34,6 +65,8 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
       deleteLabel?: string;
       onRestore?: () => void;
       restoreLabel?: string;
+      pinned?: boolean;
+      onTogglePin?: () => void;
       onAddLabel?: () => void;
       onMoveToCollection?: () => void;
       onUncheckAll?: () => void;
@@ -76,12 +109,12 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
         }
       } catch {}
 
-      const res = await fetch(`/api/notes/${note.id}`, {
+      const result = await requestJsonOrQueue({
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json', Authorization: token ? `Bearer ${token}` : '' },
-        body: JSON.stringify({ reminderDueAt: draft.dueAtIso, reminderOffsetMinutes: draft.offsetMinutes }),
+        path: `/api/notes/${note.id}`,
+        body: { reminderDueAt: draft.dueAtIso, reminderOffsetMinutes: draft.offsetMinutes },
       });
-      if (!res.ok) throw new Error(await res.text());
+      if (result.status === 'failed') throw new Error('Failed to set reminder');
     } catch (err) {
       console.error(err);
       window.alert('Failed to set reminder');
@@ -95,12 +128,12 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
       return;
     }
     try {
-      const res = await fetch(`/api/notes/${note.id}`, {
+      const result = await requestJsonOrQueue({
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json', Authorization: token ? `Bearer ${token}` : '' },
-        body: JSON.stringify({ reminderDueAt: null }),
+        path: `/api/notes/${note.id}`,
+        body: { reminderDueAt: null },
       });
-      if (!res.ok) throw new Error(await res.text());
+      if (result.status === 'failed') throw new Error('Failed to clear reminder');
     } catch (err) {
       console.error(err);
       window.alert('Failed to clear reminder');
@@ -292,23 +325,78 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
     } catch {}
   }, [(note as any).collaborators]);
 
+  function normalizeLinkPreviews(rawInput: any): any[] {
+    const raw = Array.isArray(rawInput) ? rawInput : [];
+    return raw
+      .map((p: any) => ({
+        id: Number(p?.id),
+        url: String(p?.url || ''),
+        title: (p?.title == null ? null : String(p.title)),
+        description: (p?.description == null ? null : String(p.description)),
+        imageUrl: (p?.imageUrl == null ? null : String(p.imageUrl)),
+        domain: (p?.domain == null ? null : String(p.domain)),
+      }))
+      .filter((p: any) => Number.isFinite(p.id) && p.url);
+  }
+
+  async function requestJsonOrQueue(input: {
+    method: 'PATCH' | 'PUT' | 'POST' | 'DELETE';
+    path: string;
+    body?: any;
+  }): Promise<{ status: 'ok' | 'queued' | 'failed'; data?: any }> {
+    const method = String(input.method || 'PATCH').toUpperCase() as any;
+    const path = String(input.path || '');
+    const body = input.body;
+    if (!path) return { status: 'failed' };
+
+    const queueNow = async () => {
+      try {
+        await enqueueHttpJsonMutation({ method, path, body });
+        void kickOfflineSync();
+        return { status: 'queued' as const };
+      } catch {
+        return { status: 'failed' as const };
+      }
+    };
+
+    if (navigator.onLine === false) return await queueNow();
+
+    try {
+      const hasBody = typeof body !== 'undefined';
+      const res = await fetch(path, {
+        method,
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: token ? `Bearer ${token}` : '',
+        },
+        body: hasBody ? JSON.stringify(body) : undefined,
+      });
+      if (!res.ok) throw new Error(await res.text());
+      let data: any = null;
+      try { data = await res.json(); } catch {}
+      return { status: 'ok', data };
+    } catch {
+      return await queueNow();
+    }
+  }
+
   const saveTitleNow = React.useCallback(async (nextTitle?: string) => {
     const t = (typeof nextTitle === 'string' ? nextTitle : title);
     if ((lastSavedTitleRef.current || '') === (t || '')) return;
     lastSavedTitleRef.current = t || '';
     try {
-      const r1 = await fetch(`/api/notes/${note.id}` as any, {
+      const result = await requestJsonOrQueue({
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ title: t || '' }),
+        path: `/api/notes/${note.id}`,
+        body: { title: t || '' },
       });
-      if (!r1.ok) throw new Error(await r1.text());
+      if (result.status === 'failed') throw new Error('Failed to update title');
     } catch (err) {
       lastSavedTitleRef.current = note.title || '';
       console.error('Failed to update title', err);
       window.alert('Failed to update title');
     }
-  }, [note.id, note.title, title, token]);
+  }, [note.id, note.title, title]);
 
   React.useEffect(() => {
     if ((note.title || '') === (title || '')) return;
@@ -382,25 +470,14 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
   }
   async function requestLinkPreview(url: string) {
     try {
-      const res = await fetch(`/api/notes/${note.id}/link-preview`, {
+      const result = await requestJsonOrQueue({
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: token ? `Bearer ${token}` : '' },
-        body: JSON.stringify({ url }),
+        path: `/api/notes/${note.id}/link-preview`,
+        body: { url },
       });
-      if (!res.ok) return;
-      const data = await res.json();
-      const raw = Array.isArray(data?.previews) ? data.previews : [];
-      const next = raw
-        .map((p: any) => ({
-          id: Number(p?.id),
-          url: String(p?.url || ''),
-          title: (p?.title == null ? null : String(p.title)),
-          description: (p?.description == null ? null : String(p.description)),
-          imageUrl: (p?.imageUrl == null ? null : String(p.imageUrl)),
-          domain: (p?.domain == null ? null : String(p.domain)),
-        }))
-        .filter((p: any) => Number.isFinite(p.id) && p.url);
-      setLinkPreviews(next);
+      if (result.status === 'ok') {
+        setLinkPreviews(normalizeLinkPreviews(result.data?.previews));
+      }
     } catch {}
   }
 
@@ -440,17 +517,19 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
     };
   }, [previewMenu]);
   async function deletePreview(previewId: number) {
+    const previous = [...linkPreviews];
+    const optimistic = previous.filter((p: any) => Number(p?.id) !== Number(previewId));
+    setLinkPreviews(optimistic);
     try {
-      const res = await fetch(`/api/notes/${note.id}/link-previews/${previewId}`, {
+      const result = await requestJsonOrQueue({
         method: 'DELETE',
-        headers: { Authorization: token ? `Bearer ${token}` : '' },
+        path: `/api/notes/${note.id}/link-previews/${previewId}`,
       });
-      if (!res.ok) throw new Error(await res.text());
-      const data = await res.json();
-      const raw = Array.isArray(data?.previews) ? data.previews : [];
-      setLinkPreviews(raw);
+      if (result.status === 'failed') throw new Error('Failed to delete URL');
+      if (result.status === 'ok') setLinkPreviews(normalizeLinkPreviews(result.data?.previews));
     } catch (e) {
       console.error(e);
+      setLinkPreviews(previous);
       window.alert('Failed to delete URL');
     }
   }
@@ -467,18 +546,20 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
   }
 
   async function submitEditPreview(previewId: number, nextUrl: string) {
+    const previous = [...linkPreviews];
+    const optimistic = previous.map((p: any) => (Number(p?.id) === Number(previewId) ? { ...p, url: String(nextUrl || '').trim() } : p));
+    setLinkPreviews(optimistic);
     try {
-      const res = await fetch(`/api/notes/${note.id}/link-previews/${previewId}`, {
+      const result = await requestJsonOrQueue({
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json', Authorization: token ? `Bearer ${token}` : '' },
-        body: JSON.stringify({ url: nextUrl }),
+        path: `/api/notes/${note.id}/link-previews/${previewId}`,
+        body: { url: nextUrl },
       });
-      if (!res.ok) throw new Error(await res.text());
-      const data = await res.json();
-      const raw = Array.isArray(data?.previews) ? data.previews : [];
-      setLinkPreviews(raw);
+      if (result.status === 'failed') throw new Error('Failed to edit URL');
+      if (result.status === 'ok') setLinkPreviews(normalizeLinkPreviews(result.data?.previews));
     } catch (e) {
       console.error(e);
+      setLinkPreviews(previous);
       window.alert('Failed to edit URL');
     }
   }
@@ -563,6 +644,51 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
   const debouncedSyncTimer = React.useRef<number | null>(null);
   const syncedRef = React.useRef<boolean>(false);
   const dirtyRef = React.useRef<boolean>(false);
+
+  React.useEffect(() => {
+    let disposed = false;
+    let cleanup: (() => void) | null = null;
+
+    (async () => {
+      try {
+        cleanup = await bindYDocPersistence(`note-${note.id}`, ydoc);
+        if (disposed && cleanup) {
+          try { cleanup(); } catch {}
+          cleanup = null;
+        }
+      } catch {}
+    })();
+
+    return () => {
+      disposed = true;
+      try { cleanup && cleanup(); } catch {}
+    };
+  }, [note.id, ydoc]);
+
+  React.useEffect(() => {
+    const onUploadSuccess = (evt: Event) => {
+      try {
+        const detail = (evt as CustomEvent<any>).detail || {};
+        if (Number(detail.noteId) !== Number(note.id)) return;
+        const image = detail.image || null;
+        if (!image || typeof image !== 'object') return;
+        const imageId = Number((image as any).id);
+        const imageUrl = String((image as any).url || '');
+        if (!Number.isFinite(imageId) || !imageUrl) return;
+        const tempId = Number(detail.tempClientId);
+        setImages((prev) => {
+          const filtered = Number.isFinite(tempId)
+            ? prev.filter((it: any) => Number(it?.id) !== tempId)
+            : prev;
+          if (filtered.some((it: any) => Number(it?.id) === imageId)) return filtered;
+          return [...filtered, { id: imageId, url: imageUrl }];
+        });
+      } catch {}
+    };
+
+    window.addEventListener('freemannotes:offline-upload/success', onUploadSuccess as EventListener);
+    return () => window.removeEventListener('freemannotes:offline-upload/success', onUploadSuccess as EventListener);
+  }, [note.id]);
 
   const markDirty = React.useCallback(() => {
     if (dirtyRef.current) return;
@@ -1123,12 +1249,13 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
                 if (typeof it.id === 'number') payload.id = it.id;
                 return payload;
               });
-              const res = await fetch(`/api/notes/${note.id}/items`, {
-                method: 'PUT', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-                body: JSON.stringify({ items: ordered, replaceMissing: true })
+              const result = await requestJsonOrQueue({
+                method: 'PUT',
+                path: `/api/notes/${note.id}/items`,
+                body: { items: ordered, replaceMissing: true },
               });
-              if (res.ok) {
-                const data = await res.json();
+              if (result.status === 'ok') {
+                const data = result.data || {};
                 const serverItems: Array<any> = Array.isArray(data.items) ? data.items : [];
                 const yarr2 = yarrayRef.current;
                 if (yarr2 && serverItems.length === yarr2.length) {
@@ -1803,16 +1930,20 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
     try {
       try { pruneEmptyChecklistItemsFromYjs(); } catch {}
       if ((note.title || '') !== title) {
-        const r1 = await fetch(`/api/notes/${note.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ title }) });
-        if (!r1.ok) throw new Error(await r1.text());
+        const titleSave = await requestJsonOrQueue({ method: 'PATCH', path: `/api/notes/${note.id}`, body: { title } });
+        if (titleSave.status === 'failed') throw new Error('Failed to save title');
       }
       // derive payload from Yjs state
       const yarr = yarrayRef.current;
       const arrRaw = yarr ? yarr.toArray().map((m) => ({ id: (typeof m.get('id') === 'number' ? Number(m.get('id')) : undefined), content: String(m.get('content') || ''), checked: !!m.get('checked'), indent: Number(m.get('indent') || 0) })) : items;
       const arr = (arrRaw || []).filter((it: any) => !!stripHtmlToText(String(it?.content || '')));
       const payloadItems = arr.map((it, i) => { const payload: any = { content: it.content, checked: !!it.checked, ord: i, indent: it.indent || 0 }; if (typeof it.id === 'number') payload.id = it.id; return payload; });
-      const res = await fetch(`/api/notes/${note.id}/items`, { method: 'PUT', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ items: payloadItems, replaceMissing: true }) });
-      if (!res.ok) throw new Error(await res.text());
+      const itemsSave = await requestJsonOrQueue({
+        method: 'PUT',
+        path: `/api/notes/${note.id}/items`,
+        body: { items: payloadItems, replaceMissing: true },
+      });
+      if (itemsSave.status === 'failed') throw new Error('Failed to save checklist');
       onSaved && onSaved({ items: payloadItems, title });
       onClose();
     } catch (err) { console.error('Failed to save checklist', err); window.alert('Failed to save checklist'); } finally { setSaving(false); }
@@ -1864,15 +1995,13 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
 
   async function onPickColor(color: string) {
     const next = color || '';
-    try {
-      const res = await fetch(`/api/notes/${note.id}/prefs`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ color: next })
-      });
-      if (!res.ok) throw new Error(await res.text());
-    } catch (err) {
-      console.error('Failed to save color preference', err);
+    const result = await requestJsonOrQueue({
+      method: 'PATCH',
+      path: `/api/notes/${note.id}/prefs`,
+      body: { color: next },
+    });
+    if (result.status === 'failed') {
+      console.error('Failed to save color preference');
       window.alert('Failed to save color preference');
     }
     setBg(next);
@@ -1892,11 +2021,27 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
     });
     try { setImagesOpen(true); } catch {}
     (async () => {
+      const normalized = String(url || '').trim();
+      if (!normalized) return;
+      const queueForLater = async () => {
+        try {
+          await enqueueImageUpload(Number(note.id), normalized, tempId);
+          void kickOfflineSync();
+        } catch (err) {
+          console.error('Failed to queue image upload', err);
+        }
+      };
+
+      if (navigator.onLine === false) {
+        await queueForLater();
+        return;
+      }
+
       try {
         const res = await fetch(`/api/notes/${note.id}/images`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-          body: JSON.stringify({ url }),
+          body: JSON.stringify({ url: normalized }),
         });
         if (!res.ok) throw new Error(await res.text());
         const data = await res.json();
@@ -1914,12 +2059,7 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
         broadcastImagesChanged();
       }
       catch {
-        // rollback optimistic item
-        setImages((s) => {
-          const rollback = s.filter((x) => Number(x.id) !== Number(tempId));
-          onImagesUpdated && onImagesUpdated(rollback);
-          return rollback;
-        });
+        await queueForLater();
       }
     })();
   }
@@ -1940,14 +2080,13 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
     });
 
     try {
-      const res = await fetch(`/api/notes/${note.id}/collaborators`, {
+      const result = await requestJsonOrQueue({
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ userId: Number(u.id) }),
+        path: `/api/notes/${note.id}/collaborators`,
+        body: { userId: Number(u.id) },
       });
-      if (!res.ok) throw new Error(await res.text());
-      const data = await res.json();
-      const collab = (data && (data.collaborator || null));
+      if (result.status === 'failed') throw new Error('Failed to add collaborator');
+      const collab = (result.status === 'ok') ? (result.data && (result.data.collaborator || null)) : null;
       if (collab && typeof collab.id === 'number') {
         setCollaborators((s) => {
           const next = s.map(c => (c.userId === u.id ? { ...c, collabId: Number(collab.id) } : c));
@@ -1966,16 +2105,19 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
   }
 
   async function onRemoveCollaborator(collabId: number) {
+    const previous = [...collaborators];
+    setCollaborators((s) => {
+      const next = s.filter(c => c.collabId !== collabId);
+      try { (onCollaboratorsChanged as any)?.(next); } catch {}
+      return next;
+    });
     try {
-      const res = await fetch(`/api/notes/${note.id}/collaborators/${collabId}`, { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } });
-      if (!res.ok) throw new Error(await res.text());
-      setCollaborators((s) => {
-        const next = s.filter(c => c.collabId !== collabId);
-        try { (onCollaboratorsChanged as any)?.(next); } catch {}
-        return next;
-      });
+      const result = await requestJsonOrQueue({ method: 'DELETE', path: `/api/notes/${note.id}/collaborators/${collabId}` });
+      if (result.status === 'failed') throw new Error('Failed to remove collaborator');
     } catch (err) {
       console.error('Failed to remove collaborator', err);
+      setCollaborators(previous);
+      try { (onCollaboratorsChanged as any)?.(previous); } catch {}
     }
   }
   async function performDeleteImage(imageId: number) {
@@ -1984,8 +2126,8 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
     setImages(next);
     onImagesUpdated && onImagesUpdated(next);
     try {
-      const res = await fetch(`/api/notes/${note.id}/images/${imageId}`, { method: 'DELETE', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` } });
-      if (!res.ok) throw new Error(await res.text());
+      const result = await requestJsonOrQueue({ method: 'DELETE', path: `/api/notes/${note.id}/images/${imageId}` });
+      if (result.status === 'failed') throw new Error('Failed to delete image');
       broadcastImagesChanged();
     } catch (err) {
       console.error('Failed to delete image', err);
@@ -2023,7 +2165,7 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
       const isEmpty = !String(title || '').trim() && normalized.length === 0;
       if (isEmpty && (dirtyRef.current || ((note.title || '') !== (title || '')))) {
         // Discard empty checklist notes instead of saving.
-        try { fetch(`/api/notes/${note.id}`, { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } }); } catch {}
+        try { void requestJsonOrQueue({ method: 'DELETE', path: `/api/notes/${note.id}` }); } catch {}
         onClose();
         return;
       }
@@ -2034,21 +2176,17 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
           (async () => {
             try {
               if ((note.title || '') !== (title || '')) {
-                await fetch(`/api/notes/${note.id}`, {
-                  method: 'PATCH',
-                  headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-                  body: JSON.stringify({ title: title || '' }),
-                });
+                await requestJsonOrQueue({ method: 'PATCH', path: `/api/notes/${note.id}`, body: { title: title || '' } });
               }
               const payloadItems = (normalized as any[]).map((it: any, i: number) => {
                 const payload: any = { content: String(it?.content || ''), checked: !!it?.checked, ord: i, indent: Number(it?.indent || 0) };
                 if (typeof it?.id === 'number') payload.id = it.id;
                 return payload;
               });
-              await fetch(`/api/notes/${note.id}/items`, {
+              await requestJsonOrQueue({
                 method: 'PUT',
-                headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-                body: JSON.stringify({ items: payloadItems, replaceMissing: true }),
+                path: `/api/notes/${note.id}/items`,
+                body: { items: payloadItems, replaceMissing: true },
               });
             } catch {}
           })();
@@ -2071,6 +2209,17 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
         <div className="dialog-body">
           <div className="editor-scroll-area">
           <div className="rt-sticky-header">
+            {(() => {
+              const due = (note as any)?.reminderDueAt;
+              if (!due) return null;
+              const dueMs = Date.parse(String(due));
+              const urgencyClass = Number.isFinite(dueMs) ? reminderDueColorClass(dueMs) : '';
+              return (
+                <div className={`note-reminder-due editor-reminder-chip${urgencyClass ? ` ${urgencyClass}` : ''}`} title={`Reminder: ${Number.isFinite(dueMs) ? new Date(dueMs).toLocaleString() : 'Set'}`}>
+                  {Number.isFinite(dueMs) ? formatReminderDueIdentifier(dueMs) : 'Reminder set'}
+                </div>
+              );
+            })()}
             <div style={{ display: 'flex', gap: 12, marginBottom: 8 }}>
               <input
                 className={`note-title-input${!String(title || '').trim() ? ' note-title-input-missing' : ''}`}
@@ -3148,7 +3297,13 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
               {moreMenu && showMore && (
                 <MoreMenu
                   anchorRef={moreBtnRef as any}
-                  itemsCount={((note as any)?.trashedAt ? 2 : (moreMenu.onMoveToCollection ? 5 : 4))}
+                  itemsCount={((note as any)?.trashedAt
+                    ? 2
+                    : ((moreMenu.onMoveToCollection ? 1 : 0)
+                      + (moreMenu.onTogglePin ? 1 : 0)
+                      + 4))}
+                  pinned={moreMenu.pinned}
+                  onTogglePin={moreMenu.onTogglePin}
                   onClose={() => setShowMore(false)}
                   onDelete={moreMenu.onDelete}
                   deleteLabel={moreMenu.deleteLabel}

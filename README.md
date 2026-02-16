@@ -1,62 +1,88 @@
-## Image Upload Limits
-
-- **MAX_IMAGE_UPLOAD_MB**: Controls Express JSON body limit for image data URLs. Increase if you see `PayloadTooLargeError`.
 # FreemanNotes
 
-Modern, fast notes app with a minimalist UI, responsive grid, and collaboration-ready backend. Built with React + Vite on the client and Express + Prisma (MySQL) on the server.
+FreemanNotes is a modern, fast, offline-capable notes app with rich text, checklists, reminders, collaboration, OCR search, and polished mobile/PWA behavior.
 
-## Overview
+Built with React + Vite (client) and Express + Prisma (server), with optional MySQL/PostgreSQL Docker profiles.
 
-- Single dev process: server runs Vite middleware to serve the client during development.
-- Database: Prisma ORM with MySQL; schema auto-pushed from code.
-- Auth: JWT-based; first user is automatically an admin; admin-only invites.
-- Preferences: per-user UI settings persisted and applied on login.
+## Comprehensive Feature List
 
-## Features
+### Core notes experience
+- Rich text notes and checklist notes.
+- Responsive card grid plus `cards`, `list-1`, and `list-2` viewing modes.
+- Pinned + unpinned sections with persistent order.
+- Drag-to-reorder with swap/rearrange behavior and animated transitions.
+- Per-note card width controls (regular/double/triple where applicable).
 
-- **Notes Grid**: Responsive columns with stable width; FLIP animations on resize and reorder.
-- **Drag-to-Reorder**: Swap or rearrange behavior (user preference); order persisted server-side.
-- **Interactive Checklists**: Optimistic toggling; incomplete items shown first; completed items collapsible.
-- **Preferences**: Note width, font, spacing, checkbox size, text size, drag behavior, animation speed, colors.
-- **Popovers & Menus**: Widths match note card; footer actions fit without scrollbars.
-- **More Menu**: Delete, Add Label, Uncheck All, Check All — anchored at card bottom-right.
-- **Invites**: Admins can invite by email; each invite carries a desired role; first account is auto-admin.
+### Checklists
+- Live checklist editing with reorder + indent controls.
+- Batch checklist actions from More menu (`Check all`, `Uncheck all`).
+- Completed-item handling tuned for fast review workflows.
+
+### Reminders & notifications
+- Per-note reminders with due-time picker and lead-time offsets.
+- Reminder urgency visualization (red/orange/yellow) across card and list contexts.
+- One-tap “mark reminder complete” actions to clear reminders quickly.
+- Web Push notifications (with local and server test actions in settings).
+
+### Images & OCR search
+- Multi-image attachments per note.
+- Image gallery view with quick open-to-associated-note behavior.
+- Async OCR pipeline using PaddleOCR + preprocessing.
+- OCR text is indexed for global search and updated in realtime.
+
+### Collaboration & realtime
+- Collaborator support with share/unshare flows.
+- Yjs-powered collaborative editing for supported editor paths.
+- Realtime event channel for note/reminder/image/share updates across sessions/devices.
+
+### Collections, labels, and filters
+- Nested collections with breadcrumb-aware navigation.
+- Labels and collaborator filters.
+- Active filter chips with fast clear/reset behavior.
+- Sorting and smart filters (including reminder-centric views).
+
+### Offline-first architecture
+- Local-first cache and mutation pipeline in `client/src/lib/offline`.
+- Durable mutation queue + upload queue with retry.
+- Background sync engine for eventual consistency when reconnecting.
+- Offline create/edit flows for notes/checklists/images with replay.
+
+### Preferences & defaults
+- Built-in registration defaults for user + device preferences.
+- Hard-coded initial defaults by device class (`mobile`, `tablet`, `desktop`).
+- Extensive appearance/layout controls (font, spacing, title size, checkbox sizing, animation behavior, thumb sizes, etc.).
+- Device-aware editor and card behavior preferences.
+
+### Mobile/PWA UX
+- Installable PWA with guided install and fallback messaging.
+- Mobile FAB-based create flows.
+- Long-press contextual menus.
+- Gesture handling for sidebar open/close and drag interactions.
+- Android gesture conflict handling improvements (edge-swipe/back behavior).
+
+### UI polish
+- Contextual More menus across cards and editors (including pin/unpin).
+- Drag overlays + drop-target highlighting tuned for touch devices.
+- Desktop menu/background focus treatment when popups are open.
+- Tightened list-layout spacing, metadata chip behavior, and footer dock presentation.
+
+### Security & account model
+- JWT auth.
+- First user bootstrap as admin.
+- Admin-managed invite flow.
+- Role-aware access for owner-only actions (e.g., reminders).
 
 ## OCR (Image Text → Search)
 
-FreemanNotes can extract readable text from note images **server-side** using **PaddleOCR**, then include that text in the existing global search bar.
+FreemanNotes extracts text from note images server-side using PaddleOCR and makes it searchable via the global search bar.
 
-### How it works
+- OCR runs asynchronously after image upload.
+- Extracted text, normalized search text, metadata, and hashes are stored.
+- Clients receive realtime updates when OCR completes.
 
-- When an image is added to a note, the server returns immediately (no UI blocking).
-- A background OCR job runs automatically:
-  - Decodes the image bytes (supports data URLs, `/uploads/...`, and http/https URLs).
-  - Preprocesses for accuracy (auto-orient, flatten alpha → white, contrast normalize, downscale large images).
-  - Runs PaddleOCR with angle classification (handles rotated text; best-effort deskew).
-  - Stores:
-    - `ocrText` (raw extracted text)
-    - `ocrSearchText` (normalized text optimized for indexing)
-    - `ocrDataJson` (structured result: blocks/lines/boxes/confidence)
-    - `ocrHash` (sha256 of image bytes to avoid re-OCR)
-- When OCR completes, clients are notified via `note-images-changed`, so search results update automatically.
+## Image Upload Limits
 
-### Installation (minimal)
-
-- Docker (recommended): OCR works out of the box because the container image includes Python + PaddleOCR.
-- Local development: OCR requires Python 3 and PaddleOCR deps. If Python (or deps) are missing, OCR fails safely and the app continues running.
-
-### Extending language support
-
-- OCR defaults to English (`lang="en"`).
-- The OCR service is designed to accept a `lang` parameter later (PaddleOCR supports many languages).
-
-## Planned
-
-- **Labels UI**: Inline chips and a small labels editor popover.
-- **Invite UX**: Auto-fill invite token from `/?invite=`; invite list page for admins.
-- **Email Verification**: Optional verify-on-register.
-- **Invite Expiry**: Expiring tokens; admin-configurable.
-- **More Animations**: Subtle transitions for popovers and editor state.
+- **MAX_IMAGE_UPLOAD_MB**: Controls Express JSON body limit for image data URLs. Increase if you see `PayloadTooLargeError`.
 
 ## Quick Start
 

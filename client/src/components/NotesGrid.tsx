@@ -24,6 +24,15 @@ import MobileCreateModal from "./MobileCreateModal";
 import ConfirmDialog from "./ConfirmDialog";
 import ImageLightbox from "./ImageLightbox";
 import { DEFAULT_SORT_CONFIG, type SortConfig } from '../sortTypes';
+import {
+  enqueueNotesOrderPatch,
+  getSyncState,
+  kickOfflineSync,
+  loadCachedNotes,
+  saveCachedNotes,
+  setSyncTokenProvider,
+  subscribeSyncState,
+} from '../lib/offline';
 
 type NoteLabelLite = { id: number; name: string };
 type NoteImageLite = { id: number; url?: string; ocrSearchText?: string | null; ocrText?: string | null; ocrStatus?: string | null; createdAt?: string | null };
@@ -44,6 +53,115 @@ function normalizeForSearch(input: any): string {
   } catch {
     return String(input || '').toLowerCase().trim();
   }
+}
+
+function buildNoteLoadSignature(note: any): string {
+  const id = Number((note as any)?.id);
+  const updatedAt = String((note as any)?.updatedAt || '');
+  const title = String((note as any)?.title || '');
+  const body = String((note as any)?.body || '');
+  const pinned = (note as any)?.pinned ? '1' : '0';
+  const archived = (note as any)?.archived ? '1' : '0';
+  const trashedAt = String((note as any)?.trashedAt || '');
+  const reminderDueAt = String((note as any)?.reminderDueAt || '');
+  const reminderOffsetMinutes = String((note as any)?.reminderOffsetMinutes ?? '');
+  const reminderAt = String((note as any)?.reminderAt || '');
+  const imagesExpanded = (note as any)?.viewerImagesExpanded ? '1' : '0';
+  const noteLabels = Array.isArray((note as any)?.noteLabels) ? (note as any).noteLabels : [];
+  const labelsSig = noteLabels
+    .map((nl: any) => Number((nl as any)?.label?.id || (nl as any)?.id || 0))
+    .filter((n: number) => Number.isFinite(n) && n > 0)
+    .sort((a: number, b: number) => a - b)
+    .join(',');
+  const images = Array.isArray((note as any)?.images) ? (note as any).images : [];
+  const imagesSig = images
+    .map((img: any) => {
+      const imgId = Number((img as any)?.id || 0);
+      const status = String((img as any)?.ocrStatus || '');
+      const textLen = String((img as any)?.ocrText || '').length;
+      const searchLen = String((img as any)?.ocrSearchText || '').length;
+      return `${imgId}:${status}:${textLen}:${searchLen}`;
+    })
+    .sort()
+    .join(',');
+  const offlinePending = (note as any)?.offlinePendingCreate ? '1' : '0';
+  const offlineFailed = (note as any)?.offlineSyncFailed ? '1' : '0';
+  const offlineOpId = String((note as any)?.offlineOpId || '');
+
+  return [
+    id,
+    updatedAt,
+    title,
+    body,
+    pinned,
+    archived,
+    trashedAt,
+    reminderDueAt,
+    reminderOffsetMinutes,
+    reminderAt,
+    imagesExpanded,
+    labelsSig,
+    imagesSig,
+    offlinePending,
+    offlineFailed,
+    offlineOpId,
+  ].join('|');
+}
+
+function buildNotesLoadSignature(notes: any[]): string {
+  const list = Array.isArray(notes) ? notes : [];
+  return list.map(buildNoteLoadSignature).join('||');
+}
+
+function dedupeNotesById(notes: any[]): any[] {
+  const list = Array.isArray(notes) ? notes : [];
+  if (list.length <= 1) return list;
+
+  const out: any[] = [];
+  const idxById = new Map<number, number>();
+  for (const note of list) {
+    const id = Number((note as any)?.id);
+    if (!Number.isFinite(id)) {
+      out.push(note);
+      continue;
+    }
+    const existingIdx = idxById.get(id);
+    if (existingIdx == null) {
+      idxById.set(id, out.length);
+      out.push(note);
+      continue;
+    }
+    const existing = out[existingIdx];
+    const existingPending = !!(existing as any)?.offlinePendingCreate;
+    const incomingPending = !!(note as any)?.offlinePendingCreate;
+    const preferred = (existingPending && !incomingPending)
+      ? ({ ...existing, ...note, offlinePendingCreate: true, offlineOpId: (existing as any)?.offlineOpId || (note as any)?.offlineOpId })
+      : ({ ...existing, ...note });
+    out[existingIdx] = preferred;
+  }
+  return out;
+}
+
+function mergePendingOptimisticNotes(serverNotes: any[], currentNotes: any[]): any[] {
+  const server = Array.isArray(serverNotes) ? serverNotes : [];
+  const current = Array.isArray(currentNotes) ? currentNotes : [];
+  if (!current.length) return dedupeNotesById(server);
+
+  const serverIds = new Set<number>();
+  for (const n of server) {
+    const id = Number((n as any)?.id);
+    if (Number.isFinite(id)) serverIds.add(id);
+  }
+
+  const pending = current.filter((n: any) => {
+    const pendingCreate = !!(n as any)?.offlinePendingCreate;
+    const opId = String((n as any)?.offlineOpId || '');
+    const id = Number((n as any)?.id);
+    return pendingCreate && !!opId && !serverIds.has(id);
+  });
+
+  const merged = pending.length ? [...pending, ...server] : server;
+  return dedupeNotesById(merged);
 }
 
 const SwapNoteItem = React.memo(function SwapNoteItem({
@@ -133,6 +251,7 @@ export default function NotesGrid({
   const [notes, setNotes] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [hasLoadedOnce, setHasLoadedOnce] = useState(false);
+  const [syncState, setSyncState] = useState(() => getSyncState());
   const notesRef = useRef<any[]>([]);
   const [emptyingTrash, setEmptyingTrash] = useState(false);
   const [galleryLightboxUrl, setGalleryLightboxUrl] = useState<string | null>(null);
@@ -217,9 +336,16 @@ export default function NotesGrid({
   const [takeNoteOpenNonce, setTakeNoteOpenNonce] = useState(0);
   const [takeNoteOpenMode, setTakeNoteOpenMode] = useState<'text' | 'checklist'>('text');
   const [mobileCreateMode, setMobileCreateMode] = useState<null | 'text' | 'checklist'>(null);
+  const isImagesView = ((sortConfig || DEFAULT_SORT_CONFIG).smartFilter === 'images');
 
   // Mobile back button: if the FAB menu is open, Back should close it.
   const mobileAddBackIdRef = useRef<string>('');
+  const imagesViewBackIdRef = useRef<string>('');
+  const sortConfigRef = useRef<SortConfig>(sortConfig || DEFAULT_SORT_CONFIG);
+
+  useEffect(() => {
+    sortConfigRef.current = sortConfig || DEFAULT_SORT_CONFIG;
+  }, [sortConfig]);
 
   const activeCollection = useMemo(() => {
     const stack = Array.isArray(collectionStack) ? collectionStack : [];
@@ -480,8 +606,143 @@ export default function NotesGrid({
     return () => { try { root.classList.remove('is-note-rearrange-dragging'); } catch {} };
   }, [rearrangeActiveId]);
 
+  useEffect(() => {
+    return subscribeSyncState((s) => setSyncState(s));
+  }, []);
+
+  useEffect(() => {
+    try {
+      setSyncTokenProvider(() => token || '');
+      void kickOfflineSync();
+    } catch {}
+  }, [token]);
+
+  useEffect(() => {
+    void saveCachedNotes(notes || []);
+  }, [notes]);
+
+  useEffect(() => {
+    const onOfflineUploadSuccess = (evt: Event) => {
+      try {
+        const detail = (evt as CustomEvent<any>).detail || {};
+        const noteId = Number(detail.noteId);
+        if (!Number.isFinite(noteId)) return;
+        const image = detail.image || null;
+        if (!image || typeof image !== 'object') return;
+        const imageId = Number((image as any).id);
+        const imageUrl = String((image as any).url || '');
+        if (!Number.isFinite(imageId) || !imageUrl) return;
+
+        setNotes((s) => s.map((n: any) => {
+          if (Number(n?.id) !== noteId) return n;
+          const prevImages = Array.isArray(n?.images) ? n.images : [];
+          const tempId = Number(detail.tempClientId);
+          const filtered = Number.isFinite(tempId)
+            ? prevImages.filter((img: any) => Number(img?.id) !== tempId)
+            : prevImages;
+          if (filtered.some((img: any) => Number(img?.id) === imageId)) return n;
+          const nextImages = [...filtered, {
+            id: imageId,
+            url: imageUrl,
+            ocrSearchText: (image as any).ocrSearchText ?? null,
+            ocrText: (image as any).ocrText ?? null,
+            ocrStatus: (image as any).ocrStatus ?? null,
+            createdAt: (image as any).createdAt ?? null,
+          }];
+          return { ...n, images: nextImages, imagesCount: nextImages.length };
+        }));
+      } catch {}
+    };
+    window.addEventListener('freemannotes:offline-upload/success', onOfflineUploadSuccess as EventListener);
+    return () => window.removeEventListener('freemannotes:offline-upload/success', onOfflineUploadSuccess as EventListener);
+  }, []);
+
+  useEffect(() => {
+    const onOfflineNoteCreated = (evt: Event) => {
+      try {
+        const detail = (evt as CustomEvent<any>).detail || {};
+        const note = detail.note || null;
+        const opId = String(detail.opId || '');
+        if (!note || typeof note !== 'object') return;
+        const noteId = Number((note as any).id);
+        if (!Number.isFinite(noteId)) return;
+
+        setNotes((prev) => {
+          if (opId && prev.some((n: any) => String((n as any)?.offlineOpId || '') === opId)) return prev;
+          if (prev.some((n: any) => Number(n?.id) === noteId)) return prev;
+          const optimistic = { ...(note as any), offlinePendingCreate: true, offlineOpId: opId };
+          return [optimistic, ...prev];
+        });
+      } catch {}
+    };
+
+    const onOfflineNoteReconciled = (evt: Event) => {
+      try {
+        const detail = (evt as CustomEvent<any>).detail || {};
+        const opId = String(detail.opId || '');
+        const serverNote = detail.note || null;
+        const serverId = Number(serverNote?.id);
+        if (!opId || !Number.isFinite(serverId)) return;
+
+        setNotes((prev) => {
+          const withoutTemp = prev.filter((n: any) => String((n as any)?.offlineOpId || '') !== opId);
+          const idx = withoutTemp.findIndex((n: any) => Number(n?.id) === serverId);
+          if (idx >= 0) {
+            const merged = [...withoutTemp];
+            merged[idx] = { ...merged[idx], ...serverNote, offlinePendingCreate: false, offlineSyncFailed: false, offlineOpId: undefined };
+            return dedupeNotesById(merged);
+          }
+          return dedupeNotesById([{ ...serverNote, offlinePendingCreate: false, offlineSyncFailed: false, offlineOpId: undefined }, ...withoutTemp]);
+        });
+      } catch {}
+    };
+
+    const onOfflineNoteCreateRetry = (evt: Event) => {
+      try {
+        const detail = (evt as CustomEvent<any>).detail || {};
+        const opId = String(detail.opId || '');
+        const attempt = Number(detail.attempt || 0);
+        const error = String(detail.error || '');
+        if (!opId) return;
+
+        setNotes((prev) => prev.map((n: any) => {
+          if (String((n as any)?.offlineOpId || '') !== opId) return n;
+          return {
+            ...n,
+            offlinePendingCreate: true,
+            offlineSyncFailed: attempt >= 3,
+            offlineSyncError: error || undefined,
+          };
+        }));
+      } catch {}
+    };
+
+    window.addEventListener('freemannotes:offline-note-created', onOfflineNoteCreated as EventListener);
+    window.addEventListener('freemannotes:offline-note-reconciled', onOfflineNoteReconciled as EventListener);
+    window.addEventListener('freemannotes:offline-note-create-retry', onOfflineNoteCreateRetry as EventListener);
+    return () => {
+      window.removeEventListener('freemannotes:offline-note-created', onOfflineNoteCreated as EventListener);
+      window.removeEventListener('freemannotes:offline-note-reconciled', onOfflineNoteReconciled as EventListener);
+      window.removeEventListener('freemannotes:offline-note-create-retry', onOfflineNoteCreateRetry as EventListener);
+    };
+  }, []);
+
   async function load() {
     setLoading(true);
+    let hadCached = false;
+    try {
+      const cached = await loadCachedNotes();
+      if (Array.isArray(cached) && cached.length) {
+        hadCached = true;
+        setNotes((prev) => {
+          const mergedCached = mergePendingOptimisticNotes(cached, prev);
+          if (buildNotesLoadSignature(mergedCached) === buildNotesLoadSignature(prev)) return prev;
+          return mergedCached;
+        });
+        setLoading(false);
+      }
+    } catch {}
+
     try {
       const res = await fetch('/api/notes', { headers: { Authorization: `Bearer ${token}` } });
       if (!res.ok) throw new Error(await res.text());
@@ -509,12 +770,23 @@ export default function NotesGrid({
         }
       } catch (e) { /* ignore malformed localStorage */ }
 
-      setNotes(nextNotes);
-      // After notes render, ask grid to recalc so width/columns lock immediately
-      try { setTimeout(() => window.dispatchEvent(new Event('notes-grid:recalc')), 0); } catch {}
+      const mergedFromSnapshot = mergePendingOptimisticNotes(nextNotes, notesRef.current);
+      const hasMaterialChange = buildNotesLoadSignature(mergedFromSnapshot) !== buildNotesLoadSignature(notesRef.current);
+
+      setNotes((prev) => {
+        const merged = mergePendingOptimisticNotes(nextNotes, prev);
+        if (buildNotesLoadSignature(merged) === buildNotesLoadSignature(prev)) return prev;
+        return merged;
+      });
+
+      if (hasMaterialChange) {
+        try { await saveCachedNotes(mergedFromSnapshot); } catch {}
+        // After notes render, ask grid to recalc so width/columns lock immediately
+        try { setTimeout(() => window.dispatchEvent(new Event('notes-grid:recalc')), 0); } catch {}
+      }
     } catch (err) {
       console.error('Failed to load notes', err);
-      setNotes([]);
+      if (!hadCached) setNotes([]);
     } finally { setLoading(false); }
   }
 
@@ -666,6 +938,29 @@ export default function NotesGrid({
       return;
     }
   }, [isPhoneLike, mobileAddOpen]);
+
+  useEffect(() => {
+    if (!isPhoneLike) return;
+    if (!isImagesView) return;
+    if (!onSortConfigChange) return;
+    try {
+      if (!imagesViewBackIdRef.current) imagesViewBackIdRef.current = `images-view-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+      const id = imagesViewBackIdRef.current;
+      const onBack = () => {
+        try {
+          const cfg = sortConfigRef.current || DEFAULT_SORT_CONFIG;
+          if (cfg.smartFilter !== 'images') return;
+          onSortConfigChange({ ...DEFAULT_SORT_CONFIG });
+        } catch {}
+      };
+      window.dispatchEvent(new CustomEvent('freemannotes:back/register', { detail: { id, onBack } }));
+      return () => {
+        try { window.dispatchEvent(new CustomEvent('freemannotes:back/unregister', { detail: { id } })); } catch {}
+      };
+    } catch {
+      return;
+    }
+  }, [isPhoneLike, isImagesView, onSortConfigChange]);
 
   useEffect(() => {
     const onForceClose = () => {
@@ -2867,6 +3162,10 @@ export default function NotesGrid({
       if (!res.ok) throw new Error(await res.text());
     } catch (err) {
       console.error('Failed to persist note order to server', err);
+      try {
+        await enqueueNotesOrderPatch(ids);
+        void kickOfflineSync();
+      } catch {}
     }
   }
 
@@ -3293,7 +3592,6 @@ export default function NotesGrid({
   }, [keepRearrangeEnabled, disableNoteDnD, token]);
 
   const isTrashView = ((sortConfig || DEFAULT_SORT_CONFIG).smartFilter === 'trash');
-  const isImagesView = ((sortConfig || DEFAULT_SORT_CONFIG).smartFilter === 'images');
   const trashCount = (() => {
     try { return (notes || []).filter((n: any) => !!(n as any)?.trashedAt).length; } catch { return 0; }
   })();
@@ -3515,6 +3813,23 @@ export default function NotesGrid({
         {showDesktopQuickCreate && (
           <TakeNoteBar onCreated={load} openRequest={{ nonce: takeNoteOpenNonce, mode: takeNoteOpenMode }} activeCollection={activeCollection} />
         )}
+
+        {(() => {
+          const offline = navigator.onLine === false;
+          const actionableSyncState = syncState === 'OFFLINE' || syncState === 'DEGRADED' || syncState === 'PAUSED';
+          if (!offline && !actionableSyncState) return null;
+          return (
+          <div className="grid-context" aria-label="Sync status">
+            <div className="grid-context__text">
+              <div className="grid-context__subtitle" style={{ whiteSpace: 'normal' }}>
+                {offline
+                  ? 'Offline: edits are saved locally and will sync when back online.'
+                  : (`Sync: ${String(syncState).toLowerCase().replace(/_/g, ' ')}`)}
+              </div>
+            </div>
+          </div>
+          );
+        })()}
 
         {gridContext.show && (
           <div className="grid-context" role="region" aria-label="Current view">
@@ -3741,7 +4056,7 @@ export default function NotesGrid({
                 <div key={g.key}>
                   {g.title && g.key !== 'all' && <h5 className="section-title" style={{ marginTop: 10, marginBottom: 6, color: 'var(--muted)' }}>{g.title}</h5>}
                   <div className={`notes-grid notes-grid--swap${gridViewClass}`} ref={pinnedGridRef}>
-                    {g.notes.map((n) => {
+                    {g.notes.map((n, idx) => {
                       const span = spanForNote(n);
                       const setItemRef = (el: HTMLElement | null, noteId: number) => {
                         if (el) itemRefs.current.set(noteId, el);
@@ -3749,7 +4064,7 @@ export default function NotesGrid({
                       };
                       return (
                         <SwapNoteItem
-                          key={n.id}
+                          key={`swap-pinned-${String(g.key)}-${Number(n.id)}-${idx}`}
                           note={n}
                           setItemRef={setItemRef}
                           style={{ gridColumn: `span ${span}` } as any}
@@ -3773,7 +4088,7 @@ export default function NotesGrid({
               <div key={g.key}>
                 {g.title && g.key !== 'all' && <h5 className="section-title" style={{ marginTop: 10, marginBottom: 6, color: 'var(--muted)' }}>{g.title}</h5>}
                 <div className={`notes-grid notes-grid--swap${gridViewClass}`} ref={othersGridRef}>
-                  {g.notes.map((n) => {
+                  {g.notes.map((n, idx) => {
                     const span = spanForNote(n);
                     const setItemRef = (el: HTMLElement | null, noteId: number) => {
                       if (el) itemRefs.current.set(noteId, el);
@@ -3781,7 +4096,7 @@ export default function NotesGrid({
                     };
                     return (
                       <SwapNoteItem
-                        key={n.id}
+                        key={`swap-others-${String(g.key)}-${Number(n.id)}-${idx}`}
                         note={n}
                         setItemRef={setItemRef}
                         style={{ gridColumn: `span ${span}` } as any}
@@ -3812,7 +4127,6 @@ export default function NotesGrid({
                 }}
               >
                 <NoteCard
-                  key={activeSwapNote.id}
                   note={activeSwapNote}
                   onChange={handleNoteChange}
                   openRequest={getOpenRequestForNote(Number(activeSwapNote.id))}
@@ -3856,7 +4170,7 @@ export default function NotesGrid({
                           const place = pinnedPlacements?.get(Number(n.id)) || null;
                           return (
                             <div
-                              key={n.id}
+                              key={`rearrange-pinned-${Number(n.id)}-${idx}`}
                               data-note-id={n.id}
                               style={place
                                 ? ({ gridColumnStart: place.colStart, gridColumnEnd: `span ${place.colSpan}`, gridRowStart: place.rowStart, gridRowEnd: `span ${place.rowSpan}` } as any)
@@ -3873,7 +4187,7 @@ export default function NotesGrid({
                             </div>
                           );
                         })
-                      : g.notes.map((n) => {
+                      : g.notes.map((n, idx) => {
                           const globalIdx = idToIndex.get(Number(n.id)) ?? -1;
                           const span = Math.max(1, Math.min(3, Number((n as any).cardSpan || 1)));
                           const place = pinnedPlacements?.get(Number(n.id)) || null;
@@ -3936,7 +4250,7 @@ export default function NotesGrid({
 
                           return (
                             <div
-                              key={n.id}
+                              key={`pinned-${String(g.key)}-${Number(n.id)}-${idx}`}
                               data-note-id={n.id}
                               style={place
                                 ? ({ gridColumnStart: place.colStart, gridColumnEnd: `span ${place.colSpan}`, gridRowStart: place.rowStart, gridRowEnd: `span ${place.rowSpan}` } as any)
@@ -3989,7 +4303,7 @@ export default function NotesGrid({
                         const place = othersPlacements?.get(Number(n.id)) || null;
                         return (
                           <div
-                            key={n.id}
+                            key={`rearrange-others-${Number(n.id)}-${idx}`}
                             data-note-id={n.id}
                             style={place
                               ? ({ gridColumnStart: place.colStart, gridColumnEnd: `span ${place.colSpan}`, gridRowStart: place.rowStart, gridRowEnd: `span ${place.rowSpan}` } as any)
@@ -4006,7 +4320,7 @@ export default function NotesGrid({
                           </div>
                         );
                       })
-                    : g.notes.map((n) => {
+                    : g.notes.map((n, idx) => {
                         const globalIdx = idToIndex.get(Number(n.id)) ?? -1;
                         const span = Math.max(1, Math.min(3, Number((n as any).cardSpan || 1)));
                         const place = othersPlacements?.get(Number(n.id)) || null;
@@ -4070,7 +4384,7 @@ export default function NotesGrid({
 
                         return (
                           <div
-                            key={n.id}
+                            key={`others-${String(g.key)}-${Number(n.id)}-${idx}`}
                             data-note-id={n.id}
                             style={place
                               ? ({ gridColumnStart: place.colStart, gridColumnEnd: `span ${place.colSpan}`, gridRowStart: place.rowStart, gridRowEnd: `span ${place.rowSpan}` } as any)

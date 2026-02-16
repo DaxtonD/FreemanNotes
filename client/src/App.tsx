@@ -7,6 +7,7 @@ import { AuthProvider, useAuth } from "./authContext";
 import { ThemeProvider } from "./themeContext";
 import { DEFAULT_SORT_CONFIG, SortConfig } from './sortTypes';
 import { usePwaInstall } from './lib/pwaInstall';
+import { ensurePushSubscribed } from './lib/pushNotifications';
 
 /**
  * Phase 1 app shell.
@@ -55,6 +56,7 @@ function AppShell(): JSX.Element {
 	const lastRootBackAtRef = React.useRef<number>(0);
 	const allowExitOnceRef = React.useRef(false);
 	const sidebarBackIdRef = React.useRef<string>('');
+	const lastPushEnsureAtRef = React.useRef<number>(0);
 
 	const flashRootBackHint = React.useCallback(() => {
 		try {
@@ -117,6 +119,48 @@ function AppShell(): JSX.Element {
 	React.useEffect(() => {
 		try { localStorage.setItem('prefs.viewMode', viewMode); } catch {}
 	}, [viewMode]);
+
+	// Best-effort push self-heal: if the browser rotates/loses a push subscription
+	// after app restart, silently re-register while permission is already granted.
+	React.useEffect(() => {
+		if (!token) return;
+		let disposed = false;
+
+		const ensureIfNeeded = async () => {
+			try {
+				if (disposed) return;
+				if (typeof window === 'undefined' || typeof navigator === 'undefined') return;
+				if (!('Notification' in window) || !('serviceWorker' in navigator) || !('PushManager' in window)) return;
+				if (Notification.permission !== 'granted') return;
+
+				const now = Date.now();
+				const cooldownMs = 6 * 60 * 60 * 1000;
+				if (lastPushEnsureAtRef.current && (now - lastPushEnsureAtRef.current) < cooldownMs) return;
+				lastPushEnsureAtRef.current = now;
+
+				await ensurePushSubscribed(token);
+			} catch {
+				// no-op: notifications UI already exposes status and manual re-enable
+			}
+		};
+
+		void ensureIfNeeded();
+
+		const onVisible = () => {
+			try {
+				if (document.visibilityState !== 'visible') return;
+				void ensureIfNeeded();
+			} catch {}
+		};
+
+		window.addEventListener('focus', onVisible);
+		document.addEventListener('visibilitychange', onVisible);
+		return () => {
+			disposed = true;
+			window.removeEventListener('focus', onVisible);
+			document.removeEventListener('visibilitychange', onVisible);
+		};
+	}, [token]);
 
 	React.useEffect(() => {
 		function updatePhoneBucket() {
@@ -433,6 +477,11 @@ function AppShell(): JSX.Element {
 
 				const ok = beginAt(e.clientX, e.clientY, e.target, e.pointerId, null);
 				if (!ok) return;
+				// Important for Android Chrome: block browser back-swipe so edge swipe
+				// can consistently open the sidebar drawer.
+				if (startedOnEdge) {
+					try { e.preventDefault(); } catch {}
+				}
 				try { (e.target as any)?.setPointerCapture?.(e.pointerId); } catch {}
 			} catch {}
 		}
@@ -461,7 +510,13 @@ function AppShell(): JSX.Element {
 				if (touchId != null || pointerId != null) return;
 				if (!e.touches || e.touches.length !== 1) return;
 				const t = e.touches[0];
-				beginAt(t.clientX, t.clientY, e.target, null, t.identifier);
+				const ok = beginAt(t.clientX, t.clientY, e.target, null, t.identifier);
+				if (!ok) return;
+				// Important for Android Chrome: suppress browser back gesture from the
+				// left edge so our drawer swipe can win.
+				if (startedOnEdge) {
+					try { e.preventDefault(); } catch {}
+				}
 			} catch {}
 		}
 		function onTouchMove(e: TouchEvent) {
@@ -490,7 +545,7 @@ function AppShell(): JSX.Element {
 		document.addEventListener('pointermove', onPointerMove, { capture: true, passive: false } as any);
 		document.addEventListener('pointerup', endGesture, { capture: true } as any);
 		document.addEventListener('pointercancel', endGesture, { capture: true } as any);
-		document.addEventListener('touchstart', onTouchStart, { capture: true, passive: true } as any);
+		document.addEventListener('touchstart', onTouchStart, { capture: true, passive: false } as any);
 		document.addEventListener('touchmove', onTouchMove, { capture: true, passive: false } as any);
 		document.addEventListener('touchend', onTouchEnd, { capture: true } as any);
 		document.addEventListener('touchcancel', onTouchEnd, { capture: true } as any);

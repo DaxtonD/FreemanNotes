@@ -31,6 +31,31 @@ export type PushClientStatus = {
   serverReason?: string | null;
 };
 
+export type PushHealthStatus = {
+  ok: boolean;
+  serverEnabled: boolean;
+  serverReason?: string | null;
+  userSubscriptionCount: number;
+  deviceSubscriptionCount: number;
+  hasDeviceSubscription: boolean;
+  hasAnyUserSubscription: boolean;
+};
+
+const LAST_SERVER_PUSH_TEST_AT_KEY = 'freemannotes.push.lastServerPushTestAt';
+
+export function getLastServerPushTestAt(): string | null {
+  try {
+    const v = localStorage.getItem(LAST_SERVER_PUSH_TEST_AT_KEY);
+    return v ? String(v) : null;
+  } catch {
+    return null;
+  }
+}
+
+function markLastServerPushTestAtNow() {
+  try { localStorage.setItem(LAST_SERVER_PUSH_TEST_AT_KEY, new Date().toISOString()); } catch {}
+}
+
 export async function getPushClientStatus(): Promise<PushClientStatus> {
   const supported = typeof window !== 'undefined' && 'Notification' in window;
   const permission: any = supported ? Notification.permission : 'unsupported';
@@ -120,6 +145,28 @@ export async function sendTestPush(token: string, body?: string): Promise<void> 
     body: JSON.stringify({ body: body || 'Test notification' }),
   });
   if (!res.ok) throw new Error(await res.text());
+  markLastServerPushTestAtNow();
+}
+
+export async function getPushHealth(token: string): Promise<PushHealthStatus> {
+  const res = await fetch('/api/push/health', {
+    method: 'GET',
+    headers: {
+      Authorization: token ? `Bearer ${token}` : '',
+      ...deviceHeaders(),
+    },
+  });
+  if (!res.ok) throw new Error(await res.text());
+  const data = await res.json();
+  return {
+    ok: !!data?.ok,
+    serverEnabled: !!data?.serverEnabled,
+    serverReason: (data as any)?.serverReason ?? null,
+    userSubscriptionCount: Number((data as any)?.userSubscriptionCount || 0),
+    deviceSubscriptionCount: Number((data as any)?.deviceSubscriptionCount || 0),
+    hasDeviceSubscription: !!(data as any)?.hasDeviceSubscription,
+    hasAnyUserSubscription: !!(data as any)?.hasAnyUserSubscription,
+  };
 }
 
 export async function showLocalTestNotification(): Promise<void> {

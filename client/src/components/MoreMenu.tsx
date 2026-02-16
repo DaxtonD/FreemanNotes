@@ -77,7 +77,9 @@ export default function MoreMenu({
   const rootRef = useRef<HTMLDivElement | null>(null);
   const [style, setStyle] = useState<React.CSSProperties>({ position: "fixed", visibility: "hidden", left: 0, top: 0, zIndex: 10001 });
   const [isSheet, setIsSheet] = useState(false);
+  const [isListAnchor, setIsListAnchor] = useState(false);
   const [interactionLocked, setInteractionLocked] = useState(true);
+  const focusTargetRef = useRef<HTMLElement | null>(null);
   const openedAtRef = useRef<number>(Date.now());
   const backIdRef = useRef<string>((() => {
     try { return `more-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`; } catch { return `more-${Math.random()}`; }
@@ -120,10 +122,43 @@ export default function MoreMenu({
     return () => window.removeEventListener('resize', decide);
   }, []);
 
+  useEffect(() => {
+    let focusEl: HTMLElement | null = null;
+    try {
+      const coarse = !!(window.matchMedia && window.matchMedia('(pointer: coarse)').matches);
+      const isDesktop = !coarse && window.innerWidth >= 761;
+      if (!isDesktop) return;
+
+      const anchor = anchorRef?.current as HTMLElement | null;
+      if (anchor) {
+        focusEl = (anchor.closest('.note-card, .editor-dialog, .image-dialog') as HTMLElement | null) || anchor;
+        focusEl.classList.add('more-menu-focus-target');
+        focusTargetRef.current = focusEl;
+      }
+
+      document.documentElement.classList.add('is-more-menu-open-desktop');
+    } catch {}
+
+    return () => {
+      try { document.documentElement.classList.remove('is-more-menu-open-desktop'); } catch {}
+      try {
+        const el = focusTargetRef.current || focusEl;
+        if (el) el.classList.remove('more-menu-focus-target');
+      } catch {}
+      focusTargetRef.current = null;
+    };
+  }, [anchorRef]);
+
   useLayoutEffect(() => {
     const anchor = anchorRef?.current;
     const node = rootRef.current;
     if (!node) return;
+
+    try {
+      setIsListAnchor(!!(anchor && (anchor as HTMLElement).closest('.notes-grid--list')));
+    } catch {
+      setIsListAnchor(false);
+    }
 
     if (isSheet) {
       // Bottom sheet: ignore anchor/click point and stick to bottom.
@@ -149,21 +184,26 @@ export default function MoreMenu({
       return { w, h };
     };
 
-    // If a click point was provided, position bottom-right of popup at the click point.
-    // Ignore click point: always anchor at bottom-right of the note card
+    // If a click point was provided, center the menu around the cursor/tap point.
+    if (anchorPoint) {
+      const { w, h } = measure();
+      let left = Math.round(anchorPoint.x - (w / 2));
+      let top = Math.round(anchorPoint.y - (h / 2));
+      if (left < viewportPadding) left = viewportPadding;
+      if (left + w > window.innerWidth - viewportPadding) left = Math.max(viewportPadding, window.innerWidth - w - viewportPadding);
+      if (top < viewportPadding) top = viewportPadding;
+      if (top + h > window.innerHeight - viewportPadding) top = Math.max(viewportPadding, window.innerHeight - h - viewportPadding);
+      setStyle({ position: 'fixed', left, top, visibility: 'visible', zIndex: 10001, width: `${w}px`, height: `${h}px` });
+      return;
+    }
 
     // Fallbacks: if no anchor, use click point; if none, use viewport bottom-right
     if (!anchor) {
       const { w, h } = measure();
       let left: number;
       let top: number;
-      if (anchorPoint) {
-        left = Math.round(anchorPoint.x - w);
-        top = Math.round(anchorPoint.y - h);
-      } else {
-        left = Math.round(window.innerWidth - w - viewportPadding);
-        top = Math.round(window.innerHeight - h - viewportPadding);
-      }
+      left = Math.round(window.innerWidth - w - viewportPadding);
+      top = Math.round(window.innerHeight - h - viewportPadding);
       // clamp
       if (left < viewportPadding) left = viewportPadding;
       if (left + w > window.innerWidth - viewportPadding) left = Math.max(viewportPadding, window.innerWidth - w - viewportPadding);
@@ -176,9 +216,21 @@ export default function MoreMenu({
     const rect = anchor.getBoundingClientRect();
     requestAnimationFrame(() => {
       const { w, h } = measure();
-      // Place bottom-right corner at the card's bottom-right
+      // In list view, prefer opening below near top rows (and above near bottom rows)
+      // so the full menu remains visible without relying on internal scroll.
+      const listAnchor = (() => {
+        try { return !!(anchor as HTMLElement).closest('.notes-grid--list'); } catch { return false; }
+      })();
+
       let left = Math.round(rect.right - w);
       let top = Math.round(rect.bottom - h);
+      if (listAnchor) {
+        const gap = 6;
+        const spaceAbove = rect.top - viewportPadding;
+        const spaceBelow = window.innerHeight - rect.bottom - viewportPadding;
+        const prefersBelow = (spaceBelow >= (h + gap)) || (spaceBelow >= spaceAbove);
+        top = prefersBelow ? Math.round(rect.bottom + gap) : Math.round(rect.top - h - gap);
+      }
       // Clamp to viewport with small padding
       if (left < viewportPadding) left = viewportPadding;
       if (left + w > window.innerWidth - viewportPadding) left = Math.max(viewportPadding, window.innerWidth - w - viewportPadding);
@@ -223,7 +275,7 @@ export default function MoreMenu({
       />
       <div
         ref={rootRef}
-        className={`more-menu${isSheet ? ' more-menu--sheet' : ''}${interactionLocked ? ' more-menu--locked' : ''}`}
+        className={`more-menu${isSheet ? ' more-menu--sheet' : ''}${isListAnchor ? ' more-menu--list-anchor' : ''}${interactionLocked ? ' more-menu--locked' : ''}`}
         style={style}
         role="menu"
         aria-label="More options"

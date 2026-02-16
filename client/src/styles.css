@@ -72,6 +72,13 @@
     --checklist-drag-handle-height: 44px;
   }
 }
+
+/* Mobile only: keep card previews shorter so a single card doesn't consume the full screen height. */
+@media (pointer: coarse) and (max-width: 720px), (any-pointer: coarse) and (max-width: 720px) {
+  :root {
+    --note-card-max-height: min(52vh, 420px);
+  }
+}
 /* Light theme overrides */
 :root[data-theme="light"]{
   --bg:#f7f7f9;
@@ -457,8 +464,9 @@ body{
 @media (pointer: coarse) {
   .grid-context{ margin-top: 10px; }
   .grid-context__clear{ height: 36px; padding: 0 12px; }
-  .grid-chip{ padding: 8px 12px; font-size: 13px; }
-  .grid-chip__clear{ width: 28px; height: 28px; }
+  .grid-chip{ padding: 6px 10px; font-size: 12px; }
+  .grid-chip__clear{ width: 24px; height: 24px; }
+  .grid-context__chips{ margin-bottom: 10px; }
   .grid-context__slider input[type="range"]{ width: 96px; }
 }
 
@@ -475,6 +483,12 @@ body{
 .notes-sticky-search{ display:none; }
 
 @media (pointer: coarse), (any-pointer: coarse) {
+  .app-root.phone,
+  .app-root.phone .app-body,
+  .app-root.phone .main-area{
+    overscroll-behavior-x: none;
+  }
+
   .app-root.phone .app-header{
     justify-content: flex-start;
     gap: 8px;
@@ -738,6 +752,9 @@ body{
   }
 }
 .section-title{color:var(--muted);font-weight:600;margin:0 0 8px 0;padding-left:6px;font-size:13px}
+.notes-section + .notes-section{
+  margin-top: 18px;
+}
 .notes-grid{
   /* Grid layout with fixed track width; items can span multiple columns.
      JS sets --cols based on available width and global card width. */
@@ -796,6 +813,9 @@ body{
 .notes-area--list .notes-grid.notes-grid--list .note-link-previews{
   display: none !important;
 }
+.notes-area--list .notes-grid.notes-grid--list .note-reminder-due--inline{
+  display: none !important;
+}
 .notes-area--list .notes-grid.notes-grid--list .note-card[data-clipped="1"]::before,
 .notes-area--list .notes-grid.notes-grid--list .note-card[data-clipped="1"]::after{
   display: none;
@@ -810,7 +830,7 @@ body{
   min-height: 0;
   padding-top: 9px;
   padding-bottom: 8px;
-  padding-right: 12px;
+  padding-right: 170px;
   border-bottom: none;
   border-radius: 8px;
 }
@@ -818,49 +838,66 @@ body{
 .notes-area--list .notes-grid.notes-grid--list .note-images-toggle{
   display: none !important;
 }
-.notes-area--list-1 .notes-grid.notes-grid--list .note-meta{
+.notes-area--list .notes-grid.notes-grid--list .note-corner-icons{
+  top: 50%;
+  right: 10px;
+  transform: translateY(-50%);
+  z-index: 37;
+}
+.notes-area--list .notes-grid.notes-grid--list .note-meta{
   display: block !important;
   position: absolute;
-  right: 10px;
+  right: 58px;
   top: 50%;
   transform: translateY(-50%);
   margin: 0;
   z-index: 35;
 }
-.notes-area--list-1 .notes-grid.notes-grid--list .note-meta-bar{
-  flex-wrap: nowrap;
-  gap: 6px;
+.notes-area--list .notes-grid.notes-grid--list .note-meta-bar{
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, max-content));
+  grid-auto-rows: min-content;
+  gap: 4px;
+  align-items: center;
+  justify-items: end;
 }
-.notes-area--list-1 .notes-grid.notes-grid--list .chip.chip--meta,
-.notes-area--list-1 .notes-grid.notes-grid--list .chip.chip--meta.chip--meta-collections{
+.notes-area--list .notes-grid.notes-grid--list .chip.chip--meta,
+.notes-area--list .notes-grid.notes-grid--list .chip.chip--meta.chip--meta-collections{
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  padding: 3px 8px;
+  min-width: 38px;
+  justify-content: center;
+  padding: 3px 6px;
   border-radius: 999px;
   font-size: 11px;
   line-height: 1;
 }
-.notes-area--list-1 .notes-grid.notes-grid--list .chip.chip--meta .meta-fa-icon{
+.notes-area--list .notes-grid.notes-grid--list .chip.chip--meta .meta-fa-icon{
   width: 11px;
   height: 11px;
   opacity: 0.85;
 }
-.notes-area--list-1 .notes-grid.notes-grid--list .note-title{
-  padding-right: 206px;
-}
-.notes-area--list-1 .notes-grid.notes-grid--list .note-meta-panel{
+.notes-area--list .notes-grid.notes-grid--list .note-meta-panel{
   left: auto;
   right: 0;
   top: calc(100% + 8px);
   min-width: min(320px, 78vw);
 }
 .notes-area--list .notes-grid.notes-grid--list .footer-hover-zone{
-  display: none;
+  display: block;
+  left: auto;
+  right: 150px;
+  top: 50%;
+  bottom: auto;
+  width: 128px;
+  height: 44px;
+  transform: translateY(-50%);
+  z-index: 33;
 }
 .notes-area--list .notes-grid.notes-grid--list .note-footer{
   left: auto;
-  right: 10px;
+  right: 168px;
   top: 50%;
   bottom: auto;
   height: auto;
@@ -890,7 +927,7 @@ body{
   font-size: 14px;
 }
 .notes-area--list .notes-grid.notes-grid--list .note-card:hover .note-footer,
-.notes-area--list .notes-grid.notes-grid--list .note-card:focus-within .note-footer{
+.notes-area--list .notes-grid.notes-grid--list .note-footer:hover{
   opacity: 1;
   pointer-events: auto;
   transform: translate(0, -50%) scale(1);
@@ -898,29 +935,161 @@ body{
 
 /* 2-column list cards are narrower: tighten title-row reservations to avoid crowding. */
 .notes-area--list-2 .notes-grid.notes-grid--list .note-title{
-  min-height: 44px;
-  padding-right: 10px;
+  min-height: 58px;
+  padding-right: 144px;
 }
 .notes-area--list-2 .notes-grid.notes-grid--list .note-footer{
-  right: 6px;
+  right: 136px;
   top: 50%;
   padding: 2px 4px;
+}
+.notes-area--list-2 .notes-grid.notes-grid--list .note-meta{
+  right: 43px;
+}
+.notes-area--list-2 .notes-grid.notes-grid--list .footer-hover-zone{
+  right: 136px;
 }
 .notes-area--list-2 .notes-grid.notes-grid--list .note-footer .tiny{
   width: 24px;
   height: 24px;
   font-size: 12px;
 }
+.notes-area--list-2 .notes-grid.notes-grid--list .chip.chip--meta,
+.notes-area--list-2 .notes-grid.notes-grid--list .chip.chip--meta.chip--meta-collections{
+  min-height: 26px;
+  padding: 5px 8px;
+  font-size: 11.5px;
+}
+
+/* Desktop single-column list: fit dock + meta chips + reminder bell on one row. */
+@media (pointer: fine) and (hover: hover) {
+  .notes-area--list-1 .notes-grid.notes-grid--list .note-meta{
+    right: 44px;
+  }
+  .notes-area--list-1 .notes-grid.notes-grid--list .note-meta-bar{
+    display: flex;
+    flex-wrap: nowrap;
+    gap: 6px;
+    align-items: center;
+    justify-content: flex-end;
+  }
+  .notes-area--list-1 .notes-grid.notes-grid--list .chip.chip--meta,
+  .notes-area--list-1 .notes-grid.notes-grid--list .chip.chip--meta.chip--meta-collections{
+    min-width: 0;
+    justify-content: center;
+    min-height: 34px;
+    padding: 7px 11px;
+    font-size: 12px;
+    line-height: 1;
+  }
+  .notes-area--list-1 .notes-grid.notes-grid--list .note-footer{
+    right: 251px;
+  }
+  .notes-area--list-1 .notes-grid.notes-grid--list .footer-hover-zone{
+    right: 251px;
+    width: 148px;
+  }
+  .notes-area--list-1 .notes-grid.notes-grid--list .note-title{
+    padding-right: 396px;
+  }
+}
+
+/* Narrow desktop fallback: increase row heights and stack chips so all controls fit. */
+@media (pointer: fine) and (hover: hover) and (max-width: 1320px) {
+  .notes-area--list .notes-grid.notes-grid--list .note-title{
+    align-items: flex-start;
+    padding-top: 4px;
+    padding-bottom: 30px;
+  }
+  .notes-area--list .notes-grid.notes-grid--list .note-actions{
+    justify-content: flex-start;
+  }
+  .notes-area--list .notes-grid.notes-grid--list .note-footer{
+    left: 34px;
+    right: auto;
+    top: auto;
+    bottom: 6px;
+    transform: translate(8px, 0) scale(0.96);
+  }
+  .notes-area--list .notes-grid.notes-grid--list .note-card:hover .note-footer,
+  .notes-area--list .notes-grid.notes-grid--list .note-footer:hover{
+    transform: translate(0, 0) scale(1);
+  }
+  .notes-area--list .notes-grid.notes-grid--list .footer-hover-zone{
+    left: 34px;
+    right: auto;
+    width: 138px;
+    top: auto;
+    bottom: 4px;
+    height: 40px;
+    transform: none;
+  }
+
+  .notes-area--list-1 .notes-grid.notes-grid--list .note-meta{
+    right: 43px;
+  }
+  .notes-area--list-1 .notes-grid.notes-grid--list .note-meta-bar{
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, max-content));
+    grid-auto-rows: min-content;
+    gap: 4px;
+    align-items: center;
+    justify-items: end;
+  }
+  .notes-area--list-1 .notes-grid.notes-grid--list .chip.chip--meta,
+  .notes-area--list-1 .notes-grid.notes-grid--list .chip.chip--meta.chip--meta-collections{
+    min-height: 30px;
+    padding: 6px 10px;
+    font-size: 12.5px;
+  }
+  .notes-area--list-1 .notes-grid.notes-grid--list .note-footer{
+    left: 34px;
+    right: auto;
+  }
+  .notes-area--list-1 .notes-grid.notes-grid--list .footer-hover-zone{
+    left: 34px;
+    right: auto;
+    width: 128px;
+  }
+  .notes-area--list-1 .notes-grid.notes-grid--list .note-title{
+    min-height: 64px;
+    padding-right: 148px;
+  }
+
+  .notes-area--list-2 .notes-grid.notes-grid--list .note-title{
+    min-height: 86px;
+    padding-right: 150px;
+  }
+}
 
 /* Mobile/PWA 2-column list: simplify to compact icon+count chips, hide footer icons. */
 @media (pointer: coarse), (any-pointer: coarse), (hover: none), (any-hover: none) {
+  .notes-area--list-1 .notes-grid.notes-grid--list .note-title{
+    min-height: 74px;
+    padding-top: 8px;
+    padding-bottom: 8px;
+    padding-right: 148px;
+  }
+  .notes-area--list-1 .notes-grid.notes-grid--list .note-meta{
+    right: 42px;
+  }
+  .notes-area--list-1 .notes-grid.notes-grid--list .chip.chip--meta,
+  .notes-area--list-1 .notes-grid.notes-grid--list .chip.chip--meta.chip--meta-collections{
+    min-height: 26px;
+    padding: 5px 8px;
+    font-size: 11.5px;
+  }
+
   .notes-area--list-2 .notes-grid.notes-grid--list .note-footer,
   .notes-area--list-2 .notes-grid.notes-grid--list .footer-hover-zone{
     display: none !important;
   }
+  .notes-area--list-2 .notes-grid.notes-grid--list .note-meta{
+    display: none !important;
+  }
   .notes-area--list-2 .notes-grid.notes-grid--list .note-title{
     min-height: 44px;
-    padding-right: 10px;
+    padding-right: 40px;
   }
 }
 
@@ -1000,9 +1169,22 @@ html.is-preferences-open .mobile-add-note{
 .note-drag-source{
   visibility: hidden;
 }
+.note-drag-target{
+  position: relative;
+  z-index: 3;
+}
+.note-drag-target::after{
+  content: "";
+  position: absolute;
+  inset: -4px;
+  border-radius: 12px;
+  border: 2px solid rgba(255, 204, 0, 0.9);
+  pointer-events: none;
+}
 .note-drag-target .note-card{
   outline: 2px solid rgba(255, 204, 0, 0.85);
   outline-offset: 3px;
+  box-shadow: 0 0 0 2px rgba(255, 204, 0, 0.22);
 }
 .note-drag-ghost{
   z-index: 9999;
@@ -1018,6 +1200,7 @@ html.is-preferences-open .mobile-add-note{
 }
 .note-drag-ghost--list .note-card .note-body,
 .note-drag-ghost--list .note-card .note-meta,
+.note-drag-ghost--list .note-card .note-reminder-due,
 .note-drag-ghost--list .note-card .note-images-toggle,
 .note-drag-ghost--list .note-card .note-images,
 .note-drag-ghost--list .note-card .note-link-previews,
@@ -1025,6 +1208,7 @@ html.is-preferences-open .mobile-add-note{
 .note-drag-ghost--list .note-card .footer-hover-zone,
 .note-rearrange-overlay-inner--list .note-card .note-body,
 .note-rearrange-overlay-inner--list .note-card .note-meta,
+.note-rearrange-overlay-inner--list .note-card .note-reminder-due,
 .note-rearrange-overlay-inner--list .note-card .note-images-toggle,
 .note-rearrange-overlay-inner--list .note-card .note-images,
 .note-rearrange-overlay-inner--list .note-card .note-link-previews,
@@ -1061,6 +1245,39 @@ html.is-preferences-open .mobile-add-note{
 :root[data-theme="light"] .note-rearrange-spacer{
   background: rgba(0,0,0,0.03);
   outline-color: rgba(255, 170, 0, 0.55);
+}
+
+@media (pointer: coarse), (any-pointer: coarse), (hover: none), (any-hover: none) {
+  .notes-area--list .note-drag-target::after{
+    inset: -5px;
+    border-width: 3px;
+    border-color: rgba(255, 214, 64, 1);
+    box-shadow: 0 0 0 2px rgba(255, 214, 64, 0.26);
+  }
+  .notes-area--list .note-drag-target .note-card{
+    outline: 3px solid rgba(255, 214, 64, 0.98);
+    outline-offset: 2px;
+    box-shadow: 0 0 0 3px rgba(255, 214, 64, 0.34), inset 0 0 0 1px rgba(255, 243, 182, 0.28);
+  }
+  .notes-area--list .note-rearrange-spacer{
+    background: rgba(255, 204, 0, 0.14);
+    outline: 3px solid rgba(255, 214, 64, 0.96);
+    outline-offset: -1px;
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.24), 0 0 0 2px rgba(255, 214, 64, 0.24);
+  }
+  :root[data-theme="light"] .notes-area--list .note-drag-target .note-card{
+    outline-color: rgba(221, 140, 0, 0.96);
+    box-shadow: 0 0 0 2px rgba(221, 140, 0, 0.24);
+  }
+  :root[data-theme="light"] .notes-area--list .note-drag-target::after{
+    border-color: rgba(221, 140, 0, 0.96);
+    box-shadow: 0 0 0 2px rgba(221, 140, 0, 0.22);
+  }
+  :root[data-theme="light"] .notes-area--list .note-rearrange-spacer{
+    background: rgba(255, 170, 0, 0.15);
+    outline-color: rgba(221, 140, 0, 0.96);
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.32), 0 0 0 2px rgba(221, 140, 0, 0.24);
+  }
 }
 
 /* Manual drag-reorder should not use dense packing; dense causes cross-column repacks
@@ -1479,10 +1696,10 @@ html.is-preferences-open .mobile-add-note{
 .checkbox-visual, .note-checkbox { padding: calc(var(--checklist-checkbox-size) * 0.08); margin-right: 8px; box-sizing: border-box; }
 .checklist-item .checkbox-visual, .checklist-item .note-checkbox { margin-right: 0; }
 .note-item .note-checkbox { margin-right: 0; }
-.checkbox-visual svg, .note-checkbox svg { width: 100%; height: 100%; display:block; /* ensure SVG inherits `color` */ stroke: currentColor; fill: none; }
+.checkbox-visual svg, .note-checkbox svg { width: min(100%, 18px); height: min(100%, 18px); display:block; /* ensure SVG inherits `color` */ stroke: currentColor; fill: none; }
 .note-checkbox svg path { stroke-linecap:round; stroke-linejoin:round; }
-/* scale checkmark stroke relative to checkbox size (increased multiplier for better visibility at small sizes) */
-.checkbox-visual svg path, .note-checkbox svg path { stroke-width: calc(var(--checklist-checkbox-size) * 0.42); }
+/* Keep current checkmark feel up to 18px, then cap so large checkboxes don't look oversized. */
+.checkbox-visual svg path, .note-checkbox svg path { stroke-width: min(calc(var(--checklist-checkbox-size) * 0.42), 7.56px); }
 
 /* visible checked state - per-card variables set by NoteCard */
 .note-checkbox.checked, .checkbox-visual.checked { border-color: var(--checkbox-stroke, #ffffff); color: var(--checkbox-stroke, #ffffff); }
@@ -1603,10 +1820,10 @@ html.is-preferences-open .mobile-add-note{
   -webkit-transition: none !important;
 }
 
-/* Slightly smaller checkmark stroke inside the full editor so it doesn't appear oversized */
+/* Slightly smaller checkmark stroke inside the full editor, also capped above 18px. */
 .image-dialog .checkbox-visual svg path,
 .image-dialog .note-checkbox svg path {
-  stroke-width: calc(var(--checklist-checkbox-size) * 0.32);
+  stroke-width: min(calc(var(--checklist-checkbox-size) * 0.32), 5.76px);
 }
 
 /* hide original element while dragging so the ghost appears above neighbors */
@@ -3132,6 +3349,40 @@ button.chip:focus{outline:2px solid rgba(255,255,255,0.18);outline-offset:2px;}
   opacity: 0.85;
   pointer-events: none;
 }
+.note-reminder-clear-control{
+  pointer-events: auto;
+  width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  border: 1px solid rgba(255,255,255,0.24);
+  background: rgba(255,255,255,0.08);
+  color: rgba(235, 248, 255, 0.98);
+  padding: 0;
+  cursor: pointer;
+}
+.note-reminder-clear-control svg{
+  width: 13px;
+  height: 13px;
+  display: block;
+}
+.note-reminder-clear-control:hover,
+.note-reminder-clear-control:focus-visible{
+  background: rgba(255,255,255,0.16);
+  border-color: rgba(255,255,255,0.38);
+}
+:root[data-theme="light"] .note-reminder-clear-control{
+  border-color: rgba(0,0,0,0.18);
+  background: rgba(0,0,0,0.06);
+  color: rgba(26, 34, 42, 0.95);
+}
+:root[data-theme="light"] .note-reminder-clear-control:hover,
+:root[data-theme="light"] .note-reminder-clear-control:focus-visible{
+  background: rgba(0,0,0,0.12);
+  border-color: rgba(0,0,0,0.30);
+}
 .note-reminder-due{
   display: inline-flex;
   align-items: center;
@@ -3151,6 +3402,42 @@ button.chip:focus{outline:2px solid rgba(255,255,255,0.18);outline-offset:2px;}
   margin: -2px 0 8px;
   max-width: calc(100% - 2px);
   pointer-events: none;
+}
+.note-sync-badge{
+  display: inline-flex;
+  align-items: center;
+  max-width: 170px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  font-size: 11px;
+  line-height: 1.2;
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  border: 1px solid rgba(130, 190, 255, 0.36);
+  background: rgba(88, 164, 255, 0.14);
+  color: rgba(206, 231, 255, 0.98);
+}
+.note-sync-badge--inline{
+  margin: -2px 0 8px;
+  max-width: calc(100% - 2px);
+  pointer-events: none;
+}
+.note-sync-badge--failed{
+  border-color: rgba(255, 170, 120, 0.40);
+  background: rgba(255, 120, 64, 0.18);
+  color: rgba(255, 226, 204, 0.98);
+}
+:root[data-theme="light"] .note-sync-badge{
+  border-color: rgba(26, 102, 188, 0.34);
+  background: rgba(26, 102, 188, 0.10);
+  color: rgba(17, 72, 132, 0.98);
+}
+:root[data-theme="light"] .note-sync-badge--failed{
+  border-color: rgba(180, 90, 0, 0.42);
+  background: rgba(180, 90, 0, 0.12);
+  color: rgba(120, 60, 0, 0.98);
 }
 :root[data-theme="light"] .note-reminder-due{
   border-color: rgba(0,0,0,0.18);
@@ -3196,6 +3483,43 @@ button.chip:focus{outline:2px solid rgba(255,255,255,0.18);outline-offset:2px;}
 }
 .note-reminder-bell svg,
 .note-pin-icon svg{ width:100%; height:100%; display:block; }
+
+/* Keep card-view reminder bell neutral; urgency color is represented by the reminder chip. */
+.note-corner-icons .note-reminder-bell.note-reminder-due--red,
+.note-corner-icons .note-reminder-bell.note-reminder-due--orange,
+.note-corner-icons .note-reminder-bell.note-reminder-due--yellow{
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  padding: 0;
+  border-radius: 0;
+}
+
+.notes-area--list .notes-grid.notes-grid--list .note-reminder-bell.note-reminder-due--red{
+  color: #ff9a9a;
+  opacity: 0.98;
+}
+.notes-area--list .notes-grid.notes-grid--list .note-reminder-bell.note-reminder-due--orange{
+  color: #ffc27a;
+  opacity: 0.98;
+}
+.notes-area--list .notes-grid.notes-grid--list .note-reminder-bell.note-reminder-due--yellow{
+  color: #ffe083;
+  opacity: 0.98;
+}
+:root[data-theme="light"] .notes-area--list .notes-grid.notes-grid--list .note-reminder-bell.note-reminder-due--red{
+  color: rgba(176, 0, 32, 0.92);
+}
+:root[data-theme="light"] .notes-area--list .notes-grid.notes-grid--list .note-reminder-bell.note-reminder-due--orange{
+  color: rgba(194, 105, 0, 0.9);
+}
+:root[data-theme="light"] .notes-area--list .notes-grid.notes-grid--list .note-reminder-bell.note-reminder-due--yellow{
+  color: rgba(146, 120, 0, 0.92);
+}
+
+.editor-reminder-chip{
+  margin: 0 0 8px;
+}
 
 /* compact completed-toggle inside notes/editors */
 .completed-toggle { display:inline-flex; align-items:center; gap:8px; background:transparent; border:none; padding:6px; color:inherit; cursor:pointer; margin-bottom: var(--checklist-gap); }
@@ -3391,6 +3715,12 @@ html.is-note-more-menu-open *{
   overflow: auto;
   -webkit-overflow-scrolling: touch;
 }
+
+/* List-view card menus: show full menu without internal scrollbars. */
+.more-menu.more-menu--list-anchor{
+  max-height: none;
+  overflow: hidden;
+}
 :root[data-theme="light"] .more-menu{
   background: rgba(255,255,255,0.98);
   color: #000000;
@@ -3468,6 +3798,29 @@ html.is-note-more-menu-open *{
 
 /* Desktop: tighter floating popover style (pointer: fine + wider screens) */
 @media (pointer: fine) and (min-width: 761px) {
+  html.is-more-menu-open-desktop .app-root .app-header,
+  html.is-more-menu-open-desktop .app-root .sidebar,
+  html.is-more-menu-open-desktop .app-root .mobile-sidebar-drawer,
+  html.is-more-menu-open-desktop .app-root .mobile-sidebar-backdrop,
+  html.is-more-menu-open-desktop .notes-area .section-title,
+  html.is-more-menu-open-desktop .notes-area .note-card,
+  html.is-more-menu-open-desktop .notes-area .take-note-expanded,
+  html.is-more-menu-open-desktop .notes-area .take-note-bar,
+  html.is-more-menu-open-desktop .notes-area .grid-context,
+  html.is-more-menu-open-desktop .image-dialog,
+  html.is-more-menu-open-desktop .editor-dialog{
+    filter: blur(2px) saturate(0.97);
+    transition: filter 140ms ease;
+  }
+
+  html.is-more-menu-open-desktop .note-card.more-menu-focus-target,
+  html.is-more-menu-open-desktop .image-dialog.more-menu-focus-target,
+  html.is-more-menu-open-desktop .editor-dialog.more-menu-focus-target,
+  html.is-more-menu-open-desktop .more-menu,
+  html.is-more-menu-open-desktop .more-menu-backdrop{
+    filter: none !important;
+  }
+
   .more-menu-backdrop{
     /* keep click-away but minimize visual dim on desktop */
     background: transparent;
@@ -3505,6 +3858,16 @@ html.is-note-more-menu-open *{
 
   .more-item:hover{ background: rgba(255,255,255,0.03); }
   :root[data-theme="light"] .more-item:hover{ background: rgba(0,0,0,0.04); }
+
+  /* Desktop: keep menu scrollable when needed, but hide scrollbars. */
+  .more-menu{
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+  .more-menu::-webkit-scrollbar{
+    width: 0;
+    height: 0;
+  }
 }
 
 /* Collaborator modal */
@@ -4111,6 +4474,10 @@ html.is-note-more-menu-open *{
 @media (pointer: coarse), (any-pointer: coarse), (hover: none), (any-hover: none) {
   .note-card .footer-hover-zone,
   .note-card .note-footer{ display: none !important; }
+
+  /* With no footer on mobile, add a little breathing room above the clipped-content ellipsis. */
+  .note-card[data-clipped="1"] .note-body{ padding-bottom: 28px; }
+  .note-card[data-clipped="1"]::before{ bottom: 6px; }
 
   /* Mobile/PWA: expand images inline so card grows downward instead of floating overlay. */
   .note-card .note-images{

@@ -18,6 +18,7 @@ import { faLink, faPalette } from '@fortawesome/free-solid-svg-icons';
 import Underline from '@tiptap/extension-underline';
 import Link from '@tiptap/extension-link';
 import UrlEntryModal from './UrlEntryModal';
+import { enqueueHttpJsonMutation, enqueueImageUpload, kickOfflineSync } from '../lib/offline';
 
 export default function TakeNoteBar({
   onCreated,
@@ -90,6 +91,36 @@ export default function TakeNoteBar({
     } catch {
       return false;
     }
+  }
+
+  function formatReminderDueIdentifier(dueMs: number): string {
+    if (!Number.isFinite(dueMs)) return 'Reminder set';
+    const due = new Date(dueMs);
+    const now = new Date();
+    const startOf = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate());
+    const dayDiff = Math.round((startOf(due).getTime() - startOf(now).getTime()) / 86400000);
+    const timeLabel = due.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+
+    if (dayDiff === 0) return `Today at ${timeLabel}`;
+    if (dayDiff === 1) return `Tomorrow at ${timeLabel}`;
+    if (dayDiff === -1) return `Yesterday at ${timeLabel}`;
+    if (dayDiff > 1 && dayDiff < 7) return `${due.toLocaleDateString([], { weekday: 'short' })} at ${timeLabel}`;
+    return due.toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+  }
+
+  function reminderDueColorClass(dueMs: number): string {
+    if (!Number.isFinite(dueMs)) return '';
+    const now = new Date();
+    const due = new Date(dueMs);
+    const todayUtc = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate());
+    const dueUtc = Date.UTC(due.getFullYear(), due.getMonth(), due.getDate());
+    const calendarDayDiff = Math.trunc((dueUtc - todayUtc) / 86400000);
+    const elapsedDayDiff = Math.max(0, Math.ceil((dueMs - Date.now()) / 86400000));
+    const dayDiff = Math.max(calendarDayDiff, elapsedDayDiff);
+    if (dayDiff <= 1) return 'note-reminder-due--red';
+    if (dayDiff >= 2 && dayDiff <= 7) return 'note-reminder-due--orange';
+    if (dayDiff >= 8 && dayDiff <= 14) return 'note-reminder-due--yellow';
+    return '';
   }
 
   const backIdRef = useRef<string>('');
@@ -263,7 +294,7 @@ export default function TakeNoteBar({
   const [pendingReminder, setPendingReminder] = useState<ReminderDraft | null>(null);
   const [showCollaborator, setShowCollaborator] = useState(false);
   const [showImageDialog, setShowImageDialog] = useState(false);
-  const [imageUrl, setImageUrl] = useState<string | null>(null);
+  const [imageUrls, setImageUrls] = useState<string[]>([]);
   const [selectedCollaborators, setSelectedCollaborators] = useState<Array<{id:number;email:string}>>([]);
 
   useEffect(() => {
@@ -456,7 +487,7 @@ export default function TakeNoteBar({
     try { setShowCollaborator(false); } catch {}
     try { setShowImageDialog(false); } catch {}
     try { setShowUrlModal(false); } catch {}
-    try { setTitle(''); setBody(''); setItems([]); setActiveChecklistRowIdx(null); setBg(''); setImageUrl(null); setSelectedCollaborators([]); setPendingReminder(null); } catch {}
+    try { setTitle(''); setBody(''); setItems([]); setActiveChecklistRowIdx(null); setBg(''); setImageUrls([]); setSelectedCollaborators([]); setPendingReminder(null); } catch {}
     try { setPendingLinkUrls([]); } catch {}
     try { editor?.commands.clearContent(); } catch {}
   }
@@ -654,6 +685,44 @@ export default function TakeNoteBar({
     return '';
   }
 
+  async function requestJsonOrQueue(input: {
+    method: 'PATCH' | 'PUT' | 'POST' | 'DELETE';
+    path: string;
+    body?: any;
+  }): Promise<{ status: 'ok' | 'queued' | 'failed'; data?: any }> {
+    const method = String(input.method || 'PATCH').toUpperCase() as any;
+    const path = String(input.path || '');
+    const body = input.body;
+    if (!path) return { status: 'failed' };
+
+    const queueNow = async () => {
+      try {
+        await enqueueHttpJsonMutation({ method, path, body });
+        void kickOfflineSync();
+        return { status: 'queued' as const };
+      } catch {
+        return { status: 'failed' as const };
+      }
+    };
+
+    if (navigator.onLine === false) return await queueNow();
+
+    try {
+      const hasBody = typeof body !== 'undefined';
+      const res = await fetch(path, {
+        method,
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: hasBody ? JSON.stringify(body) : undefined,
+      });
+      if (!res.ok) throw new Error(await res.text());
+      let data: any = null;
+      try { data = await res.json(); } catch {}
+      return { status: 'ok', data };
+    } catch {
+      return await queueNow();
+    }
+  }
+
   async function save() {
     setLoading(true);
     try {
@@ -687,35 +756,92 @@ export default function TakeNoteBar({
         payload.reminderDueAt = pendingReminder.dueAtIso;
         payload.reminderOffsetMinutes = pendingReminder.offsetMinutes;
       }
-      const res = await fetch('/api/notes', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify(payload),
-      });
-      if (!res.ok) throw new Error(await res.text());
-      const data = await res.json();
-      const noteId = data?.note?.id;
+
+      const queueCreateForLater = async (message: string) => {
+        const opId = await enqueueHttpJsonMutation({
+          method: 'POST',
+          path: '/api/notes',
+          body: payload,
+          meta: {
+            mode,
+            bodyJson,
+            pendingLinkUrls,
+            addToCurrentCollection,
+            activeCollectionId,
+            selectedCollaborators: selectedCollaborators.map((u) => String(u?.email || '').trim()).filter((v) => !!v),
+            imageUrls,
+            imageUrl: (Array.isArray(imageUrls) && imageUrls.length > 0) ? String(imageUrls[0]) : null,
+          },
+        });
+        void kickOfflineSync();
+
+        const tempId = -Math.floor(Date.now() + Math.random() * 1000);
+        const optimisticItems = Array.isArray(payload.items)
+          ? payload.items.map((it: any, i: number) => ({
+              id: -(Math.floor(Date.now() / 10) + i + 1),
+              content: String(it?.content || ''),
+              checked: !!it?.checked,
+              ord: i,
+              indent: Number(it?.indent || 0),
+            }))
+          : [];
+        const optimisticNote: any = {
+          id: tempId,
+          title: String(title || ''),
+          type: mode === 'checklist' ? 'CHECKLIST' : 'TEXT',
+          body: mode === 'text' ? JSON.stringify(bodyJson || {}) : null,
+          items: optimisticItems,
+          color: bg || null,
+          viewerColor: bg || null,
+          images: (imageUrls || []).map((url, i) => ({ id: -(Math.floor(Date.now() / 5) + i + 1), url: String(url) })),
+          imagesCount: (imageUrls || []).length,
+          pinned: false,
+          archived: false,
+          trashedAt: null,
+          offlinePendingCreate: true,
+          offlineOpId: opId,
+        };
+        try { window.dispatchEvent(new CustomEvent('freemannotes:offline-note-created', { detail: { opId, note: optimisticNote } })); } catch {}
+
+        discardAndClose();
+        try { onCreated && onCreated(); } catch {}
+        try { window.alert(message); } catch {}
+      };
+
+      if (navigator.onLine === false) {
+        await queueCreateForLater('You are offline. Note creation has been queued and will sync when online.');
+        return;
+      }
+
+      let noteId: number | null = null;
+      try {
+        const res = await fetch('/api/notes', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify(payload),
+        });
+        if (!res.ok) throw new Error(await res.text());
+        const data = await res.json();
+        noteId = Number(data?.note?.id);
+      } catch {
+        await queueCreateForLater('Network issue. Note creation has been queued and will retry automatically.');
+        return;
+      }
 
       if (noteId && pendingLinkUrls.length) {
         for (const url of pendingLinkUrls) {
-          try {
-            await fetch(`/api/notes/${noteId}/link-preview`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json', Authorization: token ? `Bearer ${token}` : '' },
-              body: JSON.stringify({ url }),
-            });
-          } catch {}
+          try { await requestJsonOrQueue({ method: 'POST', path: `/api/notes/${noteId}/link-preview`, body: { url } }); } catch {}
         }
       }
 
       if (noteId && addToCurrentCollection && activeCollectionId != null) {
         try {
-          const cres = await fetch(`/api/notes/${noteId}/collections`, {
+          const cres = await requestJsonOrQueue({
             method: 'POST',
-            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-            body: JSON.stringify({ collectionId: activeCollectionId }),
+            path: `/api/notes/${noteId}/collections`,
+            body: { collectionId: activeCollectionId },
           });
-          if (!cres.ok) throw new Error(await cres.text());
+          if (cres.status === 'failed') throw new Error('Failed to add to collection');
         } catch (e) {
           console.warn('Created note but failed to add to collection', e);
           try { window.alert('Note created, but failed to add it to the current collection.'); } catch {}
@@ -747,9 +873,7 @@ export default function TakeNoteBar({
           try { provider.destroy(); } catch {}
           try { ydoc.destroy(); } catch {}
           // Also store derived snapshot for preview/search
-          try {
-            await fetch(`/api/notes/${noteId}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ body: JSON.stringify(bodyJson), type: 'TEXT' }) });
-          } catch {}
+          try { await requestJsonOrQueue({ method: 'PATCH', path: `/api/notes/${noteId}`, body: { body: JSON.stringify(bodyJson), type: 'TEXT' } }); } catch {}
         } catch (e) {
           console.warn('Failed to seed Yjs content for new note', e);
         }
@@ -757,13 +881,27 @@ export default function TakeNoteBar({
       // post-create additions: collaborators and image
       if (noteId && selectedCollaborators.length) {
         for (const u of selectedCollaborators) {
-          try { await fetch(`/api/notes/${noteId}/collaborators`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ email: u.email }) }); } catch {}
+          try { await requestJsonOrQueue({ method: 'POST', path: `/api/notes/${noteId}/collaborators`, body: { email: u.email } }); } catch {}
         }
       }
-      if (noteId && imageUrl) {
-        try { await fetch(`/api/notes/${noteId}/images`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ url: imageUrl }) }); } catch {}
+      if (noteId && imageUrls.length) {
+        for (const imageUrl of imageUrls) {
+          try {
+            const res = await fetch(`/api/notes/${noteId}/images`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+              body: JSON.stringify({ url: imageUrl }),
+            });
+            if (!res.ok) throw new Error(await res.text());
+          } catch {
+            try {
+              await enqueueImageUpload(Number(noteId), String(imageUrl));
+              void kickOfflineSync();
+            } catch {}
+          }
+        }
       }
-      setTitle(''); setBody(''); setItems([]); setActiveChecklistRowIdx(null); setExpanded(false); setBg(''); setImageUrl(null); setSelectedCollaborators([]); setPendingReminder(null);
+      setTitle(''); setBody(''); setItems([]); setActiveChecklistRowIdx(null); setExpanded(false); setBg(''); setImageUrls([]); setSelectedCollaborators([]); setPendingReminder(null);
       try { setPendingLinkUrls([]); } catch {}
       try { setAddToCurrentCollection(activeCollectionId != null); } catch {}
       editor?.commands.clearContent();
@@ -870,6 +1008,15 @@ export default function TakeNoteBar({
       {mode === 'text' ? (
         <div>
           <div className="rt-sticky-header">
+            {pendingReminder?.dueAtIso && (() => {
+              const dueMs = Date.parse(String(pendingReminder.dueAtIso));
+              const urgencyClass = Number.isFinite(dueMs) ? reminderDueColorClass(dueMs) : '';
+              return (
+                <div className={`note-reminder-due editor-reminder-chip${urgencyClass ? ` ${urgencyClass}` : ''}`} title={`Reminder: ${Number.isFinite(dueMs) ? new Date(dueMs).toLocaleString() : 'Set'}`}>
+                  {Number.isFinite(dueMs) ? formatReminderDueIdentifier(dueMs) : 'Reminder set'}
+                </div>
+              );
+            })()}
             <div style={{ display: 'flex', justifyContent: 'flex-start' }}>
               <input className="note-title-input" ref={titleInputRef} placeholder="Title" value={title} onChange={e => setTitle(e.target.value)} style={{ fontSize: 18, fontWeight: 600, border: 'none', background: 'transparent', color: 'inherit' }} />
             </div>
@@ -962,6 +1109,15 @@ export default function TakeNoteBar({
       ) : (
         <div>
           <div className="rt-sticky-header">
+            {pendingReminder?.dueAtIso && (() => {
+              const dueMs = Date.parse(String(pendingReminder.dueAtIso));
+              const urgencyClass = Number.isFinite(dueMs) ? reminderDueColorClass(dueMs) : '';
+              return (
+                <div className={`note-reminder-due editor-reminder-chip${urgencyClass ? ` ${urgencyClass}` : ''}`} title={`Reminder: ${Number.isFinite(dueMs) ? new Date(dueMs).toLocaleString() : 'Set'}`}>
+                  {Number.isFinite(dueMs) ? formatReminderDueIdentifier(dueMs) : 'Reminder set'}
+                </div>
+              );
+            })()}
             <div style={{ display: 'flex', justifyContent: 'flex-start' }}>
               <input className="note-title-input" ref={titleInputRef} placeholder="Title" value={title} onChange={e => setTitle(e.target.value)} style={{ fontSize: 18, fontWeight: 600, border: 'none', background: 'transparent', color: 'inherit' }} />
             </div>
@@ -1406,13 +1562,17 @@ export default function TakeNoteBar({
         </div>
       )}
 
-      {imageUrl && (
+      {imageUrls.length > 0 && (
         <div style={{ marginTop: 10, display: 'flex', alignItems: 'center', gap: 10 }}>
-          <div className="note-image" style={{ width: 96, height: 72, flex: '0 0 auto' }}>
-            <img src={imageUrl} alt="selected" style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: 6, display: 'block' }} />
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            {imageUrls.slice(0, 3).map((url, idx) => (
+              <div key={`${url}-${idx}`} className="note-image" style={{ width: 56, height: 42, flex: '0 0 auto' }}>
+                <img src={url} alt="selected" style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: 6, display: 'block' }} />
+              </div>
+            ))}
           </div>
-          <div style={{ flex: 1, fontSize: 13, opacity: 0.9 }}>1 image selected</div>
-          <button className="btn" type="button" onClick={() => setImageUrl(null)} style={{ padding: '6px 10px' }}>Remove</button>
+          <div style={{ flex: 1, fontSize: 13, opacity: 0.9 }}>{imageUrls.length} image{imageUrls.length === 1 ? '' : 's'} selected</div>
+          <button className="btn" type="button" onClick={() => setImageUrls([])} style={{ padding: '6px 10px' }}>Remove</button>
         </div>
       )}
       </div>
@@ -1526,7 +1686,26 @@ export default function TakeNoteBar({
           onRemove={() => { /* no-op: creation dialog selections have no collabId yet */ }}
         />
       )}
-      {showImageDialog && <ImageDialog onClose={() => setShowImageDialog(false)} onAdd={(url) => setImageUrl(url || null)} />}
+      {showImageDialog && (
+        <ImageDialog
+          onClose={() => setShowImageDialog(false)}
+          onAdd={(url) => setImageUrls((cur) => {
+            const next = Array.isArray(cur) ? cur.slice() : [];
+            const val = String(url || '').trim();
+            if (!val || next.includes(val)) return next;
+            next.push(val);
+            return next;
+          })}
+          onAddMany={(urls) => setImageUrls((cur) => {
+            const next = new Set(Array.isArray(cur) ? cur.map((u) => String(u || '').trim()).filter((u) => !!u) : []);
+            for (const url of (Array.isArray(urls) ? urls : [])) {
+              const val = String(url || '').trim();
+              if (val) next.add(val);
+            }
+            return Array.from(next);
+          })}
+        />
+      )}
     </div>
   );
 }

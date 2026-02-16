@@ -31,21 +31,21 @@ const BUILTIN_DEVICE_DEFAULTS: PrefMap = {
 const HARD_CODED_DEVICE_BUCKET_DEFAULTS: Record<'mobile' | 'tablet' | 'desktop', PrefMap> = {
   mobile: {
     // Note Card Preferences
-    cardTitleSize: 20,
+    cardTitleSize: 16,
     cardNoteLineSpacing: 1.38,
-    cardChecklistSpacing: 15,
-    cardCheckboxSize: 20,
-    cardChecklistTextSize: 17,
+    cardChecklistSpacing: 9,
+    cardCheckboxSize: 19,
+    cardChecklistTextSize: 16,
     // Note Editor Preferences
-    editorNoteLineSpacing: 1.38,
-    editorChecklistSpacing: 8,
+    editorNoteLineSpacing: 1.18,
+    editorChecklistSpacing: 6,
     editorCheckboxSize: 18,
-    editorChecklistTextSize: 14,
+    editorChecklistTextSize: 16,
     // Shared device fallback prefs
-    noteLineSpacing: 1.38,
-    checklistSpacing: 15,
-    checkboxSize: 20,
-    checklistTextSize: 17,
+    noteLineSpacing: 1.18,
+    checklistSpacing: 9,
+    checkboxSize: 19,
+    checklistTextSize: 16,
     // Layout
     noteWidth: 288,
     imageThumbSize: 96,
