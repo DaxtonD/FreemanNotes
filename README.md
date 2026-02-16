@@ -4,6 +4,12 @@ FreemanNotes is a modern, fast, offline-capable notes app with rich text, checkl
 
 Built with React + Vite (client) and Express + Prisma (server), with PostgreSQL as the primary supported database and optional MySQL compatibility for existing installs.
 
+## Support
+
+If you'd like to support development, you can buy me a coffee:
+
+- https://www.buymeacoffee.com/DaxtonD
+
 ## Comprehensive Feature List
 
 ### Core notes experience
