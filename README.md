@@ -135,6 +135,12 @@ npm run dev
 # Open http://localhost:4000
 ```
 
+### Initial admin bootstrap
+
+- The very first user account created in a fresh database is automatically granted **admin** role.
+- After that first account exists, additional users follow normal registration/invite rules.
+- If you want a specific person to be admin, make sure they are the first person to register/login on a new install.
+
 ### Database notes
 
 - PostgreSQL is the recommended target for new deployments.
