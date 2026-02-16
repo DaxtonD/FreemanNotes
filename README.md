@@ -2,7 +2,7 @@
 
 FreemanNotes is a modern, fast, offline-capable notes app with rich text, checklists, reminders, collaboration, OCR search, and polished mobile/PWA behavior.
 
-Built with React + Vite (client) and Express + Prisma (server), with optional MySQL/PostgreSQL Docker profiles.
+Built with React + Vite (client) and Express + Prisma (server), with PostgreSQL as the primary supported database and optional MySQL compatibility for existing installs.
 
 ## Comprehensive Feature List
 
@@ -93,8 +93,11 @@ PORT=4000
 APP_URL=http://localhost:4000
 NODE_ENV=development
 
-# MySQL connection (example)
-DATABASE_URL="mysql://user:pass@host:3306/freeman"
+# PostgreSQL connection (recommended)
+DATABASE_URL="postgresql://user:pass@host:5432/freemannotes"
+
+# MySQL connection (legacy/optional)
+# DATABASE_URL="mysql://user:pass@host:3306/freemannotes"
 
 # JWT secret
 JWT_SECRET=generate_a_long_random_string
@@ -131,6 +134,12 @@ npx prisma generate   # if needed
 npm run dev
 # Open http://localhost:4000
 ```
+
+### Database notes
+
+- PostgreSQL is the recommended target for new deployments.
+- If you are upgrading from an older MySQL-based install, keep your existing `DATABASE_URL` until you intentionally migrate data.
+- Prisma schema sync is still handled via `npm run setup-db`.
 
 ## Build & Run (Production)
 
@@ -174,6 +183,41 @@ Or with Compose:
 
 ```
 docker compose up --build
+```
+
+### Docker Compose database profiles
+
+The project includes two optional DB profiles:
+
+- PostgreSQL (recommended): `with-db-postgres`
+- MySQL (legacy/optional): `with-db`
+
+#### PostgreSQL (recommended)
+
+1) Set `.env`:
+
+```
+DATABASE_URL="postgresql://freeman:freemanpass@postgres:5432/freemannotes"
+```
+
+2) Start:
+
+```
+docker compose --profile with-db-postgres up --build
+```
+
+#### MySQL (legacy/optional)
+
+1) Set `.env`:
+
+```
+DATABASE_URL="mysql://freeman:freemanpass@db:3306/freemannotes"
+```
+
+2) Start:
+
+```
+docker compose --profile with-db up --build
 ```
 
 ### Persisting uploads (avatars, etc.)
@@ -228,19 +272,14 @@ Pulling a new app image should **not** reset your database as long as your datab
   - `db push` is great for prototyping, but it is not a robust “upgrade mechanism” for apps in the wild.
 - This app applies schema changes at startup via `ensureDatabaseReady()` and does **not** intentionally wipe data in production.
 
-### Compose: optional persistent MySQL
+### Compose: persistent database volumes
 
-The included `docker-compose.yml` has an optional MySQL service behind a profile that uses a named volume.
+The included `docker-compose.yml` defines persistent named volumes for both optional database profiles.
 
-1) Set `DATABASE_URL` in your `.env` to:
+- PostgreSQL profile: `with-db-postgres` (volume: `postgres_data`)
+- MySQL profile: `with-db` (volume: `mysql_data`)
 
-`DATABASE_URL="mysql://freeman:freemanpass@db:3306/freemannotes"`
-
-2) Start compose with the DB profile:
-
-`docker compose --profile with-db up --build`
-
-3) When updating, do **not** run `docker compose down -v` (that deletes volumes).
+When updating, do **not** run `docker compose down -v` unless you intentionally want to remove database data.
 
 ## Versioning
 
