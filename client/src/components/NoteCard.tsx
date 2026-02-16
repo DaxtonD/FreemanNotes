@@ -1101,7 +1101,12 @@ export default function NoteCard({
           if (!providerSynced) return; // avoid applying possibly-stale editor updates
           const html = ed?.getHTML() || '';
           const safe = DOMPurify.sanitize(html, { USE_PROFILES: { html: true } });
-          setRtHtmlFromY(safe);
+          const plain = String(safe || '')
+            .replace(/<[^>]*>/g, ' ')
+            .replace(/&nbsp;/gi, ' ')
+            .replace(/\s+/g, ' ')
+            .trim();
+          setRtHtmlFromY(plain ? safe : null);
         } catch {}
       };
       ed.on('update', compute);
@@ -1171,6 +1176,15 @@ export default function NoteCard({
       const fallback = esc(raw).replace(/\n/g, '<br/>');
       return DOMPurify.sanitize(`<p>${fallback}</p>`);
     }
+  }
+
+  function hasVisibleHtmlContent(html: any): boolean {
+    const plain = String(html || '')
+      .replace(/<[^>]*>/g, ' ')
+      .replace(/&nbsp;/gi, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    return plain.length > 0;
   }
 
   // keep local bg/textColor in sync when the parent reloads the note (e.g., after page refresh)
@@ -2231,8 +2245,8 @@ export default function NoteCard({
             )}
           </div>
         ) : (
-          (rtHtmlFromY || note.body) ? (
-            <div className="note-html" dangerouslySetInnerHTML={{ __html: (rtHtmlFromY || bodyHtmlPreview()) }} />
+          (hasVisibleHtmlContent(rtHtmlFromY) || note.body) ? (
+            <div className="note-html" dangerouslySetInnerHTML={{ __html: (hasVisibleHtmlContent(rtHtmlFromY) ? String(rtHtmlFromY) : bodyHtmlPreview()) }} />
           ) : null
         )}
       </div>

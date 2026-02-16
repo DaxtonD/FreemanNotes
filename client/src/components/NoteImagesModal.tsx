@@ -20,6 +20,23 @@ export default function NoteImagesModal({
   const [loading, setLoading] = React.useState(false);
   const [confirmImageDeleteId, setConfirmImageDeleteId] = React.useState<number | null>(null);
   const [lightboxUrl, setLightboxUrl] = React.useState<string | null>(null);
+  const modalThumbRequestSize = React.useMemo(() => {
+    try {
+      const root = document.documentElement;
+      const cs = window.getComputedStyle(root);
+      const raw = String(cs.getPropertyValue('--image-thumb-size') || '').trim();
+      const base = Number.parseFloat(raw || '96');
+      const dpr = Math.max(1, Math.min(3, Number(window.devicePixelRatio || 1)));
+      return Math.max(96, Math.min(1024, Math.round((Number.isFinite(base) ? base : 96) * dpr)));
+    } catch {
+      return 192;
+    }
+  }, []);
+  const getModalImageThumbSrc = React.useCallback((img: { id: number; url: string }) => {
+    const id = Number((img as any)?.id);
+    if (!Number.isFinite(id) || id <= 0) return String((img as any)?.url || '');
+    return `/api/notes/${Number(noteId)}/images/${id}/thumb?w=${modalThumbRequestSize}&q=74`;
+  }, [noteId, modalThumbRequestSize]);
   const onCloseRef = React.useRef(onClose);
   const onImagesChangedRef = React.useRef<typeof onImagesChanged>(onImagesChanged);
 
@@ -179,7 +196,14 @@ export default function NoteImagesModal({
                       }
                     }}
                   >
-                    <img src={img.url} alt="note image" loading="lazy" draggable={false} />
+                    <img
+                      src={getModalImageThumbSrc(img)}
+                      alt="note image"
+                      loading="lazy"
+                      decoding="async"
+                      fetchPriority="low"
+                      draggable={false}
+                    />
                     <button
                       className="image-delete"
                       aria-label="Delete image"

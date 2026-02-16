@@ -9,6 +9,7 @@ import { enqueueNoteImageOcr } from "./ocr/ocrQueue";
 import { getUploadsDir } from './uploads';
 import * as fsp from 'fs/promises';
 import path from 'path';
+import sharp from 'sharp';
 
 const router = Router();
 
@@ -531,6 +532,72 @@ router.get('/api/notes/:id/images', async (req: Request, res: Response) => {
     res.json({ images: migrated });
   } catch (err) {
     res.status(500).json({ error: String(err) });
+  }
+});
+
+// Render an authenticated thumbnail for a note image.
+router.get('/api/notes/:id/images/:imageId/thumb', async (req: Request, res: Response) => {
+  const user = await getUserFromToken(req);
+  if (!user) return res.status(401).json({ error: 'unauthenticated' });
+
+  const id = Number(req.params.id);
+  const imageId = Number(req.params.imageId);
+  if (!Number.isInteger(id) || !Number.isInteger(imageId)) return res.status(400).json({ error: 'invalid id' });
+
+  const rawW = Number(req.query.w);
+  const rawQ = Number(req.query.q);
+  const width = Number.isFinite(rawW) ? Math.max(64, Math.min(1024, Math.trunc(rawW))) : 256;
+  const quality = Number.isFinite(rawQ) ? Math.max(40, Math.min(90, Math.trunc(rawQ))) : 74;
+
+  try {
+    const note = await prisma.note.findUnique({ where: { id } });
+    if (!note) return res.status(404).json({ error: 'not found' });
+    if (note.ownerId !== user.id) {
+      const collab = await prisma.collaborator.findFirst({ where: { noteId: id, userId: user.id } });
+      if (!collab) return res.status(403).json({ error: 'forbidden' });
+    }
+
+    const img = await prisma.noteImage.findUnique({ where: { id: imageId } });
+    if (!img || Number((img as any).noteId) !== id) return res.status(404).json({ error: 'image not found' });
+
+    const srcUrl = stripUrlQueryAndHash(String((img as any).url || ''));
+    if (!srcUrl.startsWith('/uploads/')) {
+      // Non-local source: fall back to original URL.
+      return res.redirect(String((img as any).url || srcUrl));
+    }
+
+    const rel = srcUrl.slice('/uploads/'.length);
+    const srcAbs = uploadsAbsPathFromRel(rel);
+    if (!srcAbs) return res.status(404).json({ error: 'image not found' });
+
+    const srcStat = await fsp.stat(srcAbs).catch(() => null);
+    if (!srcStat?.isFile?.()) return res.status(404).json({ error: 'image not found' });
+
+    const cacheDir = path.join(getUploadsDir(), '.thumbs', 'notes', String(note.ownerId), String(id));
+    const cacheFile = path.join(cacheDir, `${imageId}-w${width}-q${quality}.webp`);
+    const cacheStat = await fsp.stat(cacheFile).catch(() => null);
+
+    if (!cacheStat || cacheStat.mtimeMs < srcStat.mtimeMs) {
+      await fsp.mkdir(cacheDir, { recursive: true });
+      const tmpFile = `${cacheFile}.tmp-${process.pid}-${Date.now()}`;
+      await sharp(srcAbs, { failOn: 'none' })
+        .rotate()
+        .resize({ width, height: width, fit: 'cover', withoutEnlargement: true, kernel: sharp.kernel.lanczos3 })
+        .webp({ quality })
+        .toFile(tmpFile);
+      await fsp.rename(tmpFile, cacheFile).catch(async () => {
+        try { await fsp.unlink(tmpFile); } catch {}
+      });
+    }
+
+    try {
+      res.setHeader('Content-Type', 'image/webp');
+      res.setHeader('Cache-Control', 'private, max-age=604800');
+      res.setHeader('X-Content-Type-Options', 'nosniff');
+    } catch {}
+    return res.sendFile(cacheFile);
+  } catch (err) {
+    return res.status(500).json({ error: String(err) });
   }
 });
 

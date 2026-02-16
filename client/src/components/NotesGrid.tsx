@@ -685,14 +685,30 @@ export default function NotesGrid({
         if (!opId || !Number.isFinite(serverId)) return;
 
         setNotes((prev) => {
+          const tempNote = prev.find((n: any) => String((n as any)?.offlineOpId || '') === opId) || null;
+          const reconciled: any = {
+            ...(tempNote && typeof tempNote === 'object' ? tempNote : {}),
+            ...(serverNote && typeof serverNote === 'object' ? serverNote : {}),
+          };
+          // Offline create flow posts TEXT notes with body null first, then queues a follow-up
+          // PATCH body snapshot. Preserve the optimistic body until server catches up.
+          if (String(reconciled?.type || '') === 'TEXT') {
+            const serverBody = (typeof (serverNote as any)?.body === 'string') ? String((serverNote as any).body) : '';
+            const tempBody = (typeof (tempNote as any)?.body === 'string') ? String((tempNote as any).body) : '';
+            if (!serverBody && tempBody) reconciled.body = tempBody;
+          }
+          reconciled.offlinePendingCreate = false;
+          reconciled.offlineSyncFailed = false;
+          reconciled.offlineOpId = undefined;
+
           const withoutTemp = prev.filter((n: any) => String((n as any)?.offlineOpId || '') !== opId);
           const idx = withoutTemp.findIndex((n: any) => Number(n?.id) === serverId);
           if (idx >= 0) {
             const merged = [...withoutTemp];
-            merged[idx] = { ...merged[idx], ...serverNote, offlinePendingCreate: false, offlineSyncFailed: false, offlineOpId: undefined };
+            merged[idx] = { ...merged[idx], ...reconciled };
             return dedupeNotesById(merged);
           }
-          return dedupeNotesById([{ ...serverNote, offlinePendingCreate: false, offlineSyncFailed: false, offlineOpId: undefined }, ...withoutTemp]);
+          return dedupeNotesById([reconciled, ...withoutTemp]);
         });
       } catch {}
     };

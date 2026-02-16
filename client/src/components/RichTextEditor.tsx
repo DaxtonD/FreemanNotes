@@ -152,6 +152,23 @@ export default function RichTextEditor({ note, onClose, onSaved, noteBg, onImage
   const [showCollaborator, setShowCollaborator] = React.useState(false);
   const [showImageDialog, setShowImageDialog] = React.useState(false);
   const [images, setImages] = React.useState<Array<{ id:number; url:string }>>(((note as any).images || []).map((i:any)=>({ id:Number(i.id), url:String(i.url) })));
+  const editorThumbRequestSize = React.useMemo(() => {
+    try {
+      const root = document.documentElement;
+      const cs = window.getComputedStyle(root);
+      const raw = String(cs.getPropertyValue('--editor-image-thumb-size') || '').trim();
+      const base = Number.parseFloat(raw || '115');
+      const dpr = Math.max(1, Math.min(3, Number(window.devicePixelRatio || 1)));
+      return Math.max(96, Math.min(1024, Math.round((Number.isFinite(base) ? base : 115) * dpr)));
+    } catch {
+      return 230;
+    }
+  }, []);
+  const getEditorImageThumbSrc = React.useCallback((img: { id: number; url: string }) => {
+    const id = Number((img as any)?.id);
+    if (!Number.isFinite(id) || id <= 0) return String((img as any)?.url || '');
+    return `/api/notes/${Number(note.id)}/images/${id}/thumb?w=${editorThumbRequestSize}&q=74`;
+  }, [note.id, editorThumbRequestSize]);
   const defaultImagesOpen = (() => {
     try {
       const stored = localStorage.getItem('prefs.editorImagesExpandedByDefault');
@@ -499,6 +516,23 @@ export default function RichTextEditor({ note, onClose, onSaved, noteBg, onImage
       });
       if (result.status === 'ok') {
         setLinkPreviews(normalizeLinkPreviews(result.data?.previews));
+      } else if (result.status === 'queued') {
+        const normalizedUrl = String(url || '').trim();
+        if (!normalizedUrl) return;
+        const domain = (() => { try { return new URL(normalizedUrl).hostname.replace(/^www\./i, ''); } catch { return ''; } })();
+        setLinkPreviews((prev) => {
+          const existing = Array.isArray(prev) ? prev : [];
+          if (existing.some((p: any) => String(p?.url || '') === normalizedUrl)) return existing;
+          const temp = {
+            id: -Math.floor(Date.now() + Math.random() * 1000),
+            url: normalizedUrl,
+            title: normalizedUrl,
+            description: null,
+            imageUrl: null,
+            domain: domain || null,
+          };
+          return normalizeLinkPreviews([temp, ...existing]);
+        });
       }
     } catch {}
   }
@@ -1055,8 +1089,11 @@ export default function RichTextEditor({ note, onClose, onSaved, noteBg, onImage
                       style={{ cursor: 'zoom-in', position: 'relative' }}
                     >
                       <img
-                        src={img.url}
+                        src={getEditorImageThumbSrc(img)}
                         alt="note image"
+                        loading="lazy"
+                        decoding="async"
+                        fetchPriority="low"
                         draggable={false}
                         onContextMenu={(e) => {
                           if (!isCoarsePointer) return;

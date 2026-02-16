@@ -15,6 +15,24 @@ Adheres to Semantic Versioning (MAJOR.MINOR.PATCH).
 ### Fixed
 - 
 
+## [0.8.1] - 2026-02-16
+
+### Added
+- Authenticated note-image thumbnail endpoint (`GET /api/notes/:id/images/:imageId/thumb`) with Sharp resize/compression and on-disk cache reuse for faster editor/modal image grids.
+
+### Changed
+- Editor image surfaces now request size-appropriate thumbnails (Rich Text editor, Checklist editor, and Note Images modal) instead of loading full-resolution originals in grid views.
+- Checklist drag ghost rendering now reads live computed sizing values (gap, checkbox size, text size, line box height) from the dragged row for more faithful cross-device visuals.
+- Note title strip was adjusted to provide dedicated top space for corner icons (pin/reminder/clear-reminder) while keeping title text visibility clear.
+
+### Fixed
+- Offline reconciliation and preview rendering reliability for text notes: prevented transient empty-body overwrite after reconnect/refresh and improved fallback behavior when synced rich-text preview is temporarily empty.
+- Offline URL-preview insertion now creates immediate placeholders in both Rich Text and Checklist editors while queued requests sync later.
+- Checklist mobile close-path parity: mobile back action now runs the same prune/save/discard flow as the close button.
+- Checklist drag target visuals now show a single clear orange outline (removed doubled inner/outer highlight conflict).
+- Checklist control alignment consistency improvements across checkbox size/text size preferences, including active-row highlight centering and ghost alignment.
+- Note card title overlap with corner indicators resolved by increasing title-strip top runway.
+
 ## [0.8.0] - 2026-02-15
 
 ### Added

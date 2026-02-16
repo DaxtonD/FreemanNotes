@@ -746,7 +746,7 @@ body{
 
   .note-title{
     margin: -10px -10px 8px -10px;
-    padding: 8px 10px;
+    padding: 26px 10px 8px;
     border-top-left-radius: 6px;
     border-top-right-radius: 6px;
   }
@@ -1182,9 +1182,8 @@ html.is-preferences-open .mobile-add-note{
   pointer-events: none;
 }
 .note-drag-target .note-card{
-  outline: 2px solid rgba(255, 204, 0, 0.85);
-  outline-offset: 3px;
-  box-shadow: 0 0 0 2px rgba(255, 204, 0, 0.22);
+  outline: none;
+  box-shadow: none;
 }
 .note-drag-ghost{
   z-index: 9999;
@@ -1255,19 +1254,14 @@ html.is-preferences-open .mobile-add-note{
     box-shadow: 0 0 0 2px rgba(255, 214, 64, 0.26);
   }
   .notes-area--list .note-drag-target .note-card{
-    outline: 3px solid rgba(255, 214, 64, 0.98);
-    outline-offset: 2px;
-    box-shadow: 0 0 0 3px rgba(255, 214, 64, 0.34), inset 0 0 0 1px rgba(255, 243, 182, 0.28);
+    outline: none;
+    box-shadow: none;
   }
   .notes-area--list .note-rearrange-spacer{
     background: rgba(255, 204, 0, 0.14);
     outline: 3px solid rgba(255, 214, 64, 0.96);
     outline-offset: -1px;
     box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.24), 0 0 0 2px rgba(255, 214, 64, 0.24);
-  }
-  :root[data-theme="light"] .notes-area--list .note-drag-target .note-card{
-    outline-color: rgba(221, 140, 0, 0.96);
-    box-shadow: 0 0 0 2px rgba(221, 140, 0, 0.24);
   }
   :root[data-theme="light"] .notes-area--list .note-drag-target::after{
     border-color: rgba(221, 140, 0, 0.96);
@@ -1527,6 +1521,39 @@ html.is-preferences-open .mobile-add-note{
   margin-right:0;
 }
 
+/* Unified, size-aware checklist control alignment.
+   Clamp at 0 so larger checkboxes don't get pulled above the row background. */
+.image-dialog.checklist-editor .checklist-item,
+.take-note-expanded .checklist-item{
+  --checklist-line-box-height: calc(var(--checklist-text-size-effective) * var(--note-line-height-effective));
+  --checklist-first-line-center-offset: max(0px, calc((var(--checklist-line-box-height) - var(--checklist-checkbox-size)) / 2));
+  --checklist-text-top-offset: max(0px, calc((var(--checklist-checkbox-size) - var(--checklist-line-box-height)) / 2));
+}
+.image-dialog.checklist-editor .checklist-item .drag-gutter,
+.take-note-expanded .checklist-item .drag-gutter{
+  margin-top: var(--checklist-first-line-center-offset);
+}
+/* Completed rows render checkbox as a direct child, not inside .drag-gutter. */
+.image-dialog.checklist-editor .checklist-item > .checkbox-visual,
+.image-dialog.checklist-editor .checklist-item > .note-checkbox,
+.take-note-expanded .checklist-item > .checkbox-visual,
+.take-note-expanded .checklist-item > .note-checkbox{
+  margin-top: var(--checklist-first-line-center-offset);
+}
+.image-dialog.checklist-editor .checklist-item .delete-item,
+.take-note-expanded .checklist-item .delete-item {
+  align-self: flex-start;
+  margin-top: var(--checklist-first-line-center-offset);
+}
+.image-dialog.checklist-editor .checklist-item .rt-item,
+.take-note-expanded .checklist-item .rt-item {
+  padding-top: var(--checklist-text-top-offset);
+}
+.image-dialog.checklist-editor .checklist-item .rt-item p,
+.take-note-expanded .checklist-item .rt-item p {
+  line-height: var(--note-line-height-effective);
+}
+
 /* Touch: keep a larger grab target without changing visual alignment. */
 @media (pointer: coarse) {
   .image-dialog .checklist-item,
@@ -1539,19 +1566,6 @@ html.is-preferences-open .mobile-add-note{
   .take-note-expanded .checklist-item .drag-gutter {
     align-items: center;
   }
-  .image-dialog .checklist-item .checkbox-visual,
-  .image-dialog.checklist-editor .checklist-item .checkbox-visual,
-  .take-note-expanded .checklist-item .checkbox-visual {
-    align-self: center;
-  }
-  .image-dialog.checklist-editor .checklist-item .rt-item,
-  .take-note-expanded .checklist-item .rt-item {
-    padding-top: 1px;
-  }
-  .image-dialog.checklist-editor .checklist-item .drag-handle,
-  .take-note-expanded .checklist-item .drag-handle {
-    transform: translateY(1px);
-  }
   .checklist-item .drag-handle{
     width: max(30px, var(--checklist-drag-handle-width), var(--checklist-checkbox-size));
     min-width: max(30px, var(--checklist-drag-handle-width), var(--checklist-checkbox-size));
@@ -1559,53 +1573,6 @@ html.is-preferences-open .mobile-add-note{
     min-height: var(--checklist-checkbox-size);
     font-size: max(22px, var(--checklist-checkbox-size));
   }
-
-/* Normalize first-line vertical centering across browsers (desktop + mobile).
-   Compute offset between first text line center and checkbox size and apply
-   a top margin to the drag gutter / direct checkbox so handles/checks
-   visually align with the first text line across engines. */
-.image-dialog.checklist-editor .checklist-item,
-.take-note-expanded .checklist-item{
-  --checklist-first-line-center-offset: calc((var(--checklist-text-size-effective) * var(--note-line-height-effective) - var(--checklist-checkbox-size)) / 2);
-}
-.image-dialog.checklist-editor .checklist-item .drag-gutter,
-.take-note-expanded .checklist-item .drag-gutter{
-  margin-top: var(--checklist-first-line-center-offset);
-}
-.image-dialog.checklist-editor .checklist-item > .checkbox-visual,
-.image-dialog.checklist-editor .checklist-item > .note-checkbox,
-.take-note-expanded .checklist-item > .checkbox-visual,
-.take-note-expanded .checklist-item > .note-checkbox{
-  margin-top: var(--checklist-first-line-center-offset);
-}
-
-/* Firefox-specific: bump checkbox/handle slightly to match text baseline */
-@-moz-document url-prefix() {
-  .image-dialog.checklist-editor .checklist-item .drag-gutter,
-  .take-note-expanded .checklist-item .drag-gutter {
-    margin-top: calc(var(--checklist-first-line-center-offset) + 2px);
-  }
-  .image-dialog.checklist-editor .checklist-item > .checkbox-visual,
-  .image-dialog.checklist-editor .checklist-item > .note-checkbox,
-  .take-note-expanded .checklist-item > .checkbox-visual,
-  .take-note-expanded .checklist-item > .note-checkbox{
-    margin-top: calc(var(--checklist-first-line-center-offset) + 2px);
-  }
-}
-
-/* WebKit/Blink (Chrome) subtle adjustment: reduce offset slightly if text appears too high */
-@supports (-webkit-appearance: none) {
-  .image-dialog.checklist-editor .checklist-item .drag-gutter,
-  .take-note-expanded .checklist-item .drag-gutter {
-    margin-top: calc(var(--checklist-first-line-center-offset) - 1px);
-  }
-  .image-dialog.checklist-editor .checklist-item > .checkbox-visual,
-  .image-dialog.checklist-editor .checklist-item > .note-checkbox,
-  .take-note-expanded .checklist-item > .checkbox-visual,
-  .take-note-expanded .checklist-item > .note-checkbox{
-    margin-top: calc(var(--checklist-first-line-center-offset) - 1px);
-  }
-}
   .checklist-item .drag-handle::before{
     content: '';
     position: absolute;
@@ -1615,23 +1582,6 @@ html.is-preferences-open .mobile-add-note{
     top: calc((max(44px, var(--checklist-drag-handle-height)) - var(--checklist-checkbox-size)) / -2);
     bottom: calc((max(44px, var(--checklist-drag-handle-height)) - var(--checklist-checkbox-size)) / -2);
     background: transparent;
-  }
-
-  /* Center handle + checkbox to the first checklist text line (not the full multi-line block). */
-  .image-dialog.checklist-editor .checklist-item,
-  .take-note-expanded .checklist-item{
-    --checklist-first-line-center-offset: calc((var(--checklist-text-size-effective) * var(--note-line-height-effective) - var(--checklist-checkbox-size)) / 2);
-  }
-  .image-dialog.checklist-editor .checklist-item .drag-gutter,
-  .take-note-expanded .checklist-item .drag-gutter{
-    margin-top: var(--checklist-first-line-center-offset);
-  }
-  /* Completed rows render checkbox as a direct child, not inside .drag-gutter. */
-  .image-dialog.checklist-editor .checklist-item > .checkbox-visual,
-  .image-dialog.checklist-editor .checklist-item > .note-checkbox,
-  .take-note-expanded .checklist-item > .checkbox-visual,
-  .take-note-expanded .checklist-item > .note-checkbox{
-    margin-top: var(--checklist-first-line-center-offset);
   }
 }
 
@@ -1785,14 +1735,24 @@ html.is-preferences-open .mobile-add-note{
 .checklist-ghost .checklist-item,
 .checklist-ghost.checklist-item{
   align-items: flex-start !important;
+  --checklist-line-box-height: var(--ghost-line-box-height, calc(var(--checklist-text-size-effective) * var(--note-line-height-effective)));
+  --checklist-first-line-center-offset: max(0px, calc((var(--checklist-line-box-height) - var(--checklist-checkbox-size)) / 2));
+  --checklist-text-top-offset: max(0px, calc((var(--checklist-checkbox-size) - var(--checklist-line-box-height)) / 2));
 }
 .checklist-ghost .drag-gutter,
 .checklist-ghost.checklist-item .drag-gutter{
-  align-items: flex-start !important;
+  align-items: center !important;
+  margin-top: var(--checklist-first-line-center-offset);
 }
 .checklist-ghost .checkbox-visual,
 .checklist-ghost .note-checkbox{
-  align-self: flex-start !important;
+  align-self: auto !important;
+}
+.checklist-ghost .checklist-item > .checkbox-visual,
+.checklist-ghost .checklist-item > .note-checkbox,
+.checklist-ghost.checklist-item > .checkbox-visual,
+.checklist-ghost.checklist-item > .note-checkbox{
+  margin-top: var(--checklist-first-line-center-offset);
 }
 .checklist-ghost .rt-item,
 .checklist-ghost .rt-html,
@@ -1800,6 +1760,15 @@ html.is-preferences-open .mobile-add-note{
 .checklist-ghost .rt-html p{
   font-size: var(--checklist-text-size-effective);
   line-height: var(--note-line-height-effective);
+}
+.checklist-ghost .rt-item,
+.checklist-ghost.checklist-item .rt-item{
+  padding-top: var(--checklist-text-top-offset);
+}
+.checklist-ghost .delete-item,
+.checklist-ghost.checklist-item .delete-item {
+  align-self: flex-start;
+  margin-top: var(--checklist-first-line-center-offset);
 }
 
 /* Provide a fallback so neighbor-shift still animates even if JS can't measure height. */
@@ -1877,7 +1846,7 @@ html.is-preferences-open .mobile-add-note{
 
   /* Edge-to-edge title strip inside the padded card */
   margin: -12px -12px 10px -12px;
-  padding: 10px 12px;
+  padding: 30px 12px 10px;
   background: var(--note-title-bg, rgba(255,255,255,0.07));
   border-bottom: 1px solid rgba(255,255,255,0.06);
   border-top-left-radius: 8px;

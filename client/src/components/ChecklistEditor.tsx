@@ -148,7 +148,7 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
     window.dispatchEvent(new Event('freemannotes:editor-modal-open'));
     try {
       const id = backIdRef.current;
-      const onBack = () => { try { onClose(); } catch {} };
+      const onBack = () => { try { handleClose(); } catch {} };
       window.dispatchEvent(new CustomEvent('freemannotes:back/register', { detail: { id, onBack } }));
     } catch {}
     return () => {
@@ -237,6 +237,23 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
   const [showCollaborator, setShowCollaborator] = useState(false);
   const [showImageDialog, setShowImageDialog] = useState(false);
   const [images, setImages] = useState<Array<{ id:number; url:string }>>(((note as any).images || []).map((i:any)=>({ id:Number(i.id), url:String(i.url) })));
+  const editorThumbRequestSize = React.useMemo(() => {
+    try {
+      const root = document.documentElement;
+      const cs = window.getComputedStyle(root);
+      const raw = String(cs.getPropertyValue('--editor-image-thumb-size') || '').trim();
+      const base = Number.parseFloat(raw || '115');
+      const dpr = Math.max(1, Math.min(3, Number(window.devicePixelRatio || 1)));
+      return Math.max(96, Math.min(1024, Math.round((Number.isFinite(base) ? base : 115) * dpr)));
+    } catch {
+      return 230;
+    }
+  }, []);
+  const getEditorImageThumbSrc = React.useCallback((img: { id: number; url: string }) => {
+    const id = Number((img as any)?.id);
+    if (!Number.isFinite(id) || id <= 0) return String((img as any)?.url || '');
+    return `/api/notes/${Number(note.id)}/images/${id}/thumb?w=${editorThumbRequestSize}&q=74`;
+  }, [note.id, editorThumbRequestSize]);
   const defaultImagesOpen = (() => {
     try {
       const stored = localStorage.getItem('prefs.editorImagesExpandedByDefault');
@@ -477,6 +494,23 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
       });
       if (result.status === 'ok') {
         setLinkPreviews(normalizeLinkPreviews(result.data?.previews));
+      } else if (result.status === 'queued') {
+        const normalizedUrl = String(url || '').trim();
+        if (!normalizedUrl) return;
+        const domain = (() => { try { return new URL(normalizedUrl).hostname.replace(/^www\./i, ''); } catch { return ''; } })();
+        setLinkPreviews((prev) => {
+          const existing = Array.isArray(prev) ? prev : [];
+          if (existing.some((p: any) => String(p?.url || '') === normalizedUrl)) return existing;
+          const temp = {
+            id: -Math.floor(Date.now() + Math.random() * 1000),
+            url: normalizedUrl,
+            title: normalizedUrl,
+            description: null,
+            imageUrl: null,
+            domain: domain || null,
+          };
+          return normalizeLinkPreviews([temp, ...existing]);
+        });
       }
     } catch {}
   }
@@ -806,10 +840,35 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
       const text = readVar('--editor-checklist-text-size', readVar('--checklist-text-size', '14px'));
       const line = readVar('--editor-note-line-height', readVar('--note-line-height', '1.38'));
 
-      ghostEl.style.setProperty('--checklist-gap', gap);
-      ghostEl.style.setProperty('--checklist-checkbox-size', checkbox);
-      ghostEl.style.setProperty('--checklist-text-size', text);
+      // Prefer exact computed values from the dragged row when available.
+      // This keeps the ghost visually identical even with custom per-device sizes.
+      const sourceRow = source || null;
+      const sourceCheckbox = sourceRow?.querySelector('.checkbox-visual, .note-checkbox') as HTMLElement | null;
+      const sourceTextP = sourceRow?.querySelector('.rt-item p, .rt-html p, .ProseMirror p') as HTMLElement | null;
+      const sourceRowCs = sourceRow ? window.getComputedStyle(sourceRow) : null;
+      const sourceCheckboxCs = sourceCheckbox ? window.getComputedStyle(sourceCheckbox) : null;
+      const sourceTextCs = sourceTextP ? window.getComputedStyle(sourceTextP) : null;
+
+      const computedGap = (sourceRowCs ? String(sourceRowCs.columnGap || '').trim() : '') || gap;
+      const computedCheckbox = (sourceCheckboxCs ? String(sourceCheckboxCs.width || '').trim() : '') || checkbox;
+      const computedText = (sourceTextCs ? String(sourceTextCs.fontSize || '').trim() : '') || text;
+      const computedLineHeightPx = (sourceTextCs ? String(sourceTextCs.lineHeight || '').trim() : '');
+
+      ghostEl.style.setProperty('--checklist-gap', computedGap);
+      ghostEl.style.setProperty('--checklist-checkbox-size', computedCheckbox);
+      ghostEl.style.setProperty('--checklist-text-size', computedText);
       ghostEl.style.setProperty('--note-line-height', line);
+
+      // Lock effective values directly from source text to avoid browser-specific
+      // calc/rounding differences in the detached ghost tree.
+      // Keep line-height-effective unitless math intact by storing measured line-box
+      // height in a dedicated variable used only by ghost alignment formulas.
+      if (computedLineHeightPx && computedLineHeightPx !== 'normal') {
+        ghostEl.style.setProperty('--ghost-line-box-height', computedLineHeightPx);
+      }
+      if (computedText) {
+        ghostEl.style.setProperty('--checklist-text-size-effective', computedText);
+      }
     } catch {}
   }
 
@@ -3173,8 +3232,11 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
                             style={{ cursor: 'zoom-in', position: 'relative' }}
                           >
                             <img
-                              src={img.url}
+                              src={getEditorImageThumbSrc(img)}
                               alt="note image"
+                              loading="lazy"
+                              decoding="async"
+                              fetchPriority="low"
                               draggable={false}
                               onContextMenu={(e) => {
                                 if (!isCoarsePointer) return;
