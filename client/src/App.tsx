@@ -527,6 +527,7 @@ function AppShell(): JSX.Element {
 				onSearchChange={setSearchQuery}
 				viewMode={viewMode}
 				onToggleViewMode={() => setViewMode((m) => (m === 'cards' ? 'list-1' : (m === 'list-1' ? 'list-2' : 'cards')))}
+				showViewToggle={((sortConfig || DEFAULT_SORT_CONFIG).smartFilter !== 'images')}
 			/>
 			<div className="app-body">
 				{!isPhone && (

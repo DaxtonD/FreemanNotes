@@ -15,6 +15,24 @@ Adheres to Semantic Versioning (MAJOR.MINOR.PATCH).
 ### Fixed
 - 
 
+## [0.7.2] - 2026-02-15
+
+### Added
+- Sidebar Images mode now includes a persistent image-size slider (saved in local storage) with responsive behavior across desktop/mobile/PWA.
+- Image cards can open their associated note directly from the title in Images view.
+- Touch-first Images UX now supports long-press delete (mobile/tablet/PWA) with movement guard to reduce accidental deletes.
+
+### Changed
+- Images view polish: removed owner/date subtitle metadata from image cards and tightened touch card spacing/chrome.
+- Desktop now hides note quick-create controls while Images view is active; mobile/PWA/tablet create flows from Images automatically return to Notes view.
+- Header view-toggle button is hidden while Images view is active to avoid changing hidden note-list modes.
+
+### Fixed
+- React hook-order crashes in `NotesGrid` (`Rendered more hooks than during previous render`) by stabilizing hook call order.
+- Realtime event reliability on unstable/mobile networks: `/events` websocket now reconnects with backoff and resyncs on reconnect/online/visibility.
+- OCR search reliability: normalized client-side search matching for OCR text (Unicode/diacritics/punctuation/whitespace) and added OCR in-flight fallback refresh polling when realtime OCR completion events are missed.
+- Restored desktop spacing in list views (`list-1`/`list-2`) while preserving compact touch/mobile layout.
+
 ## [0.7.1] - 2026-02-15
 
 ### Changed

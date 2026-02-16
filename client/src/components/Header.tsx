@@ -3,7 +3,7 @@ import PreferencesModal from "./PreferencesModal";
 import { useTheme } from "../themeContext";
 import { useAuth } from "../authContext";
 
-export default function Header({ onToggleSidebar, searchQuery, onSearchChange, viewMode = 'cards', onToggleViewMode }: { onToggleSidebar?: () => void, searchQuery?: string, onSearchChange?: (q: string) => void, viewMode?: 'cards' | 'list-1' | 'list-2', onToggleViewMode?: () => void }) {
+export default function Header({ onToggleSidebar, searchQuery, onSearchChange, viewMode = 'cards', onToggleViewMode, showViewToggle = true }: { onToggleSidebar?: () => void, searchQuery?: string, onSearchChange?: (q: string) => void, viewMode?: 'cards' | 'list-1' | 'list-2', onToggleViewMode?: () => void, showViewToggle?: boolean }) {
   const [showPrefs, setShowPrefs] = useState(false);
   const [mobileCompact, setMobileCompact] = useState(false);
     const [avatarKey, setAvatarKey] = useState<number>(() => Date.now());
@@ -178,38 +178,40 @@ export default function Header({ onToggleSidebar, searchQuery, onSearchChange, v
         />
       </div>
       <div className="header-right" style={{ position: 'relative' }}>
-        <button
-          type="button"
-          className="view-toggle-btn"
-          onClick={() => onToggleViewMode && onToggleViewMode()}
-          aria-label={`Switch to ${nextViewLabel}`}
-          title={`${currentViewLabel} (click for ${nextViewLabel})`}
-          aria-pressed={viewMode !== 'cards'}
-        >
-          {viewMode === 'cards' ? (
-            <svg viewBox="0 0 24 24" aria-hidden focusable="false">
-              <rect x="4" y="5" width="6" height="6" rx="1.5" />
-              <rect x="14" y="5" width="6" height="6" rx="1.5" />
-              <rect x="4" y="13" width="6" height="6" rx="1.5" />
-              <rect x="14" y="13" width="6" height="6" rx="1.5" />
-            </svg>
-          ) : viewMode === 'list-1' ? (
-            <svg viewBox="0 0 24 24" aria-hidden focusable="false">
-              <rect x="4" y="5" width="16" height="2.2" rx="1.1" />
-              <rect x="4" y="10.9" width="16" height="2.2" rx="1.1" />
-              <rect x="4" y="16.8" width="16" height="2.2" rx="1.1" />
-            </svg>
-          ) : (
-            <svg viewBox="0 0 24 24" aria-hidden focusable="false">
-              <rect x="4" y="5" width="7" height="2.2" rx="1.1" />
-              <rect x="13" y="5" width="7" height="2.2" rx="1.1" />
-              <rect x="4" y="10.9" width="7" height="2.2" rx="1.1" />
-              <rect x="13" y="10.9" width="7" height="2.2" rx="1.1" />
-              <rect x="4" y="16.8" width="7" height="2.2" rx="1.1" />
-              <rect x="13" y="16.8" width="7" height="2.2" rx="1.1" />
-            </svg>
-          )}
-        </button>
+        {showViewToggle && (
+          <button
+            type="button"
+            className="view-toggle-btn"
+            onClick={() => onToggleViewMode && onToggleViewMode()}
+            aria-label={`Switch to ${nextViewLabel}`}
+            title={`${currentViewLabel} (click for ${nextViewLabel})`}
+            aria-pressed={viewMode !== 'cards'}
+          >
+            {viewMode === 'cards' ? (
+              <svg viewBox="0 0 24 24" aria-hidden focusable="false">
+                <rect x="4" y="5" width="6" height="6" rx="1.5" />
+                <rect x="14" y="5" width="6" height="6" rx="1.5" />
+                <rect x="4" y="13" width="6" height="6" rx="1.5" />
+                <rect x="14" y="13" width="6" height="6" rx="1.5" />
+              </svg>
+            ) : viewMode === 'list-1' ? (
+              <svg viewBox="0 0 24 24" aria-hidden focusable="false">
+                <rect x="4" y="5" width="16" height="2.2" rx="1.1" />
+                <rect x="4" y="10.9" width="16" height="2.2" rx="1.1" />
+                <rect x="4" y="16.8" width="16" height="2.2" rx="1.1" />
+              </svg>
+            ) : (
+              <svg viewBox="0 0 24 24" aria-hidden focusable="false">
+                <rect x="4" y="5" width="7" height="2.2" rx="1.1" />
+                <rect x="13" y="5" width="7" height="2.2" rx="1.1" />
+                <rect x="4" y="10.9" width="7" height="2.2" rx="1.1" />
+                <rect x="13" y="10.9" width="7" height="2.2" rx="1.1" />
+                <rect x="4" y="16.8" width="7" height="2.2" rx="1.1" />
+                <rect x="13" y="16.8" width="7" height="2.2" rx="1.1" />
+              </svg>
+            )}
+          </button>
+        )}
         {user ? (
           <div className="header-avatar-wrap">
             { (user as any).userImageUrl ? (

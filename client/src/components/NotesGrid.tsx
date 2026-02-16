@@ -30,6 +30,22 @@ type NoteImageLite = { id: number; url?: string; ocrSearchText?: string | null; 
 type ViewerCollectionLite = { id: number; name: string; parentId: number | null };
 const MOBILE_FAB_ICON = '/icons/version.png';
 
+function normalizeForSearch(input: any): string {
+  try {
+    return String(input || '')
+      .normalize('NFKD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/\u00A0/g, ' ')
+      .replace(/[\t\r\n\f\v]+/g, ' ')
+      .replace(/[^\p{L}\p{N}\s]+/gu, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .toLowerCase();
+  } catch {
+    return String(input || '').toLowerCase().trim();
+  }
+}
+
 const SwapNoteItem = React.memo(function SwapNoteItem({
   note,
   setItemRef,
@@ -37,6 +53,8 @@ const SwapNoteItem = React.memo(function SwapNoteItem({
   isDragTarget,
   disabled,
   onChange,
+  openRequest,
+  onOpenRequestHandled,
   style,
 }: {
   note: any;
@@ -45,6 +63,8 @@ const SwapNoteItem = React.memo(function SwapNoteItem({
   isDragTarget: boolean;
   disabled: boolean;
   onChange: (evt?: any) => void;
+  openRequest?: number;
+  onOpenRequestHandled?: (noteId: number) => void;
   style?: React.CSSProperties;
 }) {
   const noteId = Number(note?.id);
@@ -69,6 +89,8 @@ const SwapNoteItem = React.memo(function SwapNoteItem({
       <NoteCard
         note={note}
         onChange={onChange}
+        openRequest={openRequest}
+        onOpenRequestHandled={onOpenRequestHandled}
         dragHandleAttributes={disabled ? undefined : (attributes as any)}
         dragHandleListeners={disabled ? undefined : (listeners as any)}
       />
@@ -115,6 +137,21 @@ export default function NotesGrid({
   const [emptyingTrash, setEmptyingTrash] = useState(false);
   const [galleryLightboxUrl, setGalleryLightboxUrl] = useState<string | null>(null);
   const [galleryDeleteTarget, setGalleryDeleteTarget] = useState<{ noteId: number; imageId: number; title: string } | null>(null);
+  const [openNoteRequest, setOpenNoteRequest] = useState<{ noteId: number; nonce: number } | null>(null);
+  const [returnToImagesOnEditorClose, setReturnToImagesOnEditorClose] = useState<null | { noteId: number; sortSnapshot: SortConfig }>(null);
+  const [imagesSidebarThumbSize, setImagesSidebarThumbSize] = useState<number>(() => {
+    try {
+      const raw = localStorage.getItem('freemannotes.imagesSidebar.thumbSize');
+      const parsed = Number(raw);
+      if (!Number.isFinite(parsed)) return 220;
+      return Math.max(96, Math.min(340, Math.round(parsed)));
+    } catch {
+      return 220;
+    }
+  });
+  const galleryLongPressTimerRef = useRef<number | null>(null);
+  const galleryLongPressStartRef = useRef<{ x: number; y: number } | null>(null);
+  const suppressNextGalleryClickRef = useRef(false);
 
   // Auto-detected layout bucket.
   // "Phone" here means small viewport + touch-first; tablets keep the normal responsive layout.
@@ -145,6 +182,12 @@ export default function NotesGrid({
   }, []);
 
   const disableNoteDnD = editorModalDepth > 0;
+  useEffect(() => {
+    try {
+      localStorage.setItem('freemannotes.imagesSidebar.thumbSize', String(imagesSidebarThumbSize));
+    } catch {}
+  }, [imagesSidebarThumbSize]);
+
   useEffect(() => {
     const root = document.documentElement;
     if (disableNoteDnD) root.classList.add('is-editor-modal-open');
@@ -554,6 +597,43 @@ export default function NotesGrid({
       return copy;
     });
   }
+
+  const hasOcrInFlight = useMemo(() => {
+    try {
+      const list = Array.isArray(notes) ? notes : [];
+      for (const n of list) {
+        const imgs = Array.isArray((n as any)?.images) ? (n as any).images : [];
+        for (const img of imgs) {
+          const st = String((img as any)?.ocrStatus || '').toLowerCase();
+          if (st === 'pending' || st === 'running') return true;
+        }
+      }
+    } catch {}
+    return false;
+  }, [notes]);
+
+  // Fallback sync for OCR completion on flaky/mobile networks where realtime events can be missed.
+  useEffect(() => {
+    if (!token) return;
+    if (!hasOcrInFlight) return;
+
+    let stopped = false;
+    const tick = () => {
+      if (stopped) return;
+      try {
+        if (document.visibilityState !== 'visible') return;
+      } catch {}
+      void load();
+    };
+
+    const first = window.setTimeout(tick, 1400);
+    const every = window.setInterval(tick, 5000);
+    return () => {
+      stopped = true;
+      try { window.clearTimeout(first); } catch {}
+      try { window.clearInterval(every); } catch {}
+    };
+  }, [token, hasOcrInFlight]);
 
   useEffect(() => { if (token) load(); else setNotes([]); }, [token]);
   useEffect(() => { notesRef.current = notes; }, [notes]);
@@ -1408,11 +1488,50 @@ export default function NotesGrid({
     })();
 
     let ws: WebSocket | null = null;
-    try {
-      const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
-      const url = `${proto}://${window.location.host}/events?token=${encodeURIComponent(token)}`;
-      ws = new WebSocket(url);
-      ws.onmessage = (ev) => {
+    let disposed = false;
+    let reconnectAttempt = 0;
+    let reconnectTimer: number | null = null;
+
+    const clearReconnectTimer = () => {
+      if (reconnectTimer != null) {
+        try { window.clearTimeout(reconnectTimer); } catch {}
+        reconnectTimer = null;
+      }
+    };
+
+    const scheduleReconnect = () => {
+      if (disposed) return;
+      if (reconnectTimer != null) return;
+      const base = Math.min(12_000, 500 * Math.pow(2, reconnectAttempt));
+      const jitter = Math.floor(Math.random() * 350);
+      reconnectTimer = window.setTimeout(() => {
+        reconnectTimer = null;
+        reconnectAttempt += 1;
+        connectEvents();
+      }, base + jitter);
+    };
+
+    const connectEvents = () => {
+      if (disposed || !token) return;
+      clearReconnectTimer();
+      try {
+        if (ws) {
+          try { ws.onopen = null; ws.onmessage = null; ws.onerror = null; ws.onclose = null; } catch {}
+          try { ws.close(); } catch {}
+          ws = null;
+        }
+      } catch {}
+
+      try {
+        const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
+        const url = `${proto}://${window.location.host}/events?token=${encodeURIComponent(token)}`;
+        ws = new WebSocket(url);
+        ws.onopen = () => {
+          reconnectAttempt = 0;
+          // Resync once on (re)connect so missed events while offline/network-switching are recovered.
+          try { load(); } catch {}
+        };
+        ws.onmessage = (ev) => {
         try {
           const msg = JSON.parse(String(ev.data || '{}'));
           if (!msg || !msg.type) return;
@@ -1835,9 +1954,49 @@ export default function NotesGrid({
             }
           }
         } catch {}
-      };
-    } catch {}
-    return () => { try { ws && ws.close(); } catch {}; };
+        };
+        ws.onerror = () => {
+          // Force close so onclose backoff logic runs consistently across browsers.
+          try { ws && ws.close(); } catch {}
+        };
+        ws.onclose = () => {
+          scheduleReconnect();
+        };
+      } catch {
+        scheduleReconnect();
+      }
+    };
+
+    const onOnline = () => {
+      reconnectAttempt = 0;
+      connectEvents();
+      try { load(); } catch {}
+    };
+
+    const onVisibility = () => {
+      try {
+        if (document.visibilityState !== 'visible') return;
+        if (!ws || ws.readyState !== WebSocket.OPEN) connectEvents();
+        load();
+      } catch {}
+    };
+
+    try { window.addEventListener('online', onOnline); } catch {}
+    try { document.addEventListener('visibilitychange', onVisibility); } catch {}
+    connectEvents();
+
+    return () => {
+      disposed = true;
+      clearReconnectTimer();
+      try { window.removeEventListener('online', onOnline); } catch {}
+      try { document.removeEventListener('visibilitychange', onVisibility); } catch {}
+      try {
+        if (ws) {
+          try { ws.onopen = null; ws.onmessage = null; ws.onerror = null; ws.onclose = null; } catch {}
+          try { ws.close(); } catch {}
+        }
+      } catch {}
+    };
   }, [token]);
 
   const gridRef = useRef<HTMLDivElement | null>(null);
@@ -2136,7 +2295,7 @@ export default function NotesGrid({
   const { pinned, others, pinnedGroups, otherGroups } = useMemo(() => {
     const labelIds = Array.isArray(selectedLabelIds) ? selectedLabelIds : [];
     const colId = (selectedCollectionId == null ? null : Number(selectedCollectionId));
-    const q = (searchQuery || '').trim().toLowerCase();
+    const q = normalizeForSearch(searchQuery || '');
 
     const matchesLabels = (n: any): boolean => {
       if (!labelIds.length) return true;
@@ -2146,14 +2305,14 @@ export default function NotesGrid({
 
     const matchesSearch = (n: any): boolean => {
       if (!q) return true;
-      if (String(n.title || '').toLowerCase().includes(q)) return true;
-      if (String(n.body || '').toLowerCase().includes(q)) return true;
+      if (normalizeForSearch(n.title || '').includes(q)) return true;
+      if (normalizeForSearch(n.body || '').includes(q)) return true;
       const items = Array.isArray(n.items) ? n.items : [];
-      if (items.some((it: any) => String(it.content || '').toLowerCase().includes(q))) return true;
+      if (items.some((it: any) => normalizeForSearch(it.content || '').includes(q))) return true;
       const images = Array.isArray((n as any).images) ? (n as any).images : [];
-      if (images.some((img: any) => String(img?.ocrSearchText || img?.ocrText || '').toLowerCase().includes(q))) return true;
+      if (images.some((img: any) => normalizeForSearch(img?.ocrSearchText || img?.ocrText || '').includes(q))) return true;
       const labels = Array.isArray(n.noteLabels) ? n.noteLabels : [];
-      if (labels.some((nl: any) => String(nl.label?.name || '').toLowerCase().includes(q))) return true;
+      if (labels.some((nl: any) => normalizeForSearch(nl.label?.name || '').includes(q))) return true;
       return false;
     };
 
@@ -3162,8 +3321,6 @@ export default function NotesGrid({
     return entries;
   }, [pinned, others, sortConfig]);
 
-  if (loading && !hasLoadedOnce) return <div>Loading notes…</div>;
-
   async function deleteImageFromGallery(target: { noteId: number; imageId: number }) {
     if (!token) return;
     try {
@@ -3211,6 +3368,50 @@ export default function NotesGrid({
     }
   }
 
+  const getOpenRequestForNote = useCallback((noteId: number): number => {
+    if (!openNoteRequest) return 0;
+    return Number(openNoteRequest.noteId) === Number(noteId) ? Number(openNoteRequest.nonce) : 0;
+  }, [openNoteRequest]);
+
+  const handleOpenRequestHandled = useCallback((noteId: number) => {
+    setOpenNoteRequest((curr) => {
+      if (!curr) return curr;
+      if (Number(curr.noteId) !== Number(noteId)) return curr;
+      return null;
+    });
+  }, []);
+
+  const openAssociatedNoteFromImage = useCallback((noteId: number) => {
+    const nId = Number(noteId);
+    if (!Number.isFinite(nId)) return;
+    const cfg = sortConfig || DEFAULT_SORT_CONFIG;
+    if (cfg.smartFilter === 'images') {
+      setReturnToImagesOnEditorClose({ noteId: nId, sortSnapshot: { ...cfg } });
+    } else {
+      setReturnToImagesOnEditorClose(null);
+    }
+    if (cfg.smartFilter === 'images' && onSortConfigChange) {
+      try { onSortConfigChange({ ...cfg, smartFilter: 'none' }); } catch {}
+    }
+    setOpenNoteRequest({ noteId: nId, nonce: Date.now() + Math.floor(Math.random() * 1000) });
+  }, [sortConfig, onSortConfigChange]);
+
+  useEffect(() => {
+    if (!returnToImagesOnEditorClose) return;
+    const onEditorClose = () => {
+      try {
+        if (onSortConfigChange) {
+          onSortConfigChange({ ...returnToImagesOnEditorClose.sortSnapshot });
+        }
+      } catch {}
+      setReturnToImagesOnEditorClose(null);
+    };
+    window.addEventListener('freemannotes:editor-modal-close', onEditorClose as EventListener);
+    return () => {
+      window.removeEventListener('freemannotes:editor-modal-close', onEditorClose as EventListener);
+    };
+  }, [returnToImagesOnEditorClose, onSortConfigChange]);
+
   const isListView = viewMode === 'list-1' || viewMode === 'list-2';
   const gridViewClass = isListView
     ? ` notes-grid--list ${viewMode === 'list-2' ? 'notes-grid--list-2' : 'notes-grid--list-1'}`
@@ -3218,6 +3419,64 @@ export default function NotesGrid({
   const notesAreaViewClass = isListView
     ? ` notes-area--list ${viewMode === 'list-2' ? 'notes-area--list-2' : 'notes-area--list-1'}`
     : '';
+  const imagesSliderMin = layoutBucket === 'phone' ? 96 : 140;
+  const imagesSliderMax = layoutBucket === 'phone' ? 220 : 340;
+  const effectiveImagesSidebarThumbSize = Math.max(imagesSliderMin, Math.min(imagesSliderMax, imagesSidebarThumbSize));
+  const isTouchGalleryUi = layoutBucket !== 'desktop';
+  const showDesktopQuickCreate = !(isImagesView && layoutBucket === 'desktop');
+
+  const clearGalleryLongPress = useCallback(() => {
+    if (galleryLongPressTimerRef.current != null) {
+      try { window.clearTimeout(galleryLongPressTimerRef.current); } catch {}
+      galleryLongPressTimerRef.current = null;
+    }
+    galleryLongPressStartRef.current = null;
+  }, []);
+
+  useEffect(() => {
+    return () => { clearGalleryLongPress(); };
+  }, [clearGalleryLongPress]);
+
+  const beginGalleryLongPress = useCallback((e: React.PointerEvent, img: any) => {
+    if (!isTouchGalleryUi) return;
+    if (e.pointerType === 'mouse') return;
+    clearGalleryLongPress();
+    galleryLongPressStartRef.current = { x: Number(e.clientX || 0), y: Number(e.clientY || 0) };
+    galleryLongPressTimerRef.current = window.setTimeout(() => {
+      suppressNextGalleryClickRef.current = true;
+      setGalleryDeleteTarget({
+        noteId: Number(img?.noteId),
+        imageId: Number(img?.imageId),
+        title: String(img?.noteTitle || 'Untitled note'),
+      });
+      clearGalleryLongPress();
+    }, 560);
+  }, [clearGalleryLongPress, isTouchGalleryUi]);
+
+  const moveGalleryLongPress = useCallback((e: React.PointerEvent) => {
+    if (galleryLongPressTimerRef.current == null) return;
+    const start = galleryLongPressStartRef.current;
+    if (!start) return;
+    const dx = Math.abs(Number(e.clientX || 0) - start.x);
+    const dy = Math.abs(Number(e.clientY || 0) - start.y);
+    if (dx > 10 || dy > 10) clearGalleryLongPress();
+  }, [clearGalleryLongPress]);
+
+  const consumeSuppressedGalleryClick = useCallback((): boolean => {
+    if (!suppressNextGalleryClickRef.current) return false;
+    suppressNextGalleryClickRef.current = false;
+    return true;
+  }, []);
+
+  const handleMobileCreateCreated = useCallback(async () => {
+    await load();
+    if (!isImagesView) return;
+    if (onSortConfigChange) {
+      try { onSortConfigChange({ ...DEFAULT_SORT_CONFIG }); } catch {}
+    }
+  }, [load, isImagesView, onSortConfigChange]);
+
+  if (loading && !hasLoadedOnce) return <div>Loading notes…</div>;
 
   return (
     <section className={`notes-area${mobileAddOpen ? ' notes-area--mobile-add-open' : ''}${notesAreaViewClass}`}>
@@ -3230,7 +3489,9 @@ export default function NotesGrid({
             onChange={(e) => { try { onSetSearchQuery && onSetSearchQuery(e.target.value); } catch {} }}
           />
         </div>
-        <TakeNoteBar onCreated={load} openRequest={{ nonce: takeNoteOpenNonce, mode: takeNoteOpenMode }} activeCollection={activeCollection} />
+        {showDesktopQuickCreate && (
+          <TakeNoteBar onCreated={load} openRequest={{ nonce: takeNoteOpenNonce, mode: takeNoteOpenMode }} activeCollection={activeCollection} />
+        )}
 
         {gridContext.show && (
           <div className="grid-context" role="region" aria-label="Current view">
@@ -3260,6 +3521,24 @@ export default function NotesGrid({
                   >
                     Clear
                   </button>
+                )}
+                {isImagesView && (
+                  <label className="grid-context__slider" title="Image size">
+                    <span className="grid-context__slider-label">Size</span>
+                    <input
+                      type="range"
+                      min={imagesSliderMin}
+                      max={imagesSliderMax}
+                      step={8}
+                      value={effectiveImagesSidebarThumbSize}
+                      onChange={(e) => {
+                        const next = Number((e.target as HTMLInputElement).value);
+                        if (!Number.isFinite(next)) return;
+                        setImagesSidebarThumbSize(Math.max(imagesSliderMin, Math.min(imagesSliderMax, Math.round(next))));
+                      }}
+                      aria-label="Images size"
+                    />
+                  </label>
                 )}
               </div>
               {!!(gridContext as any).chips?.length && (
@@ -3340,7 +3619,7 @@ export default function NotesGrid({
         open={mobileCreateMode != null}
         mode={(mobileCreateMode || 'text') as any}
         onClose={() => setMobileCreateMode(null)}
-        onCreated={load}
+        onCreated={handleMobileCreateCreated}
         activeCollection={activeCollection}
       />
 
@@ -3349,32 +3628,54 @@ export default function NotesGrid({
           {imageEntries.length === 0 ? (
             <div className="images-gallery-empty">No images match the current filters.</div>
           ) : (
-            <div className="images-gallery-grid" role="list" aria-label="Images">
+            <div
+              className="images-gallery-grid"
+              role="list"
+              aria-label="Images"
+              style={{ '--images-gallery-min': `${effectiveImagesSidebarThumbSize}px` } as React.CSSProperties}
+            >
               {imageEntries.map((img: any) => {
-                const createdAt = parseDateMaybe(img.imageCreatedAt || img.noteCreatedAt);
-                const createdLabel = createdAt ? new Date(createdAt).toLocaleString() : '';
                 const collectionNames = (Array.isArray(img.noteCollections) ? img.noteCollections : [])
                   .map((c: any) => String(c?.name || '').trim())
                   .filter(Boolean)
                   .slice(0, 2);
                 const collabCount = Math.max(0, (Array.isArray(img.noteCollaborators) ? img.noteCollaborators.length : 0));
                 return (
-                  <article key={img.key} className="images-gallery-card" role="listitem">
+                  <article
+                    key={img.key}
+                    className="images-gallery-card"
+                    role="listitem"
+                    onPointerDown={(e) => beginGalleryLongPress(e, img)}
+                    onPointerMove={moveGalleryLongPress}
+                    onPointerUp={clearGalleryLongPress}
+                    onPointerCancel={clearGalleryLongPress}
+                    onPointerLeave={clearGalleryLongPress}
+                  >
                     <button
                       type="button"
                       className="images-gallery-thumb-btn"
-                      onClick={() => setGalleryLightboxUrl(String(img.url || ''))}
+                      onClick={() => {
+                        if (consumeSuppressedGalleryClick()) return;
+                        setGalleryLightboxUrl(String(img.url || ''));
+                      }}
                       aria-label="Open full image"
                       title="Open full image"
                     >
                       <img className="images-gallery-thumb" src={img.url} alt={img.noteTitle ? `${img.noteTitle} image` : 'Note image'} loading="lazy" />
                     </button>
                     <div className="images-gallery-meta">
-                      <div className="images-gallery-title" title={img.noteTitle || 'Untitled note'}>{img.noteTitle || 'Untitled note'}</div>
-                      <div className="images-gallery-subtitle">
-                        {img.noteOwnerName ? <span>{img.noteOwnerName}</span> : <span>Note</span>}
-                        {createdLabel ? <span>• {createdLabel}</span> : null}
-                      </div>
+                      <button
+                        type="button"
+                        className="images-gallery-title images-gallery-title-btn"
+                        title={img.noteTitle || 'Untitled note'}
+                        onClick={() => {
+                          if (consumeSuppressedGalleryClick()) return;
+                          openAssociatedNoteFromImage(Number(img.noteId));
+                        }}
+                        aria-label="Open associated note"
+                      >
+                        {img.noteTitle || 'Untitled note'}
+                      </button>
                       {(collectionNames.length > 0 || collabCount > 0) && (
                         <div className="images-gallery-tags">
                           {collectionNames.map((name: string) => <span key={`${img.key}:${name}`} className="images-gallery-tag">{name}</span>)}
@@ -3382,15 +3683,17 @@ export default function NotesGrid({
                         </div>
                       )}
                     </div>
-                    <button
-                      type="button"
-                      className="images-gallery-delete"
-                      onClick={() => setGalleryDeleteTarget({ noteId: Number(img.noteId), imageId: Number(img.imageId), title: String(img.noteTitle || 'Untitled note') })}
-                      aria-label="Delete image"
-                      title="Delete image"
-                    >
-                      Delete
-                    </button>
+                    {!isTouchGalleryUi && (
+                      <button
+                        type="button"
+                        className="images-gallery-delete"
+                        onClick={() => setGalleryDeleteTarget({ noteId: Number(img.noteId), imageId: Number(img.imageId), title: String(img.noteTitle || 'Untitled note') })}
+                        aria-label="Delete image"
+                        title="Delete image"
+                      >
+                        Delete
+                      </button>
+                    )}
                   </article>
                 );
               })}
@@ -3431,6 +3734,8 @@ export default function NotesGrid({
                           isDragTarget={swapTargetId != null && Number(swapTargetId) === Number(n.id)}
                           disabled={disableNoteDnD}
                           onChange={handleNoteChange}
+                          openRequest={getOpenRequestForNote(Number(n.id))}
+                          onOpenRequestHandled={handleOpenRequestHandled}
                         />
                       );
                     })}
@@ -3461,6 +3766,8 @@ export default function NotesGrid({
                         isDragTarget={swapTargetId != null && Number(swapTargetId) === Number(n.id)}
                         disabled={disableNoteDnD}
                         onChange={handleNoteChange}
+                        openRequest={getOpenRequestForNote(Number(n.id))}
+                        onOpenRequestHandled={handleOpenRequestHandled}
                       />
                     );
                   })}
@@ -3481,7 +3788,13 @@ export default function NotesGrid({
                   height: swapOverlayRect ? `${swapOverlayRect.height}px` : undefined,
                 }}
               >
-                <NoteCard key={activeSwapNote.id} note={activeSwapNote} onChange={handleNoteChange} />
+                <NoteCard
+                  key={activeSwapNote.id}
+                  note={activeSwapNote}
+                  onChange={handleNoteChange}
+                  openRequest={getOpenRequestForNote(Number(activeSwapNote.id))}
+                  onOpenRequestHandled={handleOpenRequestHandled}
+                />
               </div>
             ) : null}
           </DragOverlay>
@@ -3528,7 +3841,12 @@ export default function NotesGrid({
                               }
                               ref={(el) => { if (el) itemRefs.current.set(n.id, el); else itemRefs.current.delete(n.id); }}
                             >
-                              <NoteCard note={n} onChange={handleNoteChange} />
+                              <NoteCard
+                                note={n}
+                                onChange={handleNoteChange}
+                                openRequest={getOpenRequestForNote(Number(n.id))}
+                                onOpenRequestHandled={handleOpenRequestHandled}
+                              />
                             </div>
                           );
                         })
@@ -3604,7 +3922,12 @@ export default function NotesGrid({
                               ref={(el) => { if (el) itemRefs.current.set(n.id, el); else itemRefs.current.delete(n.id); }}
                               {...wrapperProps}
                             >
-                              <NoteCard note={n} onChange={handleNoteChange} />
+                              <NoteCard
+                                note={n}
+                                onChange={handleNoteChange}
+                                openRequest={getOpenRequestForNote(Number(n.id))}
+                                onOpenRequestHandled={handleOpenRequestHandled}
+                              />
                             </div>
                           );
                         })}
@@ -3651,7 +3974,12 @@ export default function NotesGrid({
                             }
                             ref={(el) => { if (el) itemRefs.current.set(n.id, el); else itemRefs.current.delete(n.id); }}
                           >
-                            <NoteCard note={n} onChange={handleNoteChange} />
+                            <NoteCard
+                              note={n}
+                              onChange={handleNoteChange}
+                              openRequest={getOpenRequestForNote(Number(n.id))}
+                              onOpenRequestHandled={handleOpenRequestHandled}
+                            />
                           </div>
                         );
                       })
@@ -3728,7 +4056,12 @@ export default function NotesGrid({
                             ref={(el) => { if (el) itemRefs.current.set(n.id, el); else itemRefs.current.delete(n.id); }}
                             {...wrapperProps}
                           >
-                            <NoteCard note={n} onChange={handleNoteChange} />
+                            <NoteCard
+                              note={n}
+                              onChange={handleNoteChange}
+                              openRequest={getOpenRequestForNote(Number(n.id))}
+                              onOpenRequestHandled={handleOpenRequestHandled}
+                            />
                           </div>
                         );
                       })}
@@ -3772,7 +4105,12 @@ export default function NotesGrid({
           } as any}
         >
           <div className={`note-rearrange-overlay-inner${isListView ? ' note-rearrange-overlay-inner--list' : ''}`}>
-            <NoteCard note={activeRearrangeNote} onChange={handleNoteChange} />
+            <NoteCard
+              note={activeRearrangeNote}
+              onChange={handleNoteChange}
+              openRequest={getOpenRequestForNote(Number(activeRearrangeNote.id))}
+              onOpenRequestHandled={handleOpenRequestHandled}
+            />
           </div>
         </div>,
         document.body

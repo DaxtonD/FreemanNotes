@@ -408,12 +408,30 @@ body{
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
+.grid-context__slider{
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: 2px;
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+.grid-context__slider-label{
+  font-weight: 700;
+  color: var(--muted);
+}
+.grid-context__slider input[type="range"]{
+  width: 120px;
+  accent-color: var(--accent);
+}
 
 @media (pointer: coarse) {
   .grid-context{ margin-top: 10px; }
   .grid-context__clear{ height: 36px; padding: 0 12px; }
   .grid-chip{ padding: 8px 12px; font-size: 13px; }
   .grid-chip__clear{ width: 28px; height: 28px; }
+  .grid-context__slider input[type="range"]{ width: 96px; }
 }
 
 /* Keep quick-create directly under header search (desktop/tablet). */
@@ -719,6 +737,17 @@ body{
   row-gap: 0px;
   column-gap: 10px;
   width: 100% !important;
+}
+
+/* Desktop list spacing: keep rows visually separated (mobile stays compact). */
+@media (pointer: fine) and (hover: hover) {
+  .notes-area--list-1 .notes-grid.notes-grid--list{
+    gap: 8px;
+  }
+  .notes-area--list-2 .notes-grid.notes-grid--list{
+    row-gap: 10px;
+    column-gap: 12px;
+  }
 }
 .notes-area--list-1 .notes-grid.notes-grid--list > [data-note-id],
 .notes-area--list-1 .notes-grid.notes-grid--list > div{
@@ -2385,7 +2414,7 @@ button.chip:focus{outline:2px solid rgba(255,255,255,0.18);outline-offset:2px;}
 
 .images-gallery-grid{
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(var(--images-gallery-min, 220px), 1fr));
   gap: 12px;
 }
 
@@ -2432,6 +2461,24 @@ button.chip:focus{outline:2px solid rgba(255,255,255,0.18);outline-offset:2px;}
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+.images-gallery-title-btn{
+  border: none;
+  background: transparent;
+  padding: 0;
+  margin: 0;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.images-gallery-title-btn:hover{
+  color: var(--accent);
+  text-decoration: underline;
+}
+.images-gallery-title-btn:focus-visible{
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 6px;
 }
 
 .images-gallery-subtitle{
@@ -2505,16 +2552,27 @@ button.chip:focus{outline:2px solid rgba(255,255,255,0.18);outline-offset:2px;}
   }
 
   .images-gallery-grid{
-    grid-template-columns: repeat(auto-fill, minmax(158px, 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(var(--images-gallery-min, 158px), 1fr));
     gap: 10px;
   }
+  .images-gallery-card{
+    grid-template-rows: auto auto;
+    min-height: 0;
+  }
   .images-gallery-meta{
-    padding: 8px 8px 6px;
+    padding: 8px;
   }
   .images-gallery-delete{
     margin: 0 8px 8px;
     width: calc(100% - 16px);
     justify-self: stretch;
+  }
+}
+
+@media (pointer: coarse) {
+  .images-gallery-card{
+    grid-template-rows: auto auto;
+    min-height: 0;
   }
 }
 .image-dialog-backdrop.editor-backdrop{
