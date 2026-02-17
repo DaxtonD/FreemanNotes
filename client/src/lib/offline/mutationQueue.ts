@@ -3,11 +3,77 @@ import { enqueueImageUpload } from './uploadQueue';
 
 const BASE_BACKOFF_MS = 1500;
 const MAX_BACKOFF_MS = 120000;
+const INT32_MAX = 2147483647;
 
 function computeBackoffMs(attempt: number): number {
   const exp = Math.min(MAX_BACKOFF_MS, BASE_BACKOFF_MS * Math.pow(2, Math.max(0, attempt)));
   const jitter = Math.floor(Math.random() * 500);
   return exp + jitter;
+}
+
+function nonRetryableError(message: string): Error & { nonRetryable: true } {
+  const err = new Error(message) as Error & { nonRetryable: true };
+  err.nonRetryable = true;
+  return err;
+}
+
+function isNonRetryableError(err: any): boolean {
+  return !!(err && typeof err === 'object' && (err as any).nonRetryable === true);
+}
+
+function extractNoteIdFromPath(path: string): number | null {
+  const p = String(path || '');
+  const m = p.match(/^\/api\/notes\/(-?\d+)(?:\/|$|\?)/i);
+  if (!m || !m[1]) return null;
+  const id = Number(m[1]);
+  return Number.isFinite(id) ? id : null;
+}
+
+function replacePathNoteId(path: string, nextId: number): string {
+  return String(path || '').replace(/^\/api\/notes\/(-?\d+)(?=\/|$|\?)/i, `/api/notes/${Number(nextId)}`);
+}
+
+async function remapQueuedTempNoteReferences(tempNoteId: number, realNoteId: number, parentOpId: string): Promise<void> {
+  if (!Number.isFinite(tempNoteId) || tempNoteId >= 0) return;
+  if (!Number.isFinite(realNoteId) || realNoteId <= 0) return;
+
+  try {
+    const rows = await offlineDb.outboxMutations.toArray();
+    for (const row of rows) {
+      if (row.kind !== 'http.json') continue;
+      if (row.opId === parentOpId) continue;
+      const path = String(row.payload?.path || '');
+      if (!path.startsWith('/api/notes/')) continue;
+      const noteId = extractNoteIdFromPath(path);
+      if (noteId == null || noteId !== tempNoteId) continue;
+      const nextPath = replacePathNoteId(path, realNoteId);
+      if (!nextPath || nextPath === path) continue;
+      await offlineDb.outboxMutations.put({
+        ...row,
+        payload: {
+          ...(row.payload || {}),
+          path: nextPath,
+        },
+        updatedAt: Date.now(),
+        lastError: undefined,
+      });
+    }
+  } catch {}
+
+  try {
+    const uploads = await offlineDb.uploadQueue
+      .where('noteId')
+      .equals(Number(tempNoteId))
+      .toArray();
+    for (const up of uploads) {
+      await offlineDb.uploadQueue.put({
+        ...up,
+        noteId: Number(realNoteId),
+        updatedAt: Date.now(),
+        lastError: undefined,
+      });
+    }
+  } catch {}
 }
 
 export async function enqueueNotesOrderPatch(ids: number[]): Promise<string> {
@@ -91,6 +157,10 @@ async function executeMutation(token: string, row: OutboxMutationRow): Promise<v
     const path = String(row.payload?.path || '');
     const meta = row.payload?.meta || null;
     if (!path) throw new Error('Missing path for queued http.json mutation');
+    const noteIdInPath = extractNoteIdFromPath(path);
+    if (noteIdInPath != null && (!Number.isInteger(noteIdInPath) || noteIdInPath <= 0 || noteIdInPath > INT32_MAX)) {
+      throw nonRetryableError(`Dropping queued mutation with invalid note id in path: ${path}`);
+    }
     const hasBody = row.payload && Object.prototype.hasOwnProperty.call(row.payload, 'body');
     const res = await fetch(path, {
       method,
@@ -103,6 +173,12 @@ async function executeMutation(token: string, row: OutboxMutationRow): Promise<v
     });
     if (!res.ok) {
       const txt = await res.text().catch(() => `Failed queued request ${method} ${path}`);
+      if (method === 'POST' && path === '/api/notes' && res.status === 400) {
+        throw nonRetryableError(txt || `Dropping invalid queued create request ${method} ${path}`);
+      }
+      if (res.status === 404 && noteIdInPath != null) {
+        throw nonRetryableError(txt || `Dropping stale queued request ${method} ${path}: note not found`);
+      }
       throw new Error(txt || `Failed queued request ${method} ${path}`);
     }
 
@@ -112,6 +188,11 @@ async function executeMutation(token: string, row: OutboxMutationRow): Promise<v
     if (method === 'POST' && path === '/api/notes') {
       const noteId = Number(data?.note?.id);
       if (Number.isFinite(noteId)) {
+        const tempClientNoteId = Number(meta?.tempClientNoteId);
+        if (Number.isFinite(tempClientNoteId) && tempClientNoteId < 0) {
+          await remapQueuedTempNoteReferences(tempClientNoteId, Number(noteId), row.opId);
+        }
+
         const links = Array.isArray(meta?.pendingLinkUrls)
           ? meta.pendingLinkUrls.map((u: any) => String(u || '').trim()).filter((u: string) => !!u)
           : [];
@@ -162,7 +243,7 @@ async function executeMutation(token: string, row: OutboxMutationRow): Promise<v
           try { await enqueueImageUpload(noteId, imageUrl); } catch {}
         }
 
-        emitCreateReconciled({ opId: row.opId, note: data?.note || null });
+        emitCreateReconciled({ opId: row.opId, note: data?.note || null, tempClientNoteId: (Number.isFinite(Number(meta?.tempClientNoteId)) ? Number(meta.tempClientNoteId) : undefined) });
       }
     }
 
@@ -174,38 +255,58 @@ async function executeMutation(token: string, row: OutboxMutationRow): Promise<v
 
 export async function flushMutationQueue(token: string): Promise<void> {
   if (!token) return;
-  const now = Date.now();
-  const rows = await offlineDb.outboxMutations
-    .orderBy('createdAt')
-    .toArray();
+  for (let pass = 0; pass < 6; pass++) {
+    const now = Date.now();
+    const rows = await offlineDb.outboxMutations
+      .orderBy('createdAt')
+      .toArray();
 
-  for (const row of rows) {
-    if (row.nextAttemptAt > now) continue;
+    let processedAny = false;
+    for (const row of rows) {
+      if (row.nextAttemptAt > now) continue;
 
-    try {
-      await executeMutation(token, row);
-      await offlineDb.outboxMutations.delete(row.opId);
-    } catch (err: any) {
-      const attempt = Number(row.attempt || 0) + 1;
-      const nextAttemptAt = Date.now() + computeBackoffMs(attempt);
-      const lastError = String(err?.message || err || 'Mutation replay failed');
-      await offlineDb.outboxMutations.put({
-        ...row,
-        attempt,
-        nextAttemptAt,
-        updatedAt: Date.now(),
-        lastError,
-      });
-
+      processedAny = true;
       try {
-        if (row.kind === 'http.json') {
-          const method = String(row.payload?.method || '').toUpperCase();
-          const path = String(row.payload?.path || '');
-          if (method === 'POST' && path === '/api/notes') {
-            emitCreateRetry({ opId: row.opId, attempt, error: lastError, nextAttemptAt });
-          }
+        await executeMutation(token, row);
+        await offlineDb.outboxMutations.delete(row.opId);
+      } catch (err: any) {
+        if (isNonRetryableError(err)) {
+          await offlineDb.outboxMutations.delete(row.opId);
+          try {
+            if (row.kind === 'http.json') {
+              const method = String(row.payload?.method || '').toUpperCase();
+              const path = String(row.payload?.path || '');
+              if (method === 'POST' && path === '/api/notes') {
+                emitCreateRetry({ opId: row.opId, attempt: 999, error: String(err?.message || err || 'Dropped non-retryable queued create request'), nextAttemptAt: 0 });
+              }
+            }
+          } catch {}
+          continue;
         }
-      } catch {}
+
+        const attempt = Number(row.attempt || 0) + 1;
+        const nextAttemptAt = Date.now() + computeBackoffMs(attempt);
+        const lastError = String(err?.message || err || 'Mutation replay failed');
+        await offlineDb.outboxMutations.put({
+          ...row,
+          attempt,
+          nextAttemptAt,
+          updatedAt: Date.now(),
+          lastError,
+        });
+
+        try {
+          if (row.kind === 'http.json') {
+            const method = String(row.payload?.method || '').toUpperCase();
+            const path = String(row.payload?.path || '');
+            if (method === 'POST' && path === '/api/notes') {
+              emitCreateRetry({ opId: row.opId, attempt, error: lastError, nextAttemptAt });
+            }
+          }
+        } catch {}
+      }
     }
+
+    if (!processedAny) break;
   }
 }

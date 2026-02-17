@@ -638,33 +638,87 @@ export default function RichTextEditor({ note, onClose, onSaved, noteBg, onImage
     return null;
   }
   async function requestLinkPreview(url: string) {
+    const addOptimisticPreview = (rawUrl: string) => {
+      const normalizedUrl = String(rawUrl || '').trim();
+      if (!normalizedUrl) return;
+      const domain = (() => { try { return new URL(normalizedUrl).hostname.replace(/^www\./i, ''); } catch { return ''; } })();
+      setLinkPreviews((prev) => {
+        const existing = Array.isArray(prev) ? prev : [];
+        if (existing.some((p: any) => String(p?.url || '') === normalizedUrl)) return existing;
+        const temp = {
+          id: -Math.floor(Date.now() + Math.random() * 1000),
+          url: normalizedUrl,
+          title: normalizedUrl,
+          description: null,
+          imageUrl: null,
+          domain: domain || null,
+        };
+        return normalizeLinkPreviews([temp, ...existing]);
+      });
+    };
+
+    const normalizedInputUrl = String(url || '').trim();
+    if (!normalizedInputUrl) return;
+    addOptimisticPreview(normalizedInputUrl);
+
     try {
+      if (navigator.onLine !== false) {
+        const direct = await fetch(`/api/notes/${note.id}/link-preview`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: token ? `Bearer ${token}` : '',
+          },
+          body: JSON.stringify({ url: normalizedInputUrl }),
+        });
+
+        if (direct.ok) {
+          const data = await direct.json().catch(() => ({}));
+          if (Array.isArray(data?.previews)) {
+            setLinkPreviews(normalizeLinkPreviews(data.previews));
+            return;
+          }
+        } else if (direct.status >= 400 && direct.status < 500) {
+          const msg = await direct.text().catch(() => 'Failed to add URL preview');
+          throw new Error(msg || 'Failed to add URL preview');
+        }
+      }
+
       const result = await requestJsonOrQueue({
         method: 'POST',
         path: `/api/notes/${note.id}/link-preview`,
-        body: { url },
+        body: { url: normalizedInputUrl },
       });
       if (result.status === 'ok') {
-        setLinkPreviews(normalizeLinkPreviews(result.data?.previews));
-      } else if (result.status === 'queued') {
-        const normalizedUrl = String(url || '').trim();
-        if (!normalizedUrl) return;
-        const domain = (() => { try { return new URL(normalizedUrl).hostname.replace(/^www\./i, ''); } catch { return ''; } })();
-        setLinkPreviews((prev) => {
-          const existing = Array.isArray(prev) ? prev : [];
-          if (existing.some((p: any) => String(p?.url || '') === normalizedUrl)) return existing;
-          const temp = {
-            id: -Math.floor(Date.now() + Math.random() * 1000),
-            url: normalizedUrl,
-            title: normalizedUrl,
-            description: null,
-            imageUrl: null,
-            domain: domain || null,
-          };
-          return normalizeLinkPreviews([temp, ...existing]);
-        });
+        const serverPreviewsRaw = result.data?.previews;
+        if (Array.isArray(serverPreviewsRaw)) {
+          setLinkPreviews(normalizeLinkPreviews(serverPreviewsRaw));
+          return;
+        }
+        // Some deployments may return an unexpected success payload shape.
+        // Keep optimistic row and try a direct refresh of previews.
+        try {
+          const res = await fetch(`/api/notes/${note.id}/link-previews`, {
+            headers: { Authorization: token ? `Bearer ${token}` : '' },
+          });
+          if (res.ok) {
+            const data = await res.json().catch(() => ({}));
+            if (Array.isArray(data?.previews)) {
+              setLinkPreviews(normalizeLinkPreviews(data.previews));
+            }
+          }
+        } catch {}
       }
-    } catch {}
+    } catch (err: any) {
+      // Keep optimistic preview visible; sync queue may reconcile later.
+      // But surface immediate online failures so action is never silent.
+      try {
+        if (navigator.onLine !== false) {
+          const msg = String(err?.message || 'Failed to add URL preview');
+          window.alert(msg || 'Failed to add URL preview');
+        }
+      } catch {}
+    }
   }
 
   async function submitEditPreview(previewId: number, nextUrl: string) {
@@ -903,9 +957,21 @@ export default function RichTextEditor({ note, onClose, onSaved, noteBg, onImage
   }
 
   function onCollaboratorSelect(u: { id:number; email:string; name?: string; userImageUrl?: string }) {
+    if (!u || typeof u.id !== 'number') return;
+    const ownerId = (typeof (note as any).owner?.id === 'number') ? Number((note as any).owner.id) : null;
+    const currentUserId = (user && (user as any).id) ? Number((user as any).id) : null;
+    if (ownerId != null && Number(u.id) === ownerId) return;
+    if (currentUserId != null && Number(u.id) === currentUserId) return;
+    if (collaborators.some((c) => Number(c.userId) === Number(u.id))) return;
+
+    const optimistic = {
+      userId: Number(u.id),
+      email: String(u.email || ''),
+      name: u.name,
+      userImageUrl: u.userImageUrl,
+    };
     setCollaborators((s) => {
-      if (s.find(x => x.userId === u.id)) return s;
-      const next = [...s, { userId: u.id, email: u.email, name: u.name, userImageUrl: u.userImageUrl }];
+      const next = [...s, optimistic];
       try { (onCollaboratorsChanged as any)?.(next); } catch {}
       return next;
     });
@@ -915,7 +981,7 @@ export default function RichTextEditor({ note, onClose, onSaved, noteBg, onImage
         const result = await requestJsonOrQueue({
           method: 'POST',
           path: `/api/notes/${note.id}/collaborators`,
-          body: { email: u.email },
+          body: { userId: Number(u.id) },
         });
         if (result.status === 'failed') throw new Error('Failed to add collaborator');
         const collab = (result.status === 'ok') ? (result.data && (result.data.collaborator || null)) : null;
@@ -928,7 +994,6 @@ export default function RichTextEditor({ note, onClose, onSaved, noteBg, onImage
         }
       } catch (err) {
         console.error('Failed to add collaborator', err);
-        window.alert('Failed to add collaborator');
         // Revert optimistic add on failure
         setCollaborators((s) => {
           const next = s.filter(c => c.userId !== u.id);

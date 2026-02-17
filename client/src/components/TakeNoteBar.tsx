@@ -140,10 +140,40 @@ export default function TakeNoteBar({
         editor.chain().focus()[`toggle${mark.charAt(0).toUpperCase() + mark.slice(1)}` as 'toggleBold' | 'toggleItalic' | 'toggleUnderline']().run();
         return;
       }
-      const $from = sel.$from; let depth = $from.depth; while (depth > 0 && !$from.node(depth).isBlock) depth--;
-      const from = $from.start(depth); const to = $from.end(depth);
+      const $from = sel.$from;
+      let depth = $from.depth;
+      while (depth > 0 && !$from.node(depth).isBlock) depth--;
+      const from = $from.start(depth);
+      const to = $from.end(depth);
+
+      let hasTextInBlock = false;
+      try {
+        editor.state.doc.nodesBetween(from, to, (node: any) => {
+          if (node?.isText && String(node.text || '').length > 0) hasTextInBlock = true;
+        });
+      } catch {}
+
+      if (!hasTextInBlock) {
+        const chain: any = editor.chain().focus();
+        const active = !!editor.isActive(mark);
+        if (mark === 'bold') {
+          if (active) chain.unsetBold();
+          else chain.setBold();
+        } else if (mark === 'italic') {
+          if (active) chain.unsetItalic();
+          else chain.setItalic();
+        } else {
+          if (active) chain.unsetUnderline();
+          else chain.setUnderline();
+        }
+        chain.run();
+        return;
+      }
+
       const chain = editor.chain().focus().setTextSelection({ from, to });
-      if (mark === 'bold') chain.toggleBold().run(); else if (mark === 'italic') chain.toggleItalic().run(); else chain.toggleUnderline().run();
+      if (mark === 'bold') chain.toggleBold().run();
+      else if (mark === 'italic') chain.toggleItalic().run();
+      else chain.toggleUnderline().run();
       try { editor.chain().setTextSelection(sel.from).run(); } catch {}
     }
 
@@ -393,6 +423,7 @@ export default function TakeNoteBar({
       if (mark === 'bold') chain.toggleBold().run();
       else if (mark === 'italic') chain.toggleItalic().run();
       else chain.toggleUnderline().run();
+      try { setChecklistToolbarTick(t => t + 1); } catch {}
       try {
         const restorePos = sel?.from;
         requestAnimationFrame(() => {
@@ -407,6 +438,32 @@ export default function TakeNoteBar({
     }
     const $from = sel.$from; let depth = $from.depth; while (depth > 0 && !$from.node(depth).isBlock) depth--;
     const from = $from.start(depth); const to = $from.end(depth);
+
+    let hasTextInBlock = false;
+    try {
+      ed.state.doc.nodesBetween(from, to, (node: any) => {
+        if (node?.isText && String(node.text || '').length > 0) hasTextInBlock = true;
+      });
+    } catch {}
+
+    if (!hasTextInBlock) {
+      const chain: any = ed.chain().focus();
+      const active = !!ed.isActive(mark);
+      if (mark === 'bold') {
+        if (active) chain.unsetBold();
+        else chain.setBold();
+      } else if (mark === 'italic') {
+        if (active) chain.unsetItalic();
+        else chain.setItalic();
+      } else {
+        if (active) chain.unsetUnderline();
+        else chain.setUnderline();
+      }
+      chain.run();
+      try { setChecklistToolbarTick(t => t + 1); } catch {}
+      return;
+    }
+
     const chain = ed.chain().focus().setTextSelection({ from, to });
     if (mark === 'bold') chain.toggleBold().run();
     else if (mark === 'italic') chain.toggleItalic().run();
@@ -442,6 +499,7 @@ export default function TakeNoteBar({
         }
       });
     } catch {}
+    if (!hasText) return !!ed.isActive(mark);
     return hasText && allMarked;
   }
 
@@ -759,11 +817,13 @@ export default function TakeNoteBar({
       }
 
       const queueCreateForLater = async (message: string) => {
+        const tempId = -Math.floor(Date.now() + Math.random() * 1000);
         const opId = await enqueueHttpJsonMutation({
           method: 'POST',
           path: '/api/notes',
           body: payload,
           meta: {
+            tempClientNoteId: tempId,
             mode,
             bodyJson,
             pendingLinkUrls,
@@ -776,7 +836,6 @@ export default function TakeNoteBar({
         });
         void kickOfflineSync();
 
-        const tempId = -Math.floor(Date.now() + Math.random() * 1000);
         const optimisticItems = Array.isArray(payload.items)
           ? payload.items.map((it: any, i: number) => ({
               id: -(Math.floor(Date.now() / 10) + i + 1),
@@ -786,12 +845,36 @@ export default function TakeNoteBar({
               indent: Number(it?.indent || 0),
             }))
           : [];
+        const optimisticCollaborators = (selectedCollaborators || []).map((u: any, i: number) => ({
+          id: -(Math.floor(Date.now() / 7) + i + 1),
+          userId: Number(u?.id),
+          user: {
+            id: Number(u?.id),
+            email: String(u?.email || ''),
+            name: String(u?.email || '').split('@')[0],
+          },
+        })).filter((c: any) => Number.isFinite(c.userId) && !!String(c?.user?.email || ''));
+        const optimisticLinkPreviews = (pendingLinkUrls || []).map((url: string, i: number) => {
+          const safe = String(url || '').trim();
+          let domain = '';
+          try { domain = new URL(safe.startsWith('http') ? safe : `https://${safe}`).hostname.replace(/^www\./i, ''); } catch {}
+          return {
+            id: -(Math.floor(Date.now() / 9) + i + 1),
+            url: safe,
+            title: domain || safe,
+            description: null,
+            imageUrl: null,
+            domain: domain || null,
+          };
+        }).filter((p: any) => !!p.url);
         const optimisticNote: any = {
           id: tempId,
           title: String(title || ''),
           type: mode === 'checklist' ? 'CHECKLIST' : 'TEXT',
           body: mode === 'text' ? JSON.stringify(bodyJson || {}) : null,
           items: optimisticItems,
+          collaborators: optimisticCollaborators,
+          linkPreviews: optimisticLinkPreviews,
           color: bg || null,
           viewerColor: bg || null,
           images: (imageUrls || []).map((url, i) => ({ id: -(Math.floor(Date.now() / 5) + i + 1), url: String(url) })),
@@ -1479,7 +1562,7 @@ export default function TakeNoteBar({
                 style={{ cursor: 'grab', userSelect: 'none', WebkitUserSelect: 'none', MozUserSelect: 'none', msUserSelect: 'none', touchAction: 'none', WebkitTapHighlightColor: 'transparent' }}
                 aria-label="Drag to reorder"
                 title="Drag to reorder"
-              >≡</div>
+              />
               <div className="checkbox-visual" onClick={(e) => { try { e.stopPropagation(); } catch {} toggleLocalItemChecked(idx); }} aria-hidden>
                 {it.checked && (
                   <svg viewBox="0 0 24 24" fill="none" aria-hidden focusable="false">
@@ -1555,25 +1638,55 @@ export default function TakeNoteBar({
       )}
 
       {imageUrls.length > 0 && (
-        <div style={{ marginTop: 10, display: 'flex', alignItems: 'center', gap: 10 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            {imageUrls.slice(0, 3).map((url, idx) => (
-              <div key={`${url}-${idx}`} className="note-image" style={{ width: 56, height: 42, flex: '0 0 auto' }}>
-                <img src={url} alt="selected" style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: 6, display: 'block' }} />
-              </div>
-            ))}
+        mode === 'checklist' ? (
+          <div className="editor-images editor-images-dock" style={{ marginTop: 10 }}>
+            <div className="editor-images-grid">
+              {imageUrls.map((url, idx) => (
+                <div key={`${url}-${idx}`} className="note-image" style={{ position: 'relative' }}>
+                  <img src={url} alt="selected" style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: 6, display: 'block' }} />
+                  <button
+                    className="image-delete"
+                    type="button"
+                    aria-label="Remove image"
+                    title="Remove image"
+                    style={{ position: 'absolute', right: 6, bottom: 6 }}
+                    onClick={() => setImageUrls((cur) => (cur || []).filter((_, i) => i !== idx))}
+                  >
+                    ✕
+                  </button>
+                </div>
+              ))}
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <div style={{ flex: 1, fontSize: 13, opacity: 0.9 }}>Images ({imageUrls.length})</div>
+              <button className="btn" type="button" onClick={() => setImageUrls([])} style={{ padding: '6px 10px' }}>Remove all</button>
+            </div>
           </div>
-          <div style={{ flex: 1, fontSize: 13, opacity: 0.9 }}>{imageUrls.length} image{imageUrls.length === 1 ? '' : 's'} selected</div>
-          <button className="btn" type="button" onClick={() => setImageUrls([])} style={{ padding: '6px 10px' }}>Remove</button>
-        </div>
+        ) : (
+          <div style={{ marginTop: 10, display: 'flex', alignItems: 'center', gap: 10 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              {imageUrls.slice(0, 3).map((url, idx) => (
+                <div key={`${url}-${idx}`} className="note-image" style={{ width: 56, height: 42, flex: '0 0 auto' }}>
+                  <img src={url} alt="selected" style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: 6, display: 'block' }} />
+                </div>
+              ))}
+            </div>
+            <div style={{ flex: 1, fontSize: 13, opacity: 0.9 }}>{imageUrls.length} image{imageUrls.length === 1 ? '' : 's'} selected</div>
+            <button className="btn" type="button" onClick={() => setImageUrls([])} style={{ padding: '6px 10px' }}>Remove</button>
+          </div>
+        )
       )}
       </div>
 
       <UrlEntryModal
         open={showUrlModal}
         title="Add URL preview"
-        onCancel={() => setShowUrlModal(false)}
+        onCancel={() => {
+          try { ignoreNextDocClickRef.current = true; } catch {}
+          setShowUrlModal(false);
+        }}
         onSubmit={(url) => {
+          try { ignoreNextDocClickRef.current = true; } catch {}
           setShowUrlModal(false);
           setPendingLinkUrls((cur) => {
             const next = Array.isArray(cur) ? cur.slice() : [];

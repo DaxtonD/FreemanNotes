@@ -65,6 +65,7 @@ export default function MobileCreateModal({
   const rootRef = React.useRef<HTMLDivElement | null>(null);
   const titleInputRef = React.useRef<HTMLInputElement | null>(null);
   const moreBtnRef = React.useRef<HTMLButtonElement | null>(null);
+  const skipNextChecklistToolbarClickRef = React.useRef(false);
   const [showMore, setShowMore] = React.useState(false);
 
   // local tiptap for creation (not collaborative until persisted)
@@ -101,6 +102,50 @@ export default function MobileCreateModal({
 
   function applyTextLink() {
     try { setShowUrlModal(true); } catch {}
+  }
+
+  function toggleMarkAcrossLine(mark: 'bold' | 'italic' | 'underline') {
+    if (!editor) return;
+    const sel: any = editor.state.selection;
+    if (!sel || !sel.empty) {
+      editor.chain().focus()[`toggle${mark.charAt(0).toUpperCase() + mark.slice(1)}` as 'toggleBold' | 'toggleItalic' | 'toggleUnderline']().run();
+      return;
+    }
+    const $from = sel.$from;
+    let depth = $from.depth;
+    while (depth > 0 && !$from.node(depth).isBlock) depth--;
+    const from = $from.start(depth);
+    const to = $from.end(depth);
+
+    let hasTextInBlock = false;
+    try {
+      editor.state.doc.nodesBetween(from, to, (node: any) => {
+        if (node?.isText && String(node.text || '').length > 0) hasTextInBlock = true;
+      });
+    } catch {}
+
+    if (!hasTextInBlock) {
+      const chain: any = editor.chain().focus();
+      const active = !!editor.isActive(mark);
+      if (mark === 'bold') {
+        if (active) chain.unsetBold();
+        else chain.setBold();
+      } else if (mark === 'italic') {
+        if (active) chain.unsetItalic();
+        else chain.setItalic();
+      } else {
+        if (active) chain.unsetUnderline();
+        else chain.setUnderline();
+      }
+      chain.run();
+      return;
+    }
+
+    const chain = editor.chain().focus().setTextSelection({ from, to });
+    if (mark === 'bold') chain.toggleBold().run();
+    else if (mark === 'italic') chain.toggleItalic().run();
+    else chain.toggleUnderline().run();
+    try { editor.chain().setTextSelection(sel.from).run(); } catch {}
   }
 
   function applyChecklistLink() {
@@ -240,6 +285,18 @@ export default function MobileCreateModal({
     else setTextColor(contrastColorForBackground(bg));
   }, [bg]);
 
+  const [, setToolbarTick] = React.useState(0);
+  React.useEffect(() => {
+    if (!editor) return;
+    const handler = () => setToolbarTick((t) => t + 1);
+    editor.on('selectionUpdate', handler);
+    editor.on('transaction', handler);
+    return () => {
+      editor.off('selectionUpdate', handler);
+      editor.off('transaction', handler);
+    };
+  }, [editor]);
+
   function discard() {
     if (saving) return;
     try { endDragCleanup(); } catch {}
@@ -361,11 +418,13 @@ export default function MobileCreateModal({
       }
 
       const queueCreateForLater = async (message: string) => {
+        const tempId = -Math.floor(Date.now() + Math.random() * 1000);
         const opId = await enqueueHttpJsonMutation({
           method: 'POST',
           path: '/api/notes',
           body: payload,
           meta: {
+            tempClientNoteId: tempId,
             mode,
             bodyJson,
             pendingLinkUrls,
@@ -378,7 +437,6 @@ export default function MobileCreateModal({
         });
         void kickOfflineSync();
 
-        const tempId = -Math.floor(Date.now() + Math.random() * 1000);
         const optimisticItems = Array.isArray(payload.items)
           ? payload.items.map((it: any, i: number) => ({
               id: -(Math.floor(Date.now() / 10) + i + 1),
@@ -388,12 +446,36 @@ export default function MobileCreateModal({
               indent: Number(it?.indent || 0),
             }))
           : [];
+        const optimisticCollaborators = (selectedCollaborators || []).map((u: any, i: number) => ({
+          id: -(Math.floor(Date.now() / 7) + i + 1),
+          userId: Number(u?.id),
+          user: {
+            id: Number(u?.id),
+            email: String(u?.email || ''),
+            name: String(u?.email || '').split('@')[0],
+          },
+        })).filter((c: any) => Number.isFinite(c.userId) && !!String(c?.user?.email || ''));
+        const optimisticLinkPreviews = (pendingLinkUrls || []).map((url: string, i: number) => {
+          const safe = String(url || '').trim();
+          let domain = '';
+          try { domain = new URL(safe.startsWith('http') ? safe : `https://${safe}`).hostname.replace(/^www\./i, ''); } catch {}
+          return {
+            id: -(Math.floor(Date.now() / 9) + i + 1),
+            url: safe,
+            title: domain || safe,
+            description: null,
+            imageUrl: null,
+            domain: domain || null,
+          };
+        }).filter((p: any) => !!p.url);
         const optimisticNote: any = {
           id: tempId,
           title: String(title || ''),
           type: mode === 'checklist' ? 'CHECKLIST' : 'TEXT',
           body: mode === 'text' ? JSON.stringify(bodyJson || {}) : null,
           items: optimisticItems,
+          collaborators: optimisticCollaborators,
+          linkPreviews: optimisticLinkPreviews,
           color: bg || null,
           viewerColor: bg || null,
           images: (imageUrls || []).map((url, i) => ({ id: -(Math.floor(Date.now() / 5) + i + 1), url: String(url) })),
@@ -726,6 +808,31 @@ export default function MobileCreateModal({
       to = $from.end(depth);
     } catch {}
 
+    let hasTextInBlock = false;
+    try {
+      ed.state.doc.nodesBetween(from, to, (node: any) => {
+        if (node?.isText && String(node.text || '').length > 0) hasTextInBlock = true;
+      });
+    } catch {}
+
+    if (!hasTextInBlock) {
+      const chain: any = ed.chain().focus();
+      const active = !!ed.isActive(mark);
+      if (mark === 'bold') {
+        if (active) chain.unsetBold();
+        else chain.setBold();
+      } else if (mark === 'italic') {
+        if (active) chain.unsetItalic();
+        else chain.setItalic();
+      } else {
+        if (active) chain.unsetUnderline();
+        else chain.setUnderline();
+      }
+      chain.run();
+      try { setChecklistToolbarTick((t) => t + 1); } catch {}
+      return;
+    }
+
     const chain = ed.chain().focus().setTextSelection({ from, to });
     if (mark === 'bold') chain.toggleBold();
     else if (mark === 'italic') chain.toggleItalic();
@@ -759,6 +866,7 @@ export default function MobileCreateModal({
         }
       });
     } catch {}
+    if (!hasText) return !!ed.isActive(mark);
     return hasText && allMarked;
   }
 
@@ -875,9 +983,9 @@ export default function MobileCreateModal({
                   />
                 </div>
                 <div className="rt-toolbar" style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center', marginTop: 0, marginBottom: 0, overflowX: 'auto' }}>
-                  <button className="tiny" onClick={() => editor?.chain().focus().toggleBold().run()} aria-pressed={editor?.isActive('bold')} aria-label="Bold" title="Bold">B</button>
-                  <button className="tiny" onClick={() => editor?.chain().focus().toggleItalic().run()} aria-pressed={editor?.isActive('italic')} aria-label="Italic" title="Italic">I</button>
-                  <button className="tiny" onClick={() => editor?.chain().focus().toggleUnderline().run()} aria-pressed={editor?.isActive('underline')} aria-label="Underline" title="Underline">U</button>
+                  <button className="tiny" onClick={() => toggleMarkAcrossLine('bold')} aria-pressed={editor?.isActive('bold')} aria-label="Bold" title="Bold">B</button>
+                  <button className="tiny" onClick={() => toggleMarkAcrossLine('italic')} aria-pressed={editor?.isActive('italic')} aria-label="Italic" title="Italic">I</button>
+                  <button className="tiny" onClick={() => toggleMarkAcrossLine('underline')} aria-pressed={editor?.isActive('underline')} aria-label="Underline" title="Underline">U</button>
                   <button className="tiny" onClick={() => editor?.chain().focus().toggleHeading({ level: 1 }).run()} aria-pressed={editor?.isActive('heading', { level: 1 })} aria-label="Heading 1" title="Heading 1">H1</button>
                   <button className="tiny" onClick={() => editor?.chain().focus().toggleHeading({ level: 2 }).run()} aria-pressed={editor?.isActive('heading', { level: 2 })} aria-label="Heading 2" title="Heading 2">H2</button>
                   <button className="tiny" onClick={() => editor?.chain().focus().toggleHeading({ level: 3 }).run()} aria-pressed={editor?.isActive('heading', { level: 3 })} aria-label="Heading 3" title="Heading 3">H3</button>
@@ -918,11 +1026,63 @@ export default function MobileCreateModal({
                     style={{ flex: 1, background: 'transparent', border: 'none', color: 'inherit', fontWeight: 600, fontSize: 18 }}
                   />
                 </div>
-                <div className="rt-toolbar" style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center', marginTop: 0, marginBottom: 0, overflowX: 'auto' }}>
-                  <button className="tiny" onClick={() => applyChecklistMarkAcrossLine('bold')} aria-pressed={isCurrentLineMarked('bold')} aria-label="Bold" title="Bold">B</button>
-                  <button className="tiny" onClick={() => applyChecklistMarkAcrossLine('italic')} aria-pressed={isCurrentLineMarked('italic')} aria-label="Italic" title="Italic">I</button>
-                  <button className="tiny" onClick={() => applyChecklistMarkAcrossLine('underline')} aria-pressed={isCurrentLineMarked('underline')} aria-label="Underline" title="Underline">U</button>
-                  <button className="tiny" onClick={applyChecklistLink} aria-label="Add URL preview" title="Add URL preview"><FontAwesomeIcon icon={faLink} /></button>
+                <div
+                  className="rt-toolbar"
+                  style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center', marginTop: 0, marginBottom: 0, overflowX: 'auto' }}
+                  onPointerDown={(e) => e.preventDefault()}
+                  onPointerUp={(e) => e.preventDefault()}
+                >
+                  <button
+                    className="tiny"
+                    type="button"
+                    tabIndex={-1}
+                    onPointerDownCapture={(e) => { e.preventDefault(); e.stopPropagation(); skipNextChecklistToolbarClickRef.current = true; applyChecklistMarkAcrossLine('bold'); }}
+                    onPointerUp={(e) => { e.preventDefault(); e.stopPropagation(); }}
+                    onMouseDownCapture={(e) => { e.preventDefault(); e.stopPropagation(); }}
+                    onMouseUp={(e) => e.preventDefault()}
+                    onClick={() => { if (skipNextChecklistToolbarClickRef.current) { skipNextChecklistToolbarClickRef.current = false; return; } applyChecklistMarkAcrossLine('bold'); }}
+                    aria-pressed={isCurrentLineMarked('bold')}
+                    aria-label="Bold"
+                    title="Bold"
+                  >B</button>
+                  <button
+                    className="tiny"
+                    type="button"
+                    tabIndex={-1}
+                    onPointerDownCapture={(e) => { e.preventDefault(); e.stopPropagation(); skipNextChecklistToolbarClickRef.current = true; applyChecklistMarkAcrossLine('italic'); }}
+                    onPointerUp={(e) => { e.preventDefault(); e.stopPropagation(); }}
+                    onMouseDownCapture={(e) => { e.preventDefault(); e.stopPropagation(); }}
+                    onMouseUp={(e) => e.preventDefault()}
+                    onClick={() => { if (skipNextChecklistToolbarClickRef.current) { skipNextChecklistToolbarClickRef.current = false; return; } applyChecklistMarkAcrossLine('italic'); }}
+                    aria-pressed={isCurrentLineMarked('italic')}
+                    aria-label="Italic"
+                    title="Italic"
+                  >I</button>
+                  <button
+                    className="tiny"
+                    type="button"
+                    tabIndex={-1}
+                    onPointerDownCapture={(e) => { e.preventDefault(); e.stopPropagation(); skipNextChecklistToolbarClickRef.current = true; applyChecklistMarkAcrossLine('underline'); }}
+                    onPointerUp={(e) => { e.preventDefault(); e.stopPropagation(); }}
+                    onMouseDownCapture={(e) => { e.preventDefault(); e.stopPropagation(); }}
+                    onMouseUp={(e) => e.preventDefault()}
+                    onClick={() => { if (skipNextChecklistToolbarClickRef.current) { skipNextChecklistToolbarClickRef.current = false; return; } applyChecklistMarkAcrossLine('underline'); }}
+                    aria-pressed={isCurrentLineMarked('underline')}
+                    aria-label="Underline"
+                    title="Underline"
+                  >U</button>
+                  <button
+                    className="tiny"
+                    type="button"
+                    tabIndex={-1}
+                    onPointerDownCapture={(e) => { e.preventDefault(); e.stopPropagation(); skipNextChecklistToolbarClickRef.current = true; applyChecklistLink(); }}
+                    onPointerUp={(e) => { e.preventDefault(); e.stopPropagation(); }}
+                    onMouseDownCapture={(e) => { e.preventDefault(); e.stopPropagation(); }}
+                    onMouseUp={(e) => e.preventDefault()}
+                    onClick={() => { if (skipNextChecklistToolbarClickRef.current) { skipNextChecklistToolbarClickRef.current = false; return; } applyChecklistLink(); }}
+                    aria-label="Add URL preview"
+                    title="Add URL preview"
+                  ><FontAwesomeIcon icon={faLink} /></button>
                   <button className="btn" type="button" onClick={() => { const newUid = genUid(); setItems((cur) => [...(cur || []), { uid: newUid, content: '', checked: false, indent: 0 }]); setActiveChecklistRowKey(newUid); focusItem(items.length); }} style={{ padding: '6px 10px' }}>Add item</button>
                 </div>
               </div>
@@ -1090,7 +1250,7 @@ export default function MobileCreateModal({
                           endDragCleanup();
                         }}
                       >
-                        <div className="drag-handle" aria-hidden>≡</div>
+                        <div className="drag-handle" aria-hidden />
                         <div
                           className={`checkbox-visual ${it.checked ? 'checked' : ''}`}
                           onClick={(e) => { e.stopPropagation(); toggleLocalItemChecked(idx); }}
@@ -1174,17 +1334,43 @@ export default function MobileCreateModal({
           )}
 
           {imageUrls.length > 0 && (
-            <div style={{ marginTop: 10, display: 'flex', alignItems: 'center', gap: 10 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                {imageUrls.slice(0, 3).map((url, idx) => (
-                  <div key={`${url}-${idx}`} className="note-image" style={{ width: 56, height: 42, flex: '0 0 auto' }}>
-                    <img src={url} alt="selected" style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: 6, display: 'block' }} />
-                  </div>
-                ))}
+            mode === 'checklist' ? (
+              <div className="editor-images editor-images-dock" style={{ marginTop: 10 }}>
+                <div className="editor-images-grid">
+                  {imageUrls.map((url, idx) => (
+                    <div key={`${url}-${idx}`} className="note-image" style={{ position: 'relative' }}>
+                      <img src={url} alt="selected" style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: 6, display: 'block' }} />
+                      <button
+                        className="image-delete"
+                        type="button"
+                        aria-label="Remove image"
+                        title="Remove image"
+                        style={{ position: 'absolute', right: 6, bottom: 6 }}
+                        onClick={() => setImageUrls((cur) => (cur || []).filter((_, i) => i !== idx))}
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  ))}
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <div style={{ flex: 1, fontSize: 13, opacity: 0.9 }}>Images ({imageUrls.length})</div>
+                  <button className="btn" type="button" onClick={() => setImageUrls([])} style={{ padding: '6px 10px' }}>Remove all</button>
+                </div>
               </div>
-              <div style={{ flex: 1, fontSize: 13, opacity: 0.9 }}>{imageUrls.length} image{imageUrls.length === 1 ? '' : 's'} selected</div>
-              <button className="btn" type="button" onClick={() => setImageUrls([])} style={{ padding: '6px 10px' }}>Remove</button>
-            </div>
+            ) : (
+              <div style={{ marginTop: 10, display: 'flex', alignItems: 'center', gap: 10 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  {imageUrls.slice(0, 3).map((url, idx) => (
+                    <div key={`${url}-${idx}`} className="note-image" style={{ width: 56, height: 42, flex: '0 0 auto' }}>
+                      <img src={url} alt="selected" style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: 6, display: 'block' }} />
+                    </div>
+                  ))}
+                </div>
+                <div style={{ flex: 1, fontSize: 13, opacity: 0.9 }}>{imageUrls.length} image{imageUrls.length === 1 ? '' : 's'} selected</div>
+                <button className="btn" type="button" onClick={() => setImageUrls([])} style={{ padding: '6px 10px' }}>Remove</button>
+              </div>
+            )
           )}
           </div>
         </div>

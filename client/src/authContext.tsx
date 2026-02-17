@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { me as apiMe, login as apiLogin, register as apiRegister, uploadMyPhoto, updateMe as apiUpdateMe } from './lib/authApi';
+import { offlineDb } from './lib/offline/db';
 
 type User = { id: number; email: string; name?: string; role?: 'admin' | 'user' } | null;
 
@@ -14,6 +15,39 @@ type AuthContextValue = {
 };
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
+const AUTH_SESSION_KEY = 'auth.session';
+
+async function persistAuthSessionSnapshot(token: string | null, user: User): Promise<void> {
+  try {
+    if (!token) {
+      await offlineDb.syncMeta.delete(AUTH_SESSION_KEY);
+      return;
+    }
+    await offlineDb.syncMeta.put({
+      key: AUTH_SESSION_KEY,
+      value: {
+        token: String(token),
+        user: (user == null ? null : user),
+      },
+      updatedAt: Date.now(),
+    });
+  } catch {
+    // best-effort
+  }
+}
+
+async function readAuthSessionSnapshot(): Promise<{ token: string; user: User } | null> {
+  try {
+    const row = await offlineDb.syncMeta.get(AUTH_SESSION_KEY);
+    const value = (row as any)?.value || null;
+    const token = (value && typeof value.token === 'string') ? String(value.token) : '';
+    if (!token) return null;
+    const user = (value && Object.prototype.hasOwnProperty.call(value, 'user')) ? (value.user as User) : null;
+    return { token, user };
+  } catch {
+    return null;
+  }
+}
 
 export function useAuth() {
   const v = useContext(AuthContext);
@@ -35,13 +69,37 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   });
   const [ready, setReady] = useState<boolean>(false);
+  const [sessionRehydrated, setSessionRehydrated] = useState<boolean>(false);
 
   useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        if (token) return;
+        const snap = await readAuthSessionSnapshot();
+        if (cancelled || !snap?.token) return;
+        setToken(String(snap.token));
+        setUser((snap.user ?? null) as User);
+        try { localStorage.setItem('fn_token', String(snap.token)); } catch {}
+        try {
+          if (snap.user == null) localStorage.removeItem('fn_user');
+          else localStorage.setItem('fn_user', JSON.stringify(snap.user));
+        } catch {}
+      } finally {
+        if (!cancelled) setSessionRehydrated(true);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    if (!sessionRehydrated) return;
     let cancelled = false;
     (async () => {
       if (!token) {
         setUser(null);
         try { localStorage.removeItem('fn_user'); } catch {}
+        try { await persistAuthSessionSnapshot(null, null); } catch {}
         setReady(true);
         return;
       }
@@ -50,6 +108,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         if (cancelled) return;
         setUser(data.user);
         try { localStorage.setItem('fn_user', JSON.stringify(data.user)); } catch {}
+        try { await persistAuthSessionSnapshot(token, data.user); } catch {}
       } catch (err) {
         if (cancelled) return;
         const status = (err as any)?.status;
@@ -59,16 +118,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           setToken(null);
           try { localStorage.removeItem('fn_token'); } catch {}
           try { localStorage.removeItem('fn_user'); } catch {}
+          try { await persistAuthSessionSnapshot(null, null); } catch {}
         } else {
           // Transient/network error: keep token and treat as not-ready but allow app to render
           console.warn('Transient auth/me failure — keeping token:', err);
+          try { await persistAuthSessionSnapshot(token, user || null); } catch {}
         }
       } finally {
         if (!cancelled) setReady(true);
       }
     })();
     return () => { cancelled = true; };
-  }, [token]);
+  }, [token, sessionRehydrated]);
   // apply persisted user preferences when loaded
   useEffect(() => {
     if (!user) return;
@@ -211,6 +272,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     localStorage.setItem('fn_token', t);
     setUser(data.user);
     try { localStorage.setItem('fn_user', JSON.stringify(data.user)); } catch {}
+    try { await persistAuthSessionSnapshot(t, data.user); } catch {}
   }
 
   async function register(email: string, password: string, name?: string, inviteToken?: string) {
@@ -220,6 +282,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     localStorage.setItem('fn_token', t);
     setUser(data.user);
     try { localStorage.setItem('fn_user', JSON.stringify(data.user)); } catch {}
+    try { await persistAuthSessionSnapshot(t, data.user); } catch {}
   }
 
   async function uploadPhoto(dataUrl: string) {
@@ -231,6 +294,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (data && data.user) {
       setUser(data.user);
       try { localStorage.setItem('fn_user', JSON.stringify(data.user)); } catch {}
+      try { await persistAuthSessionSnapshot(effectiveToken, data.user); } catch {}
       try {
         window.dispatchEvent(new CustomEvent('freemannotes:user-photo-updated', { detail: { user: data.user } }));
       } catch {}
@@ -243,6 +307,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (data && data.user) {
       setUser(data.user);
       try { localStorage.setItem('fn_user', JSON.stringify(data.user)); } catch {}
+      try { await persistAuthSessionSnapshot(token, data.user); } catch {}
     }
     else {
       // Optimistically merge payload into user if server doesn't echo
@@ -250,6 +315,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         if (!prev) return prev;
         const next = { ...(prev as any), ...(payload || {}) } as any;
         try { localStorage.setItem('fn_user', JSON.stringify(next)); } catch {}
+        try { void persistAuthSessionSnapshot(token, next); } catch {}
         return next;
       });
     }
@@ -260,6 +326,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setUser(null);
     localStorage.removeItem('fn_token');
     try { localStorage.removeItem('fn_user'); } catch {}
+    try { void persistAuthSessionSnapshot(null, null); } catch {}
   }
 
   if (!ready) return null;

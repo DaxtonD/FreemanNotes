@@ -1198,6 +1198,22 @@ export default function NoteCard({
   }, [note.noteLabels]);
   React.useEffect(() => { setTitle(note.title || ''); }, [note.title]);
   React.useEffect(() => { setTextBody(note.body || ''); }, [note.id, note.body]);
+  React.useEffect(() => {
+    try {
+      const arr = Array.isArray((note as any)?.items) ? (note as any).items : [];
+      const next = arr
+        .map((it: any, idx: number) => ({
+          id: (typeof it?.id === 'number' ? Number(it.id) : undefined),
+          uid: (typeof it?.uid === 'string' ? String(it.uid) : undefined),
+          content: String(it?.content || ''),
+          checked: !!it?.checked,
+          indent: Number(it?.indent || 0),
+          ord: (typeof it?.ord === 'number' ? Number(it.ord) : idx),
+        }))
+        .sort((a: any, b: any) => (a.ord || 0) - (b.ord || 0));
+      setNoteItems(next as any);
+    } catch {}
+  }, [note.id, (note as any).items]);
   // Keep collaborators in sync with server-provided data on note reloads
   React.useEffect(() => {
     try {

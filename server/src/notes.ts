@@ -646,7 +646,39 @@ router.post('/api/notes/:id/link-preview', async (req: Request, res: Response) =
       }
     } catch {}
 
-    const preview = await scrapeLinkPreview(url);
+    let preview: {
+      url: string;
+      title: string | null;
+      description: string | null;
+      imageUrl: string | null;
+      domain: string | null;
+    };
+    try {
+      preview = await scrapeLinkPreview(url);
+    } catch {
+      // Graceful fallback: keep a minimal URL preview row even if unfurl fails
+      // (blocked site, timeout, transient DNS, etc.). This prevents queued
+      // offline mutations from retrying forever and still gives users a link chip.
+      const raw = String(url || '').trim();
+      let normalized = raw;
+      let domain: string | null = null;
+      try {
+        const withScheme = /^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(raw) ? raw : `https://${raw}`;
+        const u = new URL(withScheme);
+        normalized = u.toString();
+        const host = String(u.hostname || '').replace(/^www\./i, '').trim();
+        domain = host || null;
+      } catch {
+        // Keep raw text if URL parsing fails.
+      }
+      preview = {
+        url: normalized || raw,
+        title: (domain || normalized || raw || null),
+        description: null,
+        imageUrl: null,
+        domain,
+      };
+    }
     const urlHash = hashUrl(preview.url);
     // Upsert by (noteId, url) to avoid duplicates.
     try {
@@ -1448,14 +1480,29 @@ router.post('/api/notes/:id/collaborators', async (req: Request, res: Response) 
   const user = await getUserFromToken(req);
   if (!user) return res.status(401).json({ error: 'unauthenticated' });
   const id = Number(req.params.id);
-  const { email, role } = req.body || {};
-  if (!email) return res.status(400).json({ error: 'email required' });
+  const { email, userId, role } = req.body || {};
+  const incomingEmail = (typeof email === 'string') ? String(email).trim() : '';
+  const incomingUserId = Number(userId);
+  if (!incomingEmail && !Number.isFinite(incomingUserId)) {
+    return res.status(400).json({ error: 'email or userId required' });
+  }
   try {
     const note = await prisma.note.findUnique({ where: { id } });
     if (!note) return res.status(404).json({ error: 'not found' });
     if (note.ownerId !== user.id) return res.status(403).json({ error: 'forbidden' });
-    const u = await prisma.user.findUnique({ where: { email } });
+
+    const u = Number.isFinite(incomingUserId)
+      ? await prisma.user.findUnique({ where: { id: Number(incomingUserId) } })
+      : await prisma.user.findUnique({ where: { email: incomingEmail } });
     if (!u) return res.status(404).json({ error: 'user not found' });
+
+    if (Number((u as any).id) === Number(note.ownerId)) {
+      return res.status(409).json({ error: 'owner is already a participant' });
+    }
+
+    const existing = await prisma.collaborator.findFirst({ where: { noteId: id, userId: Number((u as any).id) } });
+    if (existing) return res.status(200).json({ collaborator: existing, existing: true });
+
     const collab = await prisma.collaborator.create({ data: { noteId: id, userId: u.id, role: role || 'editor' } });
 
     // Notify the collaborator immediately so the note appears

@@ -57,6 +57,7 @@ function normalizeForSearch(input: any): string {
 
 function buildNoteLoadSignature(note: any): string {
   const id = Number((note as any)?.id);
+  const type = String((note as any)?.type || '');
   const updatedAt = String((note as any)?.updatedAt || '');
   const title = String((note as any)?.title || '');
   const body = String((note as any)?.body || '');
@@ -84,12 +85,39 @@ function buildNoteLoadSignature(note: any): string {
     })
     .sort()
     .join(',');
+  const items = Array.isArray((note as any)?.items) ? (note as any).items : [];
+  const itemsSig = items
+    .map((it: any, idx: number) => {
+      const itId = Number((it as any)?.id || 0);
+      const ord = Number((it as any)?.ord ?? idx);
+      const checked = !!(it as any)?.checked ? '1' : '0';
+      const indent = Number((it as any)?.indent || 0);
+      const content = String((it as any)?.content || '');
+      return `${ord}:${itId}:${checked}:${indent}:${content.length}`;
+    })
+    .sort()
+    .join(',');
+  const collaborators = Array.isArray((note as any)?.collaborators) ? (note as any).collaborators : [];
+  const collaboratorsSig = collaborators
+    .map((c: any) => {
+      const userId = Number((c as any)?.userId || (c as any)?.user?.id || 0);
+      const email = String((c as any)?.email || (c as any)?.user?.email || '');
+      return `${userId}:${email}`;
+    })
+    .sort()
+    .join(',');
+  const linkPreviews = Array.isArray((note as any)?.linkPreviews) ? (note as any).linkPreviews : [];
+  const linkPreviewsSig = linkPreviews
+    .map((p: any) => `${Number((p as any)?.id || 0)}:${String((p as any)?.url || '')}`)
+    .sort()
+    .join(',');
   const offlinePending = (note as any)?.offlinePendingCreate ? '1' : '0';
   const offlineFailed = (note as any)?.offlineSyncFailed ? '1' : '0';
   const offlineOpId = String((note as any)?.offlineOpId || '');
 
   return [
     id,
+    type,
     updatedAt,
     title,
     body,
@@ -102,6 +130,9 @@ function buildNoteLoadSignature(note: any): string {
     imagesExpanded,
     labelsSig,
     imagesSig,
+    itemsSig,
+    collaboratorsSig,
+    linkPreviewsSig,
     offlinePending,
     offlineFailed,
     offlineOpId,
@@ -802,7 +833,16 @@ export default function NotesGrid({
       }
     } catch (err) {
       console.error('Failed to load notes', err);
-      if (!hadCached) setNotes([]);
+      if (!hadCached) {
+        setNotes((prev) => {
+          try {
+            const hasPendingCreate = (Array.isArray(prev) ? prev : []).some((n: any) => !!(n as any)?.offlinePendingCreate && !!String((n as any)?.offlineOpId || ''));
+            return hasPendingCreate ? prev : [];
+          } catch {
+            return prev;
+          }
+        });
+      }
     } finally { setLoading(false); }
   }
 

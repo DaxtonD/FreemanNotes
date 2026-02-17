@@ -1283,6 +1283,29 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
     const ymeta = ydoc.getMap<any>('meta');
     ymetaRef.current = ymeta;
 
+    const seedFromSnapshotIfEmpty = () => {
+      try {
+        if (yarr.length > 0) return;
+        const initial = (note.items || []).map((it: any, idx: number) => {
+          const m = new Y.Map<any>();
+          if (typeof it.id === 'number') m.set('id', it.id);
+          const uid = (typeof it?.uid === 'string' && it.uid)
+            ? String(it.uid)
+            : (typeof it?.id === 'number' ? `id-${Number(it.id)}` : `seed-${idx}-${Math.random().toString(36).slice(2, 8)}`);
+          m.set('uid', uid);
+          m.set('content', String(it.content || ''));
+          m.set('checked', !!it.checked);
+          m.set('indent', Number(it.indent || 0));
+          return m;
+        });
+        if (initial.length) yarr.insert(0, initial as any);
+      } catch {}
+    };
+
+    // Important for offline open/edit flows: sync may never fire while offline,
+    // so seed from server snapshot immediately when Yjs state is empty.
+    seedFromSnapshotIfEmpty();
+
     const refreshImagesFromServer = async () => {
       try {
         const res = await fetch(`/api/notes/${note.id}/images`, { headers: { Authorization: `Bearer ${token}` } });
@@ -2073,7 +2096,9 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
       }
       // derive payload from Yjs state
       const yarr = yarrayRef.current;
-      const arrRaw = yarr ? yarr.toArray().map((m) => ({ id: (typeof m.get('id') === 'number' ? Number(m.get('id')) : undefined), content: String(m.get('content') || ''), checked: !!m.get('checked'), indent: Number(m.get('indent') || 0) })) : items;
+      const arrRaw = (yarr && yarr.length > 0)
+        ? yarr.toArray().map((m) => ({ id: (typeof m.get('id') === 'number' ? Number(m.get('id')) : undefined), content: String(m.get('content') || ''), checked: !!m.get('checked'), indent: Number(m.get('indent') || 0) }))
+        : (items || []).map((it: any) => ({ id: it?.id, content: String(it?.content || ''), checked: !!it?.checked, indent: Number(it?.indent || 0) }));
       const arr = (arrRaw || []).filter((it: any) => !!stripHtmlToText(String(it?.content || '')));
       const payloadItems = arr.map((it, i) => { const payload: any = { content: it.content, checked: !!it.checked, ord: i, indent: it.indent || 0 }; if (typeof it.id === 'number') payload.id = it.id; return payload; });
       const itemsSave = await requestJsonOrQueue({
@@ -2254,7 +2279,7 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
     try { pruneEmptyChecklistItemsFromYjs(); } catch {}
     try {
       const yarr = yarrayRef.current;
-      const arrRaw = yarr
+      const arrRaw = (yarr && yarr.length > 0)
         ? yarr.toArray().map((m, idx) => ({
           id: (typeof m.get('id') === 'number' ? Number(m.get('id')) : undefined),
           content: String(m.get('content') || ''),
@@ -2932,7 +2957,7 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
                             endDragCleanup();
                           }}
                         >
-                          <div className="drag-handle" aria-hidden>≡</div>
+                          <div className="drag-handle" aria-hidden />
                           <div
                             className={`checkbox-visual ${it.checked ? 'checked' : ''}`}
                             onClick={(e) => { e.stopPropagation(); toggleChecked(realIdx); }}

@@ -15,6 +15,38 @@ Adheres to Semantic Versioning (MAJOR.MINOR.PATCH).
 ### Fixed
 - 
 
+## [0.8.3] - 2026-02-16
+
+### Added
+- Mobile/PWA create-checklist toolbar parity improvements so `B`/`I`/`U` active states now correctly reflect empty-line stored marks during new-note creation.
+
+### Changed
+- Desktop and mobile create editors now share richer mark-toggle behavior for line-scoped formatting (including empty-line stored-mark handling) and immediate toolbar pressed-state refresh.
+- Mobile/PWA note-corner indicator sizing was increased for improved touch visibility.
+- Mobile/PWA note-corner overlap layout was re-tuned to keep icons half-over-card while preserving vertical separation between stacked notes.
+- Release metadata/version bumped to `0.8.3`.
+
+### Fixed
+- Checklist editor offline data-loss edge case where replace-all saves could use empty Yjs state and clear checklist rows.
+- Notes grid offline load fallback no longer drops optimistic pending cards when network load fails and cache is unavailable.
+- URL preview persistence hardened when unfurl scraping fails (server now stores a minimal fallback preview row).
+- Desktop URL-preview add flow in rich-text editor no longer fails silently; optimistic preview appears immediately, direct online POST path is attempted first, and unexpected success payloads now trigger preview-list refresh fallback.
+- URL modal interactions in create flow no longer trigger accidental editor close/dismiss.
+- Create-checklist image attachment parity implemented for desktop and mobile create flows (dock/grid + remove actions).
+- Create-editor image dock sizing now matches existing editor thumbnail behavior on desktop.
+- Collaborator add flow parity restored between text and checklist editors, with server endpoint support for `email` or `userId` and idempotent existing-collaborator handling.
+- Offline replay engine resilience:
+	- queued mutations with invalid temp note IDs are dropped as non-retryable,
+	- stale note-targeted `404` queued mutations are dropped,
+	- invalid queued note-create `400` mutations are dropped,
+	- queued child mutations/uploads are remapped from temp client note IDs to real server note IDs after reconciliation.
+- Offline upload queue no longer repeatedly POSTs image uploads against negative temporary note IDs.
+- Create-checklist `B`/`I`/`U` pressed/highlight behavior now matches text editor parity in desktop and mobile create surfaces.
+- Wording and UI consistency updates:
+	- destructive menu labels normalized to “Move to trash”,
+	- note images modal close icon visibility fixed in light theme,
+	- corner icon opacity/border polish aligned with note title background color.
+
 ## [0.8.2] - 2026-02-16
 
 ### Added

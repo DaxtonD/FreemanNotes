@@ -363,7 +363,7 @@ export default function MoreMenu({
         )}
 
         <MenuItem
-          label={deleteLabel || 'Delete'}
+          label={deleteLabel || 'Move to trash'}
           danger
           icon={
             <MenuIcon>

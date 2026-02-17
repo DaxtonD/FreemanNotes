@@ -66,6 +66,20 @@ export async function flushUploadQueue(token: string): Promise<void> {
   for (const row of rows) {
     if (row.nextAttemptAt > now) continue;
 
+    // Temporary optimistic notes use negative ids until create reconciliation.
+    // Do not hit the server with invalid ids (causes noisy 400 spam and masks
+    // unrelated actions like URL preview add). Keep the row queued and retry
+    // later after reconciliation updates the note id.
+    if (!Number.isFinite(Number(row.noteId)) || Number(row.noteId) <= 0) {
+      await offlineDb.uploadQueue.put({
+        ...row,
+        nextAttemptAt: Date.now() + 60000,
+        updatedAt: Date.now(),
+        lastError: 'Waiting for note reconciliation before image upload replay',
+      });
+      continue;
+    }
+
     try {
       const data = await executeUpload(token, row);
       const image = data?.image || null;

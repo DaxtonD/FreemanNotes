@@ -767,7 +767,7 @@ body{
 
   .notes-grid:not(.notes-grid--list) .note-card.has-header-icons,
   .notes-masonry .note-card.has-header-icons{
-    margin-top: 10px;
+    margin-top: 0;
   }
 
 }
@@ -1685,7 +1685,7 @@ html.is-preferences-open .mobile-add-note{
   justify-content:center;
   position: relative;
   color: var(--note-title-color, inherit);
-  background: var(--editor-surface, var(--card));
+  background: transparent;
   min-width: max(var(--checklist-drag-handle-width), var(--checklist-checkbox-size));
   /*
     Don't force a fixed row height.
@@ -1697,8 +1697,23 @@ html.is-preferences-open .mobile-add-note{
   min-height: var(--checklist-checkbox-size);
   padding: 0;
   line-height: 1;
-  font-size: max(22px, var(--checklist-checkbox-size));
+  font-size: 0;
   margin-right:0;
+}
+.checklist-item .drag-handle::after{
+  content: '';
+  display: block;
+  width: 14px;
+  height: 14px;
+  border-radius: 2px;
+  background-image:
+    linear-gradient(currentColor, currentColor),
+    linear-gradient(currentColor, currentColor),
+    linear-gradient(currentColor, currentColor);
+  background-repeat: no-repeat;
+  background-size: 12px 2px, 12px 2px, 12px 2px;
+  /* Increased vertical spacing between the three bars */
+  background-position: center 1px, center 6px, center 11px;
 }
 
 /* Unified, size-aware checklist control alignment.
@@ -1751,7 +1766,7 @@ html.is-preferences-open .mobile-add-note{
     min-width: max(30px, var(--checklist-drag-handle-width), var(--checklist-checkbox-size));
     height: var(--checklist-checkbox-size);
     min-height: var(--checklist-checkbox-size);
-    font-size: max(22px, var(--checklist-checkbox-size));
+    font-size: 0;
   }
   .checklist-item .drag-handle::before{
     content: '';
@@ -1903,6 +1918,13 @@ html.is-preferences-open .mobile-add-note{
   transition: transform 120ms cubic-bezier(.22,.95,.3,1);
   pointer-events: none;
   opacity: 0.98;
+}
+@media (pointer: coarse), (max-width: 760px) {
+  .checklist-ghost {
+    /* Make the dragged ghost slightly taller with symmetric vertical breathing room. */
+    padding-top: 6px;
+    padding-bottom: 6px;
+  }
 }
 .checklist-ghost,
 .checklist-ghost .checklist-item,
@@ -2750,6 +2772,10 @@ button.chip:focus{outline:2px solid rgba(255,255,255,0.18);outline-offset:2px;}
 :root[data-theme="light"] .note-images-modal__header{
   border-bottom-color: rgba(0,0,0,0.08);
 }
+.note-images-modal .icon-close,
+.note-images-modal .icon-close:hover {
+  color: inherit;
+}
 .note-images-modal__body{
   overflow: auto;
   padding: 12px;
@@ -3425,6 +3451,43 @@ button.chip:focus{outline:2px solid rgba(255,255,255,0.18);outline-offset:2px;}
   box-shadow: none;
 }
 
+/* Desktop take-note create editor uses the same attachment dock classes,
+   but is not inside `.image-dialog`. Mirror thumbnail sizing rules here. */
+.take-note-expanded .editor-images.editor-images-dock .editor-images-grid{
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  max-width: 100%;
+  max-height: var(--editor-images-panel-height, min(40dvh, 340px));
+  overflow: auto;
+  margin-top: 8px;
+  border: 1px solid rgba(255,255,255,0.10);
+  border-radius: 12px;
+  padding: 10px;
+  background: var(--editor-surface, var(--card));
+}
+:root[data-theme="light"] .take-note-expanded .editor-images.editor-images-dock .editor-images-grid{
+  border-color: rgba(0,0,0,0.12);
+}
+.take-note-expanded .editor-images-grid .note-image{
+  width: min(var(--editor-image-thumb-size), 100%);
+  aspect-ratio: 1 / 1;
+  height: auto;
+  flex: 0 0 auto;
+  background: rgba(255,255,255,0.04);
+}
+:root[data-theme="light"] .take-note-expanded .editor-images-grid .note-image{
+  background: rgba(0,0,0,0.04);
+}
+.take-note-expanded .editor-images-grid .note-image img{
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
 /* When expanded, keep images in-flow (no large reserved blank area). */
 .image-dialog.editor-dialog.images-open .editor-scroll-area{
   margin-bottom: 0;
@@ -3513,6 +3576,34 @@ button.chip:focus{outline:2px solid rgba(255,255,255,0.18);outline-offset:2px;}
   .notes-grid:not(.notes-grid--list) .note-card .note-corner-icons,
   .notes-masonry .note-card .note-corner-icons{
     gap: 16px;
+    top: -15px;
+    right: 8px;
+  }
+
+  .notes-grid:not(.notes-grid--list) .note-card .note-corner-icons > .note-pin-icon,
+  .notes-grid:not(.notes-grid--list) .note-card .note-corner-icons > .note-reminder-bell,
+  .notes-grid:not(.notes-grid--list) .note-card .note-corner-icons > .note-reminder-clear-control,
+  .notes-masonry .note-card .note-corner-icons > .note-pin-icon,
+  .notes-masonry .note-card .note-corner-icons > .note-reminder-bell,
+  .notes-masonry .note-card .note-corner-icons > .note-reminder-clear-control{
+    width: 30px;
+    height: 30px;
+  }
+
+  .notes-grid:not(.notes-grid--list) .note-card .note-corner-icons > .note-pin-icon svg,
+  .notes-grid:not(.notes-grid--list) .note-card .note-corner-icons > .note-reminder-bell svg,
+  .notes-grid:not(.notes-grid--list) .note-card .note-corner-icons > .note-reminder-clear-control svg,
+  .notes-masonry .note-card .note-corner-icons > .note-pin-icon svg,
+  .notes-masonry .note-card .note-corner-icons > .note-reminder-bell svg,
+  .notes-masonry .note-card .note-corner-icons > .note-reminder-clear-control svg{
+    width: 16px;
+    height: 16px;
+  }
+
+  /* Keep 50% overlap while preserving vertical separation between stacked cards. */
+  .notes-grid:not(.notes-grid--list) > div:has(.note-card.has-header-icons),
+  .notes-masonry-col > [data-note-id]:has(.note-card.has-header-icons){
+    margin-top: 5px;
   }
 }
 
@@ -3522,8 +3613,8 @@ button.chip:focus{outline:2px solid rgba(255,255,255,0.18);outline-offset:2px;}
   width: 24px;
   height: 24px;
   border-radius: 999px;
-  border: 1px solid rgba(255,255,255,0.30);
-  background: rgba(255,255,255,0.22);
+  border: 3px solid var(--note-title-bg, rgba(255,255,255,0.30));
+  background: #2f3740;
   box-shadow: 0 2px 10px rgba(0,0,0,0.35);
   backdrop-filter: blur(2px);
   display: inline-flex;
@@ -3532,8 +3623,8 @@ button.chip:focus{outline:2px solid rgba(255,255,255,0.18);outline-offset:2px;}
 }
 .note-reminder-clear-control{
   pointer-events: auto;
-  border-color: rgba(255,255,255,0.34);
-  background: rgba(255,255,255,0.28);
+  border-color: var(--note-title-bg, rgba(255,255,255,0.34));
+  background: #2f3740;
   color: rgba(235, 248, 255, 0.98);
   padding: 0;
   cursor: pointer;
@@ -3545,8 +3636,8 @@ button.chip:focus{outline:2px solid rgba(255,255,255,0.18);outline-offset:2px;}
 }
 .note-reminder-clear-control:hover,
 .note-reminder-clear-control:focus-visible{
-  background: rgba(255,255,255,0.28);
-  border-color: rgba(255,255,255,0.44);
+  background: #39444f;
+  border-color: var(--note-title-bg, rgba(255,255,255,0.44));
 }
 :root[data-theme="light"] .note-reminder-clear-control{
   border-color: rgba(0,0,0,0.20);
@@ -3561,8 +3652,8 @@ button.chip:focus{outline:2px solid rgba(255,255,255,0.18);outline-offset:2px;}
 :root[data-theme="light"] .note-card .note-corner-icons > .note-pin-icon,
 :root[data-theme="light"] .note-card .note-corner-icons > .note-reminder-bell,
 :root[data-theme="light"] .note-card .note-corner-icons > .note-reminder-clear-control{
-  border-color: rgba(0,0,0,0.16);
-  background: rgba(255,255,255,0.88);
+  border-color: var(--note-title-bg, rgba(0,0,0,0.16));
+  background: #ffffff;
   box-shadow: 0 2px 8px rgba(0,0,0,0.14);
 }
 .note-reminder-due{
