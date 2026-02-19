@@ -8,8 +8,10 @@ import { WebSocketServer } from "ws";
 import jwt from "jsonwebtoken";
 import { registerConnection, removeConnection } from "./events";
 import { startTrashCleanupJob } from './trashCleanup';
-import { startReminderPushJob } from './reminderPushJob';
 import { getUploadsDir } from './uploads';
+import { closeReminderQueue, getReminderQueue, resyncReminderJobs } from './lib/queue';
+import { isReminderWorkerEnabled } from './lib/redis';
+import { createYjsRedisBridge } from './lib/yjsRedisBridge';
 // y-websocket util sets up Yjs collaboration rooms over WebSocket
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore
@@ -49,6 +51,8 @@ async function start() {
   const isDev = process.env.NODE_ENV !== "production";
   const clientRoot = path.resolve(__dirname, "..", "..", "client");
   let routesRegistered = false;
+  const yjsRedisBridge = createYjsRedisBridge();
+  let stopReminderWorkerFn: null | (() => Promise<void>) = null;
 
   // Attempt Prisma connection on startup
   try {
@@ -71,16 +75,30 @@ async function start() {
       console.warn('Trash cleanup job failed to start:', err);
     }
 
-    // Background reminders: send Web Push notifications when reminders are due.
+    // Reminder scheduling via BullMQ + Redis (replaces polling).
     try {
-      startReminderPushJob(prisma as any);
-      console.log('Reminder push job started');
+      // Ensure queue can initialize and resync delayed jobs from DB state.
+      getReminderQueue();
+      await resyncReminderJobs(prisma as any);
+      if (isReminderWorkerEnabled()) {
+        const mod = await import('./workers/reminderWorker');
+        mod.startReminderWorker(prisma as any);
+        stopReminderWorkerFn = async () => { await mod.stopReminderWorker(); };
+      } else {
+        console.log('[reminderWorker] not started (ENABLE_REMINDER_WORKER != true)');
+      }
     } catch (err) {
-      console.warn('Reminder push job failed to start:', err);
+      console.warn('[reminderQueue] startup failed:', err);
     }
 
     // Wire Yjs persistence to Prisma so rooms load from/stay in sync with DB
     try {
+      const yjsPersistDebounceMs = (() => {
+        const raw = Number(process.env.YJS_PERSIST_DEBOUNCE_MS || 700);
+        if (!Number.isFinite(raw)) return 700;
+        return Math.max(150, Math.min(5000, Math.floor(raw)));
+      })();
+
       const parseCollabRoom = (docName: string): { noteId: number; stamp: string | null } | null => {
         const last = String(docName || '').split('/').pop() || String(docName || '');
         const m = /^note-(\d+)(?:-c([0-9a-z]+))?$/i.exec(last);
@@ -115,6 +133,9 @@ async function start() {
               if (!expectedStamp || !parsed.stamp || String(parsed.stamp) !== String(expectedStamp)) {
                 console.warn('Ignoring non-canonical collab room', { docName, noteId, expectedStamp, gotStamp: parsed.stamp || null });
                 return;
+              }
+              if (yjsRedisBridge.enabled) {
+                try { yjsRedisBridge.registerDoc(docName, ydoc); } catch {}
               }
               const persisted = note?.yData as unknown as Buffer | null;
               const hasPersisted = !!(persisted && persisted.length > 0);
@@ -173,18 +194,60 @@ async function start() {
             } catch (e) {
               console.warn("Yjs bindState load error:", e);
             }
-            // Persist on every update (can be optimized/batched later)
-            ydoc.on("update", async () => {
+            // Persist updates in a debounced/batched way.
+            // Realtime collaboration itself remains immediate over websocket;
+            // only DB snapshot writes are throttled.
+            let persistTimer: ReturnType<typeof setTimeout> | null = null;
+            let persistInFlight = false;
+            let persistQueued = false;
+
+            const persistSnapshot = async () => {
+              if (persistInFlight) {
+                persistQueued = true;
+                return;
+              }
+              persistInFlight = true;
               try {
                 const snapshot = Y.encodeStateAsUpdate(ydoc);
                 await prisma.note.updateMany({ where: { id: noteId }, data: { yData: Buffer.from(snapshot) } });
               } catch (e) {
                 console.warn("Yjs persist error:", e);
+              } finally {
+                persistInFlight = false;
+                if (persistQueued) {
+                  persistQueued = false;
+                  // Drain one trailing write if updates arrived mid-flight.
+                  if (persistTimer) {
+                    try { clearTimeout(persistTimer); } catch {}
+                    persistTimer = null;
+                  }
+                  persistTimer = setTimeout(() => {
+                    persistTimer = null;
+                    void persistSnapshot();
+                  }, yjsPersistDebounceMs);
+                }
               }
+            };
+
+            const schedulePersist = () => {
+              if (persistTimer) {
+                try { clearTimeout(persistTimer); } catch {}
+              }
+              persistTimer = setTimeout(() => {
+                persistTimer = null;
+                void persistSnapshot();
+              }, yjsPersistDebounceMs);
+            };
+
+            ydoc.on("update", () => {
+              schedulePersist();
             });
           }
         },
         writeState: async (docName: string, ydoc: Y.Doc) => {
+          if (yjsRedisBridge.enabled) {
+            try { yjsRedisBridge.unregisterDoc(docName, ydoc); } catch {}
+          }
           const parsed = parseCollabRoom(docName);
           if (!parsed) return;
           const noteId = Number(parsed.noteId);
@@ -394,6 +457,16 @@ async function start() {
     console.log(`FreemanNotes server running on http://localhost:${PORT} (dev=${isDev})`);
     console.log(`Yjs WebSocket endpoint: ws://localhost:${PORT}/collab`);
   });
+
+  const shutdown = async () => {
+    try { if (stopReminderWorkerFn) await stopReminderWorkerFn(); } catch {}
+    try { await closeReminderQueue(); } catch {}
+    try { await yjsRedisBridge.shutdown(); } catch {}
+    try { server.close(); } catch {}
+  };
+
+  process.once('SIGINT', () => { void shutdown(); });
+  process.once('SIGTERM', () => { void shutdown(); });
 }
 
 start().catch((err) => {

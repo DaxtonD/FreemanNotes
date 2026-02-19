@@ -6,6 +6,7 @@ import { notifyUser } from "./events";
 import { scrapeLinkPreview } from "./linkPreview";
 import { createHash } from "crypto";
 import { enqueueNoteImageOcr } from "./ocr/ocrQueue";
+import { removeReminderJob, upsertReminderJob } from './lib/queue';
 import { getUploadsDir } from './uploads';
 import * as fsp from 'fs/promises';
 import path from 'path';
@@ -38,6 +39,7 @@ async function getParticipantIdsForNote(noteId: number, note?: { ownerId: number
 }
 
 async function hardDeleteNote(noteId: number): Promise<void> {
+  try { await removeReminderJob(noteId); } catch {}
   const note = await prisma.note.findUnique({ where: { id: noteId }, select: { ownerId: true } });
   const ownerId = Number((note as any)?.ownerId);
   const imgs = await prisma.noteImage.findMany({ where: { noteId }, select: { url: true } });
@@ -438,6 +440,11 @@ router.post('/api/notes', async (req: Request, res: Response) => {
     const note = await prisma.note.create({ data, include: { items: true, collaborators: true, images: true, noteLabels: true } });
     // sort items by ord before returning
     const created = { ...note, items: (note.items || []).slice().sort((a, b) => (a.ord || 0) - (b.ord || 0)) };
+    try {
+      await upsertReminderJob(Number((created as any).id), (created as any).reminderAt || null);
+    } catch (e) {
+      console.warn('[reminderQueue] create enqueue failed:', e);
+    }
     // Notify all sessions for this user so new note appears instantly
     try { notifyUser(user.id, 'note-created', { noteId: created.id }); } catch {}
     res.status(201).json({ note: created });
@@ -1050,6 +1057,24 @@ router.patch('/api/notes/:id', async (req: Request, res: Response) => {
 
     const updated = await prisma.note.update({ where: { id }, data });
 
+    if (wantsReminderDueAt || wantsOffset) {
+      try {
+        await upsertReminderJob(Number((updated as any).id), (updated as any).reminderAt || null);
+      } catch (e) {
+        console.warn('[reminderQueue] update enqueue failed:', e);
+      }
+    } else if ('archived' in (req.body || {})) {
+      try {
+        if ((updated as any).archived) {
+          await removeReminderJob(Number((updated as any).id));
+        } else {
+          await upsertReminderJob(Number((updated as any).id), (updated as any).reminderAt || null);
+        }
+      } catch (e) {
+        console.warn('[reminderQueue] archive transition sync failed:', e);
+      }
+    }
+
     // Realtime: title changes should sync across participants.
     if ('title' in req.body) {
       try {
@@ -1362,6 +1387,8 @@ router.delete('/api/notes/:id', async (req: Request, res: Response) => {
         reminderNotifiedAt: null,
       } as any,
     });
+
+    try { await removeReminderJob(id); } catch {}
 
     try {
       for (const uid of (participantIds.length ? participantIds : [note.ownerId])) {

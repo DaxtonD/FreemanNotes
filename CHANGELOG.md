@@ -15,6 +15,30 @@ Adheres to Semantic Versioning (MAJOR.MINOR.PATCH).
 ### Fixed
 - 
 
+## [0.8.4] - 2026-02-18
+
+### Added
+- Redis-backed reminder queue architecture using BullMQ (`server/src/lib/queue.ts`, `server/src/workers/reminderWorker.ts`, `server/src/lib/redis.ts`) with delayed jobs, retry/backoff, startup resync, and graceful shutdown handling.
+- Optional Redis Pub/Sub bridge for cross-instance Yjs propagation (`server/src/lib/yjsRedisBridge.ts`) with instance tagging and rebroadcast loop prevention.
+- New environment configuration for Redis and feature toggles in `.env.example`:
+	- `REDIS_HOST`, `REDIS_PORT`, `REDIS_PASSWORD`
+	- `ENABLE_REMINDER_WORKER`
+	- `ENABLE_REDIS_PUBSUB`
+
+### Changed
+- Server startup now initializes reminder queue state from DB and conditionally starts the in-process reminder worker in `server/src/index.ts`.
+- Reminder scheduling flow moved from polling to queue-driven execution; note create/update/archive/trash/delete lifecycle paths now keep reminder jobs in sync (`server/src/notes.ts`).
+- Reminder resync now includes pending due reminders (including past-due unsent reminders), improving restart/downtime recovery behavior.
+- Legacy polling module `server/src/reminderPushJob.ts` is retained as a deprecated no-op compatibility shim.
+- Release metadata/version bumped to `0.8.4`.
+
+### Fixed
+- Reduced unnecessary DB writes during note-card drag/layout and idle states:
+	- deduplicated order persistence writes in `client/src/components/NotesGrid.tsx`,
+	- disabled per-card realtime Yjs sessions in `client/src/components/NoteCard.tsx` (editor realtime remains active).
+- Reduced Yjs persistence write pressure by debouncing DB snapshot writes in `server/src/index.ts` while preserving realtime websocket collaboration.
+- Removed file-based Prisma DB event logging to `db.log` and restored normal environment-based Prisma log output in `server/src/prismaClient.ts`.
+
 ## [0.8.3] - 2026-02-16
 
 ### Added

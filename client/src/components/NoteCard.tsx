@@ -1005,12 +1005,18 @@ export default function NoteCard({
     };
   }, [token, viewerCollections, neededCollectionIdsKey, collectionPathById]);
   // Subscribe to Yjs checklist for live card updates
+  // IMPORTANT: card previews should not establish per-card collaborative sessions.
+  // Creating a websocket + Y.Doc for every visible card causes heavy DB churn
+  // (server persists yData on Yjs updates), especially during drag/re-layout.
+  // Full realtime collaboration remains in editors.
+  const enableCardRealtimeCollab = false;
   const ydoc = React.useMemo(() => new Y.Doc(), [note.id]);
   const collabRoom = React.useMemo(() => noteCollabRoomFromNote(note), [note.id, (note as any)?.createdAt]);
   const providerRef = React.useRef<WebsocketProvider | null>(null);
   const yarrayRef = React.useRef<Y.Array<Y.Map<any>> | null>(null);
 
   React.useEffect(() => {
+    if (!enableCardRealtimeCollab) return;
     let disposed = false;
     let cleanup: (() => void) | null = null;
 
@@ -1028,9 +1034,10 @@ export default function NoteCard({
       disposed = true;
       try { cleanup && cleanup(); } catch {}
     };
-  }, [collabRoom, ydoc]);
+  }, [collabRoom, ydoc, enableCardRealtimeCollab]);
 
   React.useEffect(() => {
+    if (!enableCardRealtimeCollab) return;
     const room = collabRoom;
     const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
     const serverUrl = `${proto}://${window.location.host}/collab`;
@@ -1054,7 +1061,7 @@ export default function NoteCard({
     yarr.observeDeep(updateFromY);
     provider.on('sync', (isSynced: boolean) => { if (isSynced) updateFromY(); });
     return () => { try { yarr.unobserveDeep(updateFromY as any); } catch {}; try { provider.destroy(); } catch {}; };
-  }, [collabRoom, ydoc]);
+  }, [collabRoom, ydoc, enableCardRealtimeCollab]);
 
   React.useEffect(() => {
     const onUploadSuccess = (evt: Event) => {
@@ -1083,6 +1090,7 @@ export default function NoteCard({
 
   // Subscribe to Yjs text doc for real-time HTML preview on cards (TEXT notes)
   React.useEffect(() => {
+    if (!enableCardRealtimeCollab) { setRtHtmlFromY(null); return; }
     if (note.type !== 'TEXT') { setRtHtmlFromY(null); return; }
     let ed: Editor | null = null;
     try {
@@ -1124,7 +1132,7 @@ export default function NoteCard({
     } catch {
       // ignore editor init failures
     }
-  }, [note.id, note.type, ydoc]);
+  }, [note.id, note.type, ydoc, enableCardRealtimeCollab]);
   // Render a minimal formatted HTML preview from TipTap JSON stored in note.body
   function bodyHtmlPreview(): string {
     const raw = textBody || '';

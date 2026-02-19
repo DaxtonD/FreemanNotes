@@ -563,6 +563,7 @@ export default function NotesGrid({
   const swapCandidateIdRef = useRef<number | null>(null);
   const swapDwellTimerRef = useRef<number | null>(null);
   const swapAnimColsRef = useRef<null | { section: 'pinned' | 'others'; heights: number[] }>(null);
+  const orderPersistSigRef = useRef<string>('');
 
   function getAnimMs(kind: 'resize'|'swap'|'rearrange') {
     try {
@@ -3218,9 +3219,19 @@ export default function NotesGrid({
 
   async function persistOrder(currentNotes: any[]) {
     // always save locally
-    const pinnedIds = currentNotes.filter((n: any) => !!(n as any)?.pinned).map((n: any) => n.id);
-    const otherIds = currentNotes.filter((n: any) => !(n as any)?.pinned).map((n: any) => n.id);
+    const pinnedIds = currentNotes
+      .filter((n: any) => !!(n as any)?.pinned)
+      .map((n: any) => Number((n as any)?.id))
+      .filter((id: number) => Number.isFinite(id));
+    const otherIds = currentNotes
+      .filter((n: any) => !(n as any)?.pinned)
+      .map((n: any) => Number((n as any)?.id))
+      .filter((id: number) => Number.isFinite(id));
     const ids = [...pinnedIds, ...otherIds];
+    const sig = ids.join(',');
+    if (!sig) return;
+    if (orderPersistSigRef.current === sig) return;
+    orderPersistSigRef.current = sig;
     try { localStorage.setItem('notesOrder', JSON.stringify(ids)); } catch (e) {}
     // attempt server persistence if authenticated
     if (!token) return;
