@@ -34,6 +34,19 @@ import {
   subscribeSyncState,
 } from '../lib/offline';
 
+const MemoNoteCard = React.memo(
+  NoteCard,
+  (prev, next) => {
+    return (
+      prev.note === next.note &&
+      prev.openRequest === next.openRequest &&
+      prev.showDueIdentifier === next.showDueIdentifier &&
+      prev.dragHandleAttributes === next.dragHandleAttributes &&
+      prev.dragHandleListeners === next.dragHandleListeners
+    );
+  }
+);
+
 type NoteLabelLite = { id: number; name: string };
 type NoteImageLite = { id: number; url?: string; ocrSearchText?: string | null; ocrText?: string | null; ocrStatus?: string | null; createdAt?: string | null };
 type ViewerCollectionLite = { id: number; name: string; parentId: number | null };
@@ -235,7 +248,7 @@ const SwapNoteItem = React.memo(function SwapNoteItem({
       className={cls.trim()}
       style={style}
     >
-      <NoteCard
+      <MemoNoteCard
         note={note}
         onChange={onChange}
         openRequest={openRequest}
@@ -4204,7 +4217,7 @@ export default function NotesGrid({
                   height: swapOverlayRect ? `${swapOverlayRect.height}px` : undefined,
                 }}
               >
-                <NoteCard
+                <MemoNoteCard
                   note={activeSwapNote}
                   onChange={handleNoteChange}
                   openRequest={getOpenRequestForNote(Number(activeSwapNote.id))}
@@ -4256,7 +4269,7 @@ export default function NotesGrid({
                               }
                               ref={(el) => { if (el) itemRefs.current.set(n.id, el); else itemRefs.current.delete(n.id); }}
                             >
-                              <NoteCard
+                              <MemoNoteCard
                                 note={n}
                                 onChange={handleNoteChange}
                                 openRequest={getOpenRequestForNote(Number(n.id))}
@@ -4337,7 +4350,7 @@ export default function NotesGrid({
                               ref={(el) => { if (el) itemRefs.current.set(n.id, el); else itemRefs.current.delete(n.id); }}
                               {...wrapperProps}
                             >
-                              <NoteCard
+                              <MemoNoteCard
                                 note={n}
                                 onChange={handleNoteChange}
                                 openRequest={getOpenRequestForNote(Number(n.id))}
@@ -4389,7 +4402,7 @@ export default function NotesGrid({
                             }
                             ref={(el) => { if (el) itemRefs.current.set(n.id, el); else itemRefs.current.delete(n.id); }}
                           >
-                            <NoteCard
+                            <MemoNoteCard
                               note={n}
                               onChange={handleNoteChange}
                               openRequest={getOpenRequestForNote(Number(n.id))}
@@ -4471,7 +4484,7 @@ export default function NotesGrid({
                             ref={(el) => { if (el) itemRefs.current.set(n.id, el); else itemRefs.current.delete(n.id); }}
                             {...wrapperProps}
                           >
-                            <NoteCard
+                            <MemoNoteCard
                               note={n}
                               onChange={handleNoteChange}
                               openRequest={getOpenRequestForNote(Number(n.id))}
@@ -4520,7 +4533,7 @@ export default function NotesGrid({
           } as any}
         >
           <div className={`note-rearrange-overlay-inner${isListView ? ' note-rearrange-overlay-inner--list' : ''}`}>
-            <NoteCard
+            <MemoNoteCard
               note={activeRearrangeNote}
               onChange={handleNoteChange}
               openRequest={getOpenRequestForNote(Number(activeRearrangeNote.id))}

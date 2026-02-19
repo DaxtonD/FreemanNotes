@@ -1302,9 +1302,17 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
       } catch {}
     };
 
-    // Important for offline open/edit flows: sync may never fire while offline,
-    // so seed from server snapshot immediately when Yjs state is empty.
-    seedFromSnapshotIfEmpty();
+    // Important for offline open/edit flows: sync may never fire while offline.
+    // Seed from snapshot only when websocket sync is unavailable, to avoid
+    // pre-sync local inserts racing remote Yjs state.
+    const offlineSeedTimer = window.setTimeout(() => {
+      try {
+        const p: any = provider as any;
+        const offline = (typeof navigator !== 'undefined' && navigator.onLine === false);
+        const canSeedNow = offline || (!p?.synced && !p?.wsconnected && !p?.wsconnecting);
+        if (canSeedNow) seedFromSnapshotIfEmpty();
+      } catch {}
+    }, 650);
 
     const refreshImagesFromServer = async () => {
       try {
@@ -1438,6 +1446,7 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
     yarr.observeDeep(updateFromY as any);
 
     return () => {
+      try { window.clearTimeout(offlineSeedTimer); } catch {}
       try { yarr.unobserveDeep(updateFromY as any); } catch {}
       try { provider.off('sync', onSync as any); } catch {}
       try { ymeta.unobserve(onMeta as any); } catch {}
@@ -3065,13 +3074,6 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
                           className="delete-item"
                           onClick={(e) => {
                             e.stopPropagation();
-                            // Only allow deletion when the row is already selected/active.
-                            // This prevents a single tap in the right-side area from both selecting and deleting.
-                            if (!(activeRowKey != null && String(activeRowKey) === String(rowKey))) {
-                              try { setActiveRowKey(rowKey); } catch {}
-                              try { setAutoFocusIndex(realIdx); } catch {}
-                              return;
-                            }
                             deleteItemAt(realIdx);
                           }}
                           aria-label="Delete item"
@@ -3132,10 +3134,6 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
                             className="delete-item"
                             onClick={(e) => {
                               e.stopPropagation();
-                              if (!(activeRowKey != null && String(activeRowKey) === String(rowKey))) {
-                                try { setActiveRowKey(rowKey); } catch {}
-                                return;
-                              }
                               deleteItemAt(realIdx);
                             }}
                             aria-label="Delete item"

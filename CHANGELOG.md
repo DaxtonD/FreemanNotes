@@ -10,10 +10,14 @@ Adheres to Semantic Versioning (MAJOR.MINOR.PATCH).
 - 
 
 ### Changed
-- 
+- Notes grid drag performance tuning:
+	- memoized note card rendering paths in `NotesGrid`,
+	- custom memo comparison to reduce drag-time re-renders from callback identity churn.
 
 ### Fixed
-- 
+- Resolved note/checklist content duplication on open/close caused by pre-sync Yjs fallback seeding races.
+- Hardened server-side TipTap Yjs initialization in Node runtime to avoid `window`-dependent parsing errors.
+- Checklist row delete (`✕`) now deletes immediately on first click without requiring prior row selection.
 
 ## [0.8.4] - 2026-02-18
 

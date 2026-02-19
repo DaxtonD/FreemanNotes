@@ -152,13 +152,19 @@ async function start() {
                       TextAlign.configure({ types: ['heading', 'paragraph'] }),
                       Collaboration.configure({ document: ydoc })
                     ],
-                    content: ''
+                    // Use JSON doc content on server (not string HTML) to avoid
+                    // window-dependent parsing in non-browser runtime.
+                    content: { type: 'doc', content: [{ type: 'paragraph' }] }
                   });
                   if (note.body) {
                     try {
                       const raw = String(note.body);
                       const json = JSON.parse(raw);
-                      tempEditor.commands.setContent(json);
+                      if (json && typeof json === 'object') {
+                        tempEditor.commands.setContent(json as any);
+                      } else {
+                        throw new Error('Non-object JSON body');
+                      }
                     } catch {
                       // Fallback: plain HTML/text body inside a paragraph
                       tempEditor.commands.setContent({ type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: String(note.body) }]}] });

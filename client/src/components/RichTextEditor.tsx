@@ -564,6 +564,20 @@ export default function RichTextEditor({ note, onClose, onSaved, noteBg, onImage
 
     const trySeed = () => {
       try {
+        const p: any = providerRef.current as any;
+        const offline = (typeof navigator !== 'undefined' && navigator.onLine === false);
+        const providerSynced = !!(p && p.synced);
+        const wsConnected = !!(p && p.wsconnected);
+        const wsConnecting = !!(p && p.wsconnecting);
+
+        // Avoid local fallback seeding while websocket sync is active/available,
+        // otherwise local content can race with remote Yjs state and duplicate.
+        // Keep fallback only for offline/disconnected openings.
+        if (!offline && (syncedRef.current || providerSynced || wsConnected || wsConnecting)) {
+          seededOnceRef.current = true;
+          return true;
+        }
+
         const currentText = String(editor.getText?.() || '').trim();
         if (currentText) {
           seededOnceRef.current = true;
@@ -580,7 +594,8 @@ export default function RichTextEditor({ note, onClose, onSaved, noteBg, onImage
 
         if (parsed && typeof parsed === 'object') {
           editor.commands.setContent(parsed as any, { emitUpdate: false } as any);
-          return false;
+          seededOnceRef.current = true;
+          return true;
         }
 
         const text = String(parsed || '').trim();
@@ -589,6 +604,8 @@ export default function RichTextEditor({ note, onClose, onSaved, noteBg, onImage
           type: 'doc',
           content: [{ type: 'paragraph', content: [{ type: 'text', text }] }],
         } as any, { emitUpdate: false } as any);
+        seededOnceRef.current = true;
+        return true;
       } catch {}
       return false;
     };
