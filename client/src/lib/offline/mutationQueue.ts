@@ -96,6 +96,7 @@ export async function enqueueHttpJsonMutation(input: {
   path: string;
   body?: any;
   meta?: any;
+  headers?: Record<string, string>;
 }): Promise<string> {
   const opId = makeOpId('http');
   const row: OutboxMutationRow = {
@@ -106,6 +107,7 @@ export async function enqueueHttpJsonMutation(input: {
       path: String(input.path || ''),
       body: input.body,
       meta: input.meta,
+      headers: input.headers,
     },
     attempt: 0,
     nextAttemptAt: 0,
@@ -156,19 +158,30 @@ async function executeMutation(token: string, row: OutboxMutationRow): Promise<v
     const method = String(row.payload?.method || 'PATCH').toUpperCase();
     const path = String(row.payload?.path || '');
     const meta = row.payload?.meta || null;
+    const customHeaders = (row.payload && typeof row.payload.headers === 'object' && row.payload.headers)
+      ? (row.payload.headers as Record<string, any>)
+      : null;
     if (!path) throw new Error('Missing path for queued http.json mutation');
     const noteIdInPath = extractNoteIdFromPath(path);
     if (noteIdInPath != null && (!Number.isInteger(noteIdInPath) || noteIdInPath <= 0 || noteIdInPath > INT32_MAX)) {
       throw nonRetryableError(`Dropping queued mutation with invalid note id in path: ${path}`);
     }
     const hasBody = row.payload && Object.prototype.hasOwnProperty.call(row.payload, 'body');
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+      'X-Idempotency-Key': row.opId,
+    };
+    if (customHeaders) {
+      for (const [k, v] of Object.entries(customHeaders)) {
+        if (!k) continue;
+        if (v == null) continue;
+        headers[String(k)] = String(v);
+      }
+    }
     const res = await fetch(path, {
       method,
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${token}`,
-        'X-Idempotency-Key': row.opId,
-      },
+      headers,
       body: hasBody ? JSON.stringify(row.payload.body ?? {}) : undefined,
     });
     if (!res.ok) {

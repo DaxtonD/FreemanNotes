@@ -16,9 +16,10 @@ import ColorPalette from './ColorPalette';
 import ReminderPicker, { type ReminderDraft } from './ReminderPicker';
 import CollaboratorModal from './CollaboratorModal';
 import ImageDialog from './ImageDialog';
+import MediaSheet, { type MediaView } from './MediaSheet';
 import CreateMoreMenu from './CreateMoreMenu';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faLink, faPalette } from '@fortawesome/free-solid-svg-icons';
+import { faLink, faPalette, faTrashCan } from '@fortawesome/free-solid-svg-icons';
 import UrlEntryModal from './UrlEntryModal';
 import { enqueueHttpJsonMutation, enqueueImageUpload, kickOfflineSync } from '../lib/offline';
 import { noteCollabRoom } from '../lib/collabRoom';
@@ -56,6 +57,10 @@ export default function MobileCreateModal({
   const [selectedCollaborators, setSelectedCollaborators] = React.useState<Array<{ id: number; email: string }>>([]);
   const [pendingLinkUrls, setPendingLinkUrls] = React.useState<string[]>([]);
   const [showUrlModal, setShowUrlModal] = React.useState(false);
+  const [mediaSheetOpen, setMediaSheetOpen] = React.useState(false);
+  const [activeMediaView, setActiveMediaView] = React.useState<MediaView>('images');
+  const mediaLaunchStartRef = React.useRef<{ x: number; y: number } | null>(null);
+  const [mediaLaunchDrag, setMediaLaunchDrag] = React.useState(0);
 
   const activeCollectionId = (activeCollection && Number.isFinite(Number(activeCollection.id))) ? Number(activeCollection.id) : null;
   const activeCollectionPath = (activeCollection && typeof activeCollection.path === 'string') ? String(activeCollection.path) : '';
@@ -67,6 +72,7 @@ export default function MobileCreateModal({
   const moreBtnRef = React.useRef<HTMLButtonElement | null>(null);
   const skipNextChecklistToolbarClickRef = React.useRef(false);
   const [showMore, setShowMore] = React.useState(false);
+  const hasMedia = imageUrls.length > 0 || pendingLinkUrls.length > 0;
 
   // local tiptap for creation (not collaborative until persisted)
   const editor = useEditor({
@@ -187,6 +193,7 @@ export default function MobileCreateModal({
     showReminderPicker: false,
     showCollaborator: false,
     showImageDialog: false,
+    mediaSheetOpen: false,
     showMore: false,
   });
   React.useEffect(() => {
@@ -195,9 +202,52 @@ export default function MobileCreateModal({
       showReminderPicker,
       showCollaborator,
       showImageDialog,
+      mediaSheetOpen,
       showMore,
     };
-  }, [showPalette, showReminderPicker, showCollaborator, showImageDialog, showMore]);
+  }, [showPalette, showReminderPicker, showCollaborator, showImageDialog, mediaSheetOpen, showMore]);
+
+  React.useEffect(() => {
+    if (!hasMedia) {
+      setMediaSheetOpen(false);
+      return;
+    }
+    if (activeMediaView === 'images' && imageUrls.length === 0 && pendingLinkUrls.length > 0) {
+      setActiveMediaView('urlPreviews');
+    } else if (activeMediaView === 'urlPreviews' && pendingLinkUrls.length === 0 && imageUrls.length > 0) {
+      setActiveMediaView('images');
+    }
+  }, [hasMedia, activeMediaView, imageUrls.length, pendingLinkUrls.length]);
+
+  const onMediaLaunchTouchStart = (e: React.TouchEvent<HTMLButtonElement>) => {
+    const t = e.touches?.[0];
+    if (!t) return;
+    mediaLaunchStartRef.current = { x: t.clientX, y: t.clientY };
+    setMediaLaunchDrag(0);
+  };
+
+  const onMediaLaunchTouchMove = (e: React.TouchEvent<HTMLButtonElement>) => {
+    const st = mediaLaunchStartRef.current;
+    if (!st) return;
+    const t = e.touches?.[0];
+    if (!t) return;
+    const dx = t.clientX - st.x;
+    const dy = t.clientY - st.y;
+    if (Math.abs(dx) > Math.abs(dy) * 1.2) return;
+    const up = Math.max(0, -dy);
+    if (up > 0) {
+      try { e.preventDefault(); } catch {}
+      setMediaLaunchDrag(Math.min(56, up));
+    }
+  };
+
+  const onMediaLaunchTouchEnd = () => {
+    if (mediaLaunchDrag >= 28) {
+      try { setMediaSheetOpen(true); } catch {}
+    }
+    mediaLaunchStartRef.current = null;
+    setMediaLaunchDrag(0);
+  };
 
   const backIdRef = React.useRef<string>((() => {
     try { return `mcreate-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`; } catch { return `mcreate-${Math.random()}`; }
@@ -212,6 +262,7 @@ export default function MobileCreateModal({
         try {
           const st = overlayStateRef.current;
           if (st.showMore) { setShowMore(false); return; }
+          if (st.mediaSheetOpen) { setMediaSheetOpen(false); return; }
           if (st.showImageDialog) { setShowImageDialog(false); return; }
           if (st.showCollaborator) { setShowCollaborator(false); return; }
           if (st.showReminderPicker) { setShowReminderPicker(false); return; }
@@ -241,7 +292,9 @@ export default function MobileCreateModal({
     setShowReminderPicker(false);
     setShowCollaborator(false);
     setShowImageDialog(false);
+    setMediaSheetOpen(false);
     setShowMore(false);
+    setActiveMediaView('images');
 
     try { setAddToCurrentCollection(activeCollectionId != null); } catch {}
 
@@ -305,6 +358,7 @@ export default function MobileCreateModal({
     try { setShowReminderPicker(false); } catch {}
     try { setShowCollaborator(false); } catch {}
     try { setShowImageDialog(false); } catch {}
+    try { setMediaSheetOpen(false); } catch {}
     try { setShowUrlModal(false); } catch {}
     try { editor?.commands.clearContent(); } catch {}
     try { setTitle(''); setItems([]); setActiveChecklistRowKey(null); setBg(''); setImageUrls([]); setSelectedCollaborators([]); setPendingReminder(null); } catch {}
@@ -939,25 +993,12 @@ export default function MobileCreateModal({
                 next.push(String(url));
                 return next;
               });
+              try {
+                setActiveMediaView('urlPreviews');
+                setMediaSheetOpen(true);
+              } catch {}
             }}
           />
-
-          {pendingLinkUrls.length > 0 && (
-            <div className="note-link-previews" style={{ marginBottom: 10 }}>
-              {pendingLinkUrls.map((u) => {
-                const domain = (() => { try { return new URL(u).hostname.replace(/^www\./i, ''); } catch { return ''; } })();
-                return (
-                  <div key={u} className="link-preview-row editor-link-preview" style={{ alignItems: 'center' }}>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{domain || u}</div>
-                      <div style={{ fontSize: 12, opacity: 0.85, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{u}</div>
-                    </div>
-                    <button className="tiny" type="button" onClick={() => setPendingLinkUrls((cur) => (cur || []).filter((x) => x !== u))} aria-label="Remove URL" title="Remove URL">✕</button>
-                  </div>
-                );
-              })}
-            </div>
-          )}
 
           {mode === 'text' ? (
             <>
@@ -1332,45 +1373,6 @@ export default function MobileCreateModal({
             </>
           )}
 
-          {imageUrls.length > 0 && (
-            mode === 'checklist' ? (
-              <div className="editor-images editor-images-dock" style={{ marginTop: 10 }}>
-                <div className="editor-images-grid">
-                  {imageUrls.map((url, idx) => (
-                    <div key={`${url}-${idx}`} className="note-image" style={{ position: 'relative' }}>
-                      <img src={url} alt="selected" style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: 6, display: 'block' }} />
-                      <button
-                        className="image-delete"
-                        type="button"
-                        aria-label="Remove image"
-                        title="Remove image"
-                        style={{ position: 'absolute', right: 6, bottom: 6 }}
-                        onClick={() => setImageUrls((cur) => (cur || []).filter((_, i) => i !== idx))}
-                      >
-                        ✕
-                      </button>
-                    </div>
-                  ))}
-                </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <div style={{ flex: 1, fontSize: 13, opacity: 0.9 }}>Images ({imageUrls.length})</div>
-                  <button className="btn" type="button" onClick={() => setImageUrls([])} style={{ padding: '6px 10px' }}>Remove all</button>
-                </div>
-              </div>
-            ) : (
-              <div style={{ marginTop: 10, display: 'flex', alignItems: 'center', gap: 10 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                  {imageUrls.slice(0, 3).map((url, idx) => (
-                    <div key={`${url}-${idx}`} className="note-image" style={{ width: 56, height: 42, flex: '0 0 auto' }}>
-                      <img src={url} alt="selected" style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: 6, display: 'block' }} />
-                    </div>
-                  ))}
-                </div>
-                <div style={{ flex: 1, fontSize: 13, opacity: 0.9 }}>{imageUrls.length} image{imageUrls.length === 1 ? '' : 's'} selected</div>
-                <button className="btn" type="button" onClick={() => setImageUrls([])} style={{ padding: '6px 10px' }}>Remove</button>
-              </div>
-            )
-          )}
           </div>
         </div>
 
@@ -1409,6 +1411,18 @@ export default function MobileCreateModal({
                 <path d="M21 19V5c0-1.1-.9-2-2-2H5C3.9 3 3 3.9 3 5v14h18zM8.5 13.5l2.5 3L14.5 12l4.5 7H5l3.5-5.5z"/>
               </svg>
             </button>
+            {hasMedia && (
+              <button
+                className="tiny media-launch-btn"
+                type="button"
+                onClick={() => setMediaSheetOpen((v) => !v)}
+                aria-label="Open media"
+                title="Open media"
+                aria-pressed={mediaSheetOpen}
+              >
+                {`Media (${imageUrls.length + pendingLinkUrls.length})`}
+              </button>
+            )}
             <button
               ref={moreBtnRef}
               className="tiny editor-more"
@@ -1419,6 +1433,27 @@ export default function MobileCreateModal({
           </div>
         </div>
       </div>
+
+      {hasMedia && (
+        <div className="media-launch-strip media-launch-strip--outside-footer">
+          <button
+            type="button"
+            className="media-launch-handle"
+            onClick={() => setMediaSheetOpen((v) => !v)}
+            onTouchStart={onMediaLaunchTouchStart}
+            onTouchMove={onMediaLaunchTouchMove}
+            onTouchEnd={onMediaLaunchTouchEnd}
+            onTouchCancel={onMediaLaunchTouchEnd}
+            style={{ transform: mediaLaunchDrag > 0 ? `translateY(${-Math.round(Math.min(24, mediaLaunchDrag * 0.35))}px)` : undefined }}
+            aria-label="Media"
+            title="Drag up for media"
+            aria-pressed={mediaSheetOpen}
+          >
+            <span className="media-launch-handle__bar" aria-hidden="true" />
+            <span className="media-launch-handle__label">Media</span>
+          </button>
+        </div>
+      )}
 
       {showPalette && <ColorPalette anchorRef={rootRef as any} onPick={(c) => { setBg(c); }} onClose={() => setShowPalette(false)} />}
       {showReminderPicker && (
@@ -1455,23 +1490,90 @@ export default function MobileCreateModal({
       {showImageDialog && (
         <ImageDialog
           onClose={() => setShowImageDialog(false)}
-          onAdd={(url) => setImageUrls((cur) => {
-            const next = Array.isArray(cur) ? cur.slice() : [];
-            const val = String(url || '').trim();
-            if (!val || next.includes(val)) return next;
-            next.push(val);
-            return next;
-          })}
-          onAddMany={(urls) => setImageUrls((cur) => {
-            const next = new Set(Array.isArray(cur) ? cur.map((u) => String(u || '').trim()).filter((u) => !!u) : []);
-            for (const url of (Array.isArray(urls) ? urls : [])) {
+          onAdd={(url) => {
+            setImageUrls((cur) => {
+              const next = Array.isArray(cur) ? cur.slice() : [];
               const val = String(url || '').trim();
-              if (val) next.add(val);
-            }
-            return Array.from(next);
-          })}
+              if (!val || next.includes(val)) return next;
+              next.push(val);
+              return next;
+            });
+            try {
+              setActiveMediaView('images');
+              setMediaSheetOpen(true);
+            } catch {}
+          }}
+          onAddMany={(urls) => {
+            setImageUrls((cur) => {
+              const next = new Set(Array.isArray(cur) ? cur.map((u) => String(u || '').trim()).filter((u) => !!u) : []);
+              for (const url of (Array.isArray(urls) ? urls : [])) {
+                const val = String(url || '').trim();
+                if (val) next.add(val);
+              }
+              return Array.from(next);
+            });
+            try {
+              setActiveMediaView('images');
+              setMediaSheetOpen(true);
+            } catch {}
+          }}
         />
       )}
+
+      <MediaSheet
+        open={mediaSheetOpen && hasMedia}
+        onClose={() => setMediaSheetOpen(false)}
+        activeView={activeMediaView}
+        onChangeView={setActiveMediaView}
+        imageCount={imageUrls.length}
+        urlPreviewCount={pendingLinkUrls.length}
+      >
+        {{
+          images: (
+            imageUrls.length > 0 ? (
+              <div className="editor-images-grid media-sheet-images-grid">
+                {imageUrls.map((url, idx) => (
+                  <div key={`${url}-${idx}`} className="note-image" style={{ position: 'relative' }}>
+                    <img src={url} alt="selected" style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: 6, display: 'block' }} />
+                    <button
+                      className="image-delete media-image-delete"
+                      type="button"
+                      aria-label="Remove image"
+                      title="Remove image"
+                      style={{ position: 'absolute', right: 6, bottom: 6 }}
+                      onClick={() => setImageUrls((cur) => (cur || []).filter((_, i) => i !== idx))}
+                    >
+                      <FontAwesomeIcon icon={faTrashCan} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="media-sheet-empty">No images yet.</div>
+            )
+          ),
+          urlPreviews: (
+            pendingLinkUrls.length > 0 ? (
+              <div className="note-link-previews media-sheet-link-previews" style={{ marginBottom: 0 }}>
+                {pendingLinkUrls.map((u) => {
+                  const domain = (() => { try { return new URL(u).hostname.replace(/^www\./i, ''); } catch { return ''; } })();
+                  return (
+                    <div key={u} className="link-preview-row editor-link-preview" style={{ alignItems: 'center' }}>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{domain || u}</div>
+                        <div style={{ fontSize: 12, opacity: 0.85, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{u}</div>
+                      </div>
+                      <button className="tiny" type="button" onClick={() => setPendingLinkUrls((cur) => (cur || []).filter((x) => x !== u))} aria-label="Remove URL" title="Remove URL">✕</button>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="media-sheet-empty">No URL previews yet.</div>
+            )
+          ),
+        }}
+      </MediaSheet>
 
       {showMore && (
         <CreateMoreMenu

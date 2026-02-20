@@ -9,9 +9,10 @@ import ReminderPicker, { type ReminderDraft } from './ReminderPicker';
 import CollaboratorModal from './CollaboratorModal';
 import ImageDialog from './ImageDialog';
 import ImageLightbox from './ImageLightbox';
+import MediaSheet, { type MediaView } from './MediaSheet';
 import ConfirmDialog from './ConfirmDialog';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faLink, faPalette } from '@fortawesome/free-solid-svg-icons';
+import { faLink, faPalette, faTrashCan } from '@fortawesome/free-solid-svg-icons';
 import DOMPurify from 'dompurify';
 import MoreMenu from './MoreMenu';
 import * as Y from 'yjs';
@@ -294,16 +295,6 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
     if (!token) return String((img as any)?.url || '');
     return `/api/notes/${noteIdNum}/images/${id}/thumb?w=${editorThumbRequestSize}&q=74&token=${encodeURIComponent(String(token))}`;
   }, [note.id, editorThumbRequestSize, token]);
-  const defaultImagesOpen = (() => {
-    try {
-      const stored = localStorage.getItem('prefs.editorImagesExpandedByDefault');
-      if (stored !== null) return stored === 'true';
-      const v = (user as any)?.editorImagesExpandedByDefault;
-      if (typeof v === 'boolean') return v;
-    } catch {}
-    return false;
-  })();
-  const [imagesOpen, setImagesOpen] = useState(defaultImagesOpen);
   React.useEffect(() => {
     try {
       const next = (((note as any).images || []).map((i:any)=>({ id:Number(i.id), url:String(i.url) })));
@@ -316,6 +307,10 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
     } catch {}
   }, [ (note as any).images ]);
   const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
+  const [mediaSheetOpen, setMediaSheetOpen] = useState(false);
+  const [activeMediaView, setActiveMediaView] = useState<MediaView>(() => ((((note as any).images || []).length > 0) ? 'images' : 'urlPreviews'));
+  const mediaLaunchStartRef = useRef<{ x: number; y: number } | null>(null);
+  const [mediaLaunchDrag, setMediaLaunchDrag] = useState(0);
   const [linkPreviews, setLinkPreviews] = useState<any[]>(() => {
     try {
       const raw = Array.isArray((note as any).linkPreviews) ? (note as any).linkPreviews : [];
@@ -336,6 +331,64 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
   const [showMore, setShowMore] = useState(false);
   const moreBtnRef = useRef<HTMLButtonElement | null>(null);
   const [urlModal, setUrlModal] = useState<{ mode: 'add' | 'edit'; previewId?: number; initialUrl?: string } | null>(null);
+  const hasMedia = images.length > 0 || linkPreviews.length > 0;
+
+  useEffect(() => {
+    if (!hasMedia) {
+      setMediaSheetOpen(false);
+      return;
+    }
+    if (activeMediaView === 'images' && images.length === 0 && linkPreviews.length > 0) {
+      setActiveMediaView('urlPreviews');
+    } else if (activeMediaView === 'urlPreviews' && linkPreviews.length === 0 && images.length > 0) {
+      setActiveMediaView('images');
+    }
+  }, [hasMedia, activeMediaView, images.length, linkPreviews.length]);
+
+  useEffect(() => {
+    setMediaSheetOpen(false);
+    setActiveMediaView((((note as any).images || []).length > 0 ? 'images' : 'urlPreviews'));
+  }, [note.id]);
+
+  useEffect(() => {
+    if (!mediaSheetOpen) return;
+    const id = `${backIdRef.current}-media`;
+    const onBack = () => { try { setMediaSheetOpen(false); } catch {} };
+    try { window.dispatchEvent(new CustomEvent('freemannotes:back/register', { detail: { id, onBack } })); } catch {}
+    return () => {
+      try { window.dispatchEvent(new CustomEvent('freemannotes:back/unregister', { detail: { id } })); } catch {}
+    };
+  }, [mediaSheetOpen]);
+
+  const onMediaLaunchTouchStart = (e: React.TouchEvent<HTMLButtonElement>) => {
+    const t = e.touches?.[0];
+    if (!t) return;
+    mediaLaunchStartRef.current = { x: t.clientX, y: t.clientY };
+    setMediaLaunchDrag(0);
+  };
+
+  const onMediaLaunchTouchMove = (e: React.TouchEvent<HTMLButtonElement>) => {
+    const st = mediaLaunchStartRef.current;
+    if (!st) return;
+    const t = e.touches?.[0];
+    if (!t) return;
+    const dx = t.clientX - st.x;
+    const dy = t.clientY - st.y;
+    if (Math.abs(dx) > Math.abs(dy) * 1.2) return;
+    const up = Math.max(0, -dy);
+    if (up > 0) {
+      try { e.preventDefault(); } catch {}
+      setMediaLaunchDrag(Math.min(56, up));
+    }
+  };
+
+  const onMediaLaunchTouchEnd = () => {
+    if (mediaLaunchDrag >= 28) {
+      try { setMediaSheetOpen(true); } catch {}
+    }
+    mediaLaunchStartRef.current = null;
+    setMediaLaunchDrag(0);
+  };
 
   React.useEffect(() => {
     itemsRef.current = items;
@@ -2156,7 +2209,10 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
       const next = exists ? s : [...s, { id: tempId, url: String(url) }];
       return next;
     });
-    try { setImagesOpen(true); } catch {}
+    try {
+      setActiveMediaView('images');
+      setMediaSheetOpen(true);
+    } catch {}
     (async () => {
       const normalized = String(url || '').trim();
       if (!normalized) return;
@@ -2335,7 +2391,7 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
 
   const dialog = (
     <div className="image-dialog-backdrop editor-backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget) { handleClose(); } }}>
-      <div ref={dialogRef} className={`image-dialog checklist-editor editor-dialog${DND_DEBUG.staticVisuals ? ' dnd-debug-static' : ''}${imagesOpen ? ' images-open' : ''}`} role="dialog" aria-modal style={{ width: 'min(1000px, 86vw)', ...dialogStyle }}>
+      <div ref={dialogRef} className={`image-dialog checklist-editor editor-dialog${DND_DEBUG.staticVisuals ? ' dnd-debug-static' : ''}`} role="dialog" aria-modal style={{ width: 'min(1000px, 86vw)', ...dialogStyle }}>
         <div className="dialog-header">
           <strong aria-hidden="true" />
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
@@ -3144,61 +3200,6 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
                   </div>
                 </div>
 
-                {linkPreviews.length > 0 && (
-                  <div className="note-link-previews" style={{ marginTop: 10, marginBottom: 8 }}>
-                    {linkPreviews.map((p: any) => {
-                      const domain = (p.domain || (() => { try { return new URL(p.url).hostname.replace(/^www\./i, ''); } catch { return ''; } })());
-                      return (
-                        <div
-                          key={p.id}
-                          className="link-preview-row editor-link-preview"
-                          onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); setPreviewMenu({ x: e.clientX, y: e.clientY, previewId: p.id }); }}
-                          onPointerDown={(e) => {
-                            clearLongPress();
-                            const x = (e as any).clientX ?? 0;
-                            const y = (e as any).clientY ?? 0;
-                            longPressTimerRef.current = window.setTimeout(() => {
-                              try { setPreviewMenu({ x, y, previewId: p.id }); } catch {}
-                            }, 520);
-                          }}
-                          onPointerUp={clearLongPress}
-                          onPointerCancel={clearLongPress}
-                          onPointerMove={clearLongPress}
-                        >
-                          <a
-                            className="link-preview"
-                            href={p.url}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            onClick={(e) => { try { e.stopPropagation(); } catch {} }}
-                          >
-                            <div className="link-preview-image" aria-hidden>
-                              {p.imageUrl ? (
-                                <img src={String(p.imageUrl)} alt="" loading="lazy" />
-                              ) : (
-                                <svg viewBox="0 0 24 24" aria-hidden focusable="false"><path d="M9.17 14.83a3 3 0 0 1 0-4.24l2.83-2.83a3 3 0 1 1 4.24 4.24l-.88.88" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/><path d="M14.83 9.17a3 3 0 0 1 0 4.24l-2.83 2.83a3 3 0 1 1-4.24-4.24l.88-.88" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>
-                              )}
-                            </div>
-                            <div className="link-preview-meta">
-                              <div className="link-preview-title">{String(p.title || domain || p.url)}</div>
-                              <div className="link-preview-domain">{String(domain || p.url)}</div>
-                            </div>
-                          </a>
-                          <button
-                            className="link-preview-menu"
-                            type="button"
-                            aria-label="URL actions"
-                            title="URL actions"
-                            onClick={(e) => { e.preventDefault(); e.stopPropagation(); setPreviewMenu({ x: e.clientX, y: e.clientY, previewId: p.id }); }}
-                          >
-                            ⋯
-                          </button>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-
                 {previewMenu && createPortal(
                   <>
                     {previewMenuIsSheet && (
@@ -3249,12 +3250,135 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
                 )}
 
                 </div>
+                <ConfirmDialog
+                  open={confirmImageDeleteId != null}
+                  title={'Delete image'}
+                  message={'Are you sure you want to delete this image?'}
+                  confirmLabel={'Delete'}
+                  cancelLabel={'Cancel'}
+                  danger
+                  onCancel={() => setConfirmImageDeleteId(null)}
+                  onConfirm={() => {
+                    const id = confirmImageDeleteId;
+                    setConfirmImageDeleteId(null);
+                    if (typeof id === 'number') performDeleteImage(id);
+                  }}
+                />
 
-                {images && images.length > 0 && (
-                  <div className="editor-images editor-images-dock">
-                    {imagesOpen && (
-                      <div className="editor-images-grid">
-                        {images.map(img => (
+
+              {hasMedia && (
+                <div className="media-launch-strip">
+                  <button
+                    type="button"
+                    className="media-launch-handle"
+                    onClick={() => setMediaSheetOpen((v) => !v)}
+                    onTouchStart={onMediaLaunchTouchStart}
+                    onTouchMove={onMediaLaunchTouchMove}
+                    onTouchEnd={onMediaLaunchTouchEnd}
+                    onTouchCancel={onMediaLaunchTouchEnd}
+                    style={{ transform: mediaLaunchDrag > 0 ? `translateY(${-Math.round(Math.min(24, mediaLaunchDrag * 0.35))}px)` : undefined }}
+                    aria-label="Media"
+                    title="Drag up for media"
+                    aria-pressed={mediaSheetOpen}
+                  >
+                    <span className="media-launch-handle__bar" aria-hidden="true" />
+                    <span className="media-launch-handle__label">Media</span>
+                  </button>
+                </div>
+              )}
+              <div className="dialog-footer" style={{ borderTop: text ? `1px solid ${text}` : undefined }}>
+                <div className="note-actions" style={{ marginRight: 'auto', display: 'inline-flex', gap: 8, justifyContent: 'flex-start', color: text }}>
+                  <button className="tiny palette" onClick={() => setShowPalette(true)} aria-label="Change color" title="Change color">
+                    <FontAwesomeIcon icon={faPalette} className="palette-svg" />
+                  </button>
+                  <button
+                    className="tiny"
+                    onClick={() => { if (isOwner) setShowReminderPicker(true); else window.alert('Only the note owner can set reminders.'); }}
+                    aria-label="Reminder"
+                    title={isOwner ? 'Reminder' : 'Reminder (owner-only)'}
+                    disabled={!isOwner}
+                    style={!isOwner ? { opacity: 0.45, cursor: 'not-allowed' } : undefined}
+                  >
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+                      <path d="M12 22c1.1 0 2-.9 2-2h-4a2 2 0 0 0 2 2z"/>
+                      <path d="M18 8V7a6 6 0 1 0-12 0v1c0 3.5-2 5-2 5h16s-2-1.5-2-5z"/>
+                    </svg>
+                  </button>
+                  <button className="tiny" onClick={() => setShowCollaborator(true)} aria-label="Collaborators" title="Collaborators">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+                      <path d="M15 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4z"/>
+                      <path d="M6 14c-1.66 0-3 1.34-3 3v1h9.5c-.2-.63-.5-1.23-.9-1.76C11.7 15.6 9.9 14 6 14z"/>
+                      <path d="M20 16v2h-2v2h-2v-2h-2v-2h2v-2h2v2z" />
+                    </svg>
+                  </button>
+                  <button className="tiny" onClick={() => setShowImageDialog(true)} aria-label="Add image" title="Add image">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+                      <path d="M21 19V5c0-1.1-.9-2-2-2H5C3.9 3 3 3.9 3 5v14h18zM8.5 13.5l2.5 3L14.5 12l4.5 7H5l3.5-5.5z"/>
+                    </svg>
+                  </button>
+                  {hasMedia && (
+                    <button
+                      className="tiny media-launch-btn"
+                      onClick={() => setMediaSheetOpen((v) => !v)}
+                      aria-label="Open media"
+                      title="Open media"
+                      aria-pressed={mediaSheetOpen}
+                    >
+                      {`Media (${images.length + linkPreviews.length})`}
+                    </button>
+                  )}
+
+                  {moreMenu && (
+                    <button
+                      ref={moreBtnRef}
+                      className="tiny editor-more"
+                      onClick={(e) => { e.stopPropagation(); setShowMore(s => !s); }}
+                      aria-label="More"
+                      title="More"
+                    >⋮</button>
+                  )}
+
+                </div>
+                <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
+                  <button className="btn" onClick={handleClose}>Close</button>
+                </div>
+              </div>
+            </div>
+          </div>
+          );
+
+          if (typeof document !== 'undefined') {
+            const portal = createPortal(dialog, document.body);
+            return (<>{portal}
+              <UrlEntryModal
+                open={!!urlModal}
+                title={(urlModal?.mode === 'edit') ? 'Edit URL preview' : 'Add URL preview'}
+                initialUrl={urlModal?.initialUrl}
+                onCancel={() => setUrlModal(null)}
+                onSubmit={(url) => {
+                  const st = urlModal;
+                  setUrlModal(null);
+                  if (!st) return;
+                  if (st.mode === 'edit' && st.previewId != null) {
+                    submitEditPreview(Number(st.previewId), String(url));
+                    return;
+                  }
+                  try { requestLinkPreview(String(url)); } catch {}
+                }}
+              />
+              <MediaSheet
+                open={mediaSheetOpen && hasMedia}
+                onClose={() => setMediaSheetOpen(false)}
+                activeView={activeMediaView}
+                onChangeView={setActiveMediaView}
+                imageCount={images.length}
+                urlPreviewCount={linkPreviews.length}
+              >
+                {{
+                  images: (
+                    images.length > 0 ? (
+                      <div className="editor-images-grid media-sheet-images-grid">
+                        {images.map((img) => (
                           <div
                             key={img.id}
                             className="note-image"
@@ -3297,130 +3421,96 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
                             onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setLightboxUrl(img.url); } }}
                             style={{ cursor: 'zoom-in', position: 'relative' }}
                           >
-                            <img
-                              src={getEditorImageThumbSrc(img)}
-                              alt="note image"
-                              loading="lazy"
-                              decoding="async"
-                              draggable={false}
-                              onContextMenu={(e) => {
-                                if (!isCoarsePointer) return;
-                                e.preventDefault();
-                                e.stopPropagation();
-                              }}
-                            />
+                            <div className="media-image-frame" aria-hidden>
+                              <img
+                                src={getEditorImageThumbSrc(img)}
+                                alt="note image"
+                                loading="lazy"
+                                decoding="async"
+                                draggable={false}
+                                onContextMenu={(e) => {
+                                  if (!isCoarsePointer) return;
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                }}
+                              />
+                            </div>
                             <button
-                              className="image-delete"
+                              className="image-delete media-image-delete"
                               aria-label="Delete image"
                               title="Delete image"
                               onClick={(e) => { e.stopPropagation(); requestDeleteImage(img.id); }}
                               style={{ position: 'absolute', right: 6, bottom: 6 }}
                             >
-                              🗑️
+                              <FontAwesomeIcon icon={faTrashCan} />
                             </button>
                           </div>
                         ))}
                       </div>
-                    )}
-                    <button
-                      type="button"
-                      className="btn editor-images-toggle"
-                      onClick={() => setImagesOpen(o => !o)}
-                      aria-expanded={imagesOpen}
-                    >
-                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
-                        <span style={{ transform: imagesOpen ? 'rotate(90deg)' : 'rotate(0deg)', display: 'inline-block' }}>{'▸'}</span>
-                        <span>Images ({images.length})</span>
-                      </span>
-                    </button>
-                  </div>
-                )}
-
-                <ConfirmDialog
-                  open={confirmImageDeleteId != null}
-                  title={'Delete image'}
-                  message={'Are you sure you want to delete this image?'}
-                  confirmLabel={'Delete'}
-                  cancelLabel={'Cancel'}
-                  danger
-                  onCancel={() => setConfirmImageDeleteId(null)}
-                  onConfirm={() => {
-                    const id = confirmImageDeleteId;
-                    setConfirmImageDeleteId(null);
-                    if (typeof id === 'number') performDeleteImage(id);
-                  }}
-                />
-
-
-              <div className="dialog-footer" style={{ borderTop: text ? `1px solid ${text}` : undefined }}>
-                <div className="note-actions" style={{ marginRight: 'auto', display: 'inline-flex', gap: 8, justifyContent: 'flex-start', color: text }}>
-                  <button className="tiny palette" onClick={() => setShowPalette(true)} aria-label="Change color" title="Change color">
-                    <FontAwesomeIcon icon={faPalette} className="palette-svg" />
-                  </button>
-                  <button
-                    className="tiny"
-                    onClick={() => { if (isOwner) setShowReminderPicker(true); else window.alert('Only the note owner can set reminders.'); }}
-                    aria-label="Reminder"
-                    title={isOwner ? 'Reminder' : 'Reminder (owner-only)'}
-                    disabled={!isOwner}
-                    style={!isOwner ? { opacity: 0.45, cursor: 'not-allowed' } : undefined}
-                  >
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
-                      <path d="M12 22c1.1 0 2-.9 2-2h-4a2 2 0 0 0 2 2z"/>
-                      <path d="M18 8V7a6 6 0 1 0-12 0v1c0 3.5-2 5-2 5h16s-2-1.5-2-5z"/>
-                    </svg>
-                  </button>
-                  <button className="tiny" onClick={() => setShowCollaborator(true)} aria-label="Collaborators" title="Collaborators">
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
-                      <path d="M15 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4z"/>
-                      <path d="M6 14c-1.66 0-3 1.34-3 3v1h9.5c-.2-.63-.5-1.23-.9-1.76C11.7 15.6 9.9 14 6 14z"/>
-                      <path d="M20 16v2h-2v2h-2v-2h-2v-2h2v-2h2v2z" />
-                    </svg>
-                  </button>
-                  <button className="tiny" onClick={() => setShowImageDialog(true)} aria-label="Add image" title="Add image">
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
-                      <path d="M21 19V5c0-1.1-.9-2-2-2H5C3.9 3 3 3.9 3 5v14h18zM8.5 13.5l2.5 3L14.5 12l4.5 7H5l3.5-5.5z"/>
-                    </svg>
-                  </button>
-
-                  {moreMenu && (
-                    <button
-                      ref={moreBtnRef}
-                      className="tiny editor-more"
-                      onClick={(e) => { e.stopPropagation(); setShowMore(s => !s); }}
-                      aria-label="More"
-                      title="More"
-                    >⋮</button>
-                  )}
-
-                </div>
-                <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
-                  <button className="btn" onClick={handleClose}>Close</button>
-                </div>
-              </div>
-            </div>
-          </div>
-          );
-
-          if (typeof document !== 'undefined') {
-            const portal = createPortal(dialog, document.body);
-            return (<>{portal}
-              <UrlEntryModal
-                open={!!urlModal}
-                title={(urlModal?.mode === 'edit') ? 'Edit URL preview' : 'Add URL preview'}
-                initialUrl={urlModal?.initialUrl}
-                onCancel={() => setUrlModal(null)}
-                onSubmit={(url) => {
-                  const st = urlModal;
-                  setUrlModal(null);
-                  if (!st) return;
-                  if (st.mode === 'edit' && st.previewId != null) {
-                    submitEditPreview(Number(st.previewId), String(url));
-                    return;
-                  }
-                  try { requestLinkPreview(String(url)); } catch {}
+                    ) : (
+                      <div className="media-sheet-empty">No images yet.</div>
+                    )
+                  ),
+                  urlPreviews: (
+                    linkPreviews.length > 0 ? (
+                      <div className="note-link-previews media-sheet-link-previews" style={{ marginTop: 0 }}>
+                        {linkPreviews.map((p: any) => {
+                          const domain = (p.domain || (() => { try { return new URL(p.url).hostname.replace(/^www\./i, ''); } catch { return ''; } })());
+                          return (
+                            <div
+                              key={p.id}
+                              className="link-preview-row editor-link-preview"
+                              onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); setPreviewMenu({ x: e.clientX, y: e.clientY, previewId: p.id }); }}
+                              onPointerDown={(e) => {
+                                clearLongPress();
+                                const x = (e as any).clientX ?? 0;
+                                const y = (e as any).clientY ?? 0;
+                                longPressTimerRef.current = window.setTimeout(() => {
+                                  try { setPreviewMenu({ x, y, previewId: p.id }); } catch {}
+                                }, 520);
+                              }}
+                              onPointerUp={clearLongPress}
+                              onPointerCancel={clearLongPress}
+                              onPointerMove={clearLongPress}
+                            >
+                              <a
+                                className="link-preview"
+                                href={p.url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                onClick={(e) => { try { e.stopPropagation(); } catch {} }}
+                              >
+                                <div className="link-preview-image" aria-hidden>
+                                  {p.imageUrl ? (
+                                    <img src={String(p.imageUrl)} alt="" loading="lazy" />
+                                  ) : (
+                                    <svg viewBox="0 0 24 24" aria-hidden focusable="false"><path d="M9.17 14.83a3 3 0 0 1 0-4.24l2.83-2.83a3 3 0 1 1 4.24 4.24l-.88.88" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/><path d="M14.83 9.17a3 3 0 0 1 0 4.24l-2.83 2.83a3 3 0 1 1-4.24-4.24l.88-.88" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>
+                                  )}
+                                </div>
+                                <div className="link-preview-meta">
+                                  <div className="link-preview-title">{String(p.title || domain || p.url)}</div>
+                                  <div className="link-preview-domain">{String(domain || p.url)}</div>
+                                </div>
+                              </a>
+                              <button
+                                className="link-preview-menu"
+                                type="button"
+                                aria-label="URL actions"
+                                title="URL actions"
+                                onClick={(e) => { e.preventDefault(); e.stopPropagation(); setPreviewMenu({ x: e.clientX, y: e.clientY, previewId: p.id }); }}
+                              >
+                                ⋯
+                              </button>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <div className="media-sheet-empty">No URL previews yet.</div>
+                    )
+                  ),
                 }}
-              />
+              </MediaSheet>
               {moreMenu && showMore && (
                 <MoreMenu
                   anchorRef={moreBtnRef as any}

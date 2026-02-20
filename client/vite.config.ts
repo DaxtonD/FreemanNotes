@@ -23,6 +23,8 @@ function collectAllowedHosts(): string[] {
   parseHost(process.env.PRODUCTION_URL);
   // Always allow localhost variants
   ["localhost", "127.0.0.1"].forEach(add);
+  // Local dev hostname
+  add("dev.freeman.daxtond.com");
   return Array.from(hosts);
 }
 

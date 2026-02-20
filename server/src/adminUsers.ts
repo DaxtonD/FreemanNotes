@@ -13,6 +13,11 @@ type UserNoteStatsRow = { userId: number; notesCount: number; bytes: number };
 type UserBytesRow = { userId: number; bytes: number };
 type UserImageStatsRow = { userId: number; imagesCount: number; bytes: number };
 
+function asNumber(v: any): number {
+  const n = Number(v || 0);
+  return Number.isFinite(n) ? n : 0;
+}
+
 function getJwtSecret() {
   const s = process.env.JWT_SECRET;
   if (!s) throw new Error("JWT_SECRET not set in environment");
@@ -231,6 +236,7 @@ router.get("/api/admin/users", async (req: Request, res: Response) => {
           COALESCE(SUM(
             OCTET_LENGTH(COALESCE(n."title", '')) +
             OCTET_LENGTH(COALESCE(n."body", '')) +
+            COALESCE(OCTET_LENGTH(n."yData"), 0) +
             OCTET_LENGTH(COALESCE(n."color", '')) +
             OCTET_LENGTH(COALESCE(n."linkPreviewUrl", '')) +
             OCTET_LENGTH(COALESCE(n."linkPreviewTitle", '')) +
@@ -240,6 +246,7 @@ router.get("/api/admin/users", async (req: Request, res: Response) => {
           ), 0) AS bytes
           FROM "Note" n
           WHERE n."ownerId" IN (${idsCsv})
+            AND n."trashedAt" IS NULL
           GROUP BY n."ownerId"
           `
         )) as UserNoteStatsRow[];
@@ -252,6 +259,7 @@ router.get("/api/admin/users", async (req: Request, res: Response) => {
         FROM "NoteItem" ni
         INNER JOIN "Note" n ON n."id" = ni."noteId"
           WHERE n."ownerId" IN (${idsCsv})
+            AND n."trashedAt" IS NULL
           GROUP BY n."ownerId"
           `
         )) as UserBytesRow[];
@@ -273,6 +281,7 @@ router.get("/api/admin/users", async (req: Request, res: Response) => {
           FROM "NoteImage" img
           INNER JOIN "Note" n ON n."id" = img."noteId"
           WHERE n."ownerId" IN (${idsCsv})
+            AND n."trashedAt" IS NULL
           GROUP BY n."ownerId"
           `
         )) as UserImageStatsRow[];
@@ -292,6 +301,7 @@ router.get("/api/admin/users", async (req: Request, res: Response) => {
           FROM "NoteLinkPreview" lp
           INNER JOIN "Note" n ON n."id" = lp."noteId"
           WHERE n."ownerId" IN (${idsCsv})
+            AND n."trashedAt" IS NULL
           GROUP BY n."ownerId"
           `
         )) as UserBytesRow[];
@@ -301,32 +311,31 @@ router.get("/api/admin/users", async (req: Request, res: Response) => {
       }
 
       for (const row of (noteStats || [])) {
-        const userId = Number((row as any)?.userId);
+        const userId = asNumber((row as any)?.userId ?? (row as any)?.userid);
         const cur = statsByUserId.get(userId) || { notesCount: 0, imagesCount: 0, dbStorageBytes: 0, filesystemBytes: 0, storageBytes: 0 };
-        cur.notesCount = Number((row as any)?.notesCount || 0);
-        cur.dbStorageBytes += Number((row as any)?.bytes || 0);
+        cur.notesCount = asNumber((row as any)?.notesCount ?? (row as any)?.notescount);
+        cur.dbStorageBytes += asNumber((row as any)?.bytes);
         statsByUserId.set(userId, cur);
       }
       for (const row of (itemStats || [])) {
-        const userId = Number((row as any)?.userId);
+        const userId = asNumber((row as any)?.userId ?? (row as any)?.userid);
         const cur = statsByUserId.get(userId) || { notesCount: 0, imagesCount: 0, dbStorageBytes: 0, filesystemBytes: 0, storageBytes: 0 };
-        cur.dbStorageBytes += Number((row as any)?.bytes || 0);
+        cur.dbStorageBytes += asNumber((row as any)?.bytes);
         statsByUserId.set(userId, cur);
       }
       for (const row of (imageStats || [])) {
-        const userId = Number((row as any)?.userId);
+        const userId = asNumber((row as any)?.userId ?? (row as any)?.userid);
         const cur = statsByUserId.get(userId) || { notesCount: 0, imagesCount: 0, dbStorageBytes: 0, filesystemBytes: 0, storageBytes: 0 };
-        cur.imagesCount = Number((row as any)?.imagesCount || 0);
-        cur.dbStorageBytes += Number((row as any)?.bytes || 0);
+        cur.imagesCount = asNumber((row as any)?.imagesCount ?? (row as any)?.imagescount);
+        cur.dbStorageBytes += asNumber((row as any)?.bytes);
         statsByUserId.set(userId, cur);
       }
       for (const row of (linkPreviewStats || [])) {
-        const userId = Number((row as any)?.userId);
+        const userId = asNumber((row as any)?.userId ?? (row as any)?.userid);
         const cur = statsByUserId.get(userId) || { notesCount: 0, imagesCount: 0, dbStorageBytes: 0, filesystemBytes: 0, storageBytes: 0 };
-        cur.dbStorageBytes += Number((row as any)?.bytes || 0);
+        cur.dbStorageBytes += asNumber((row as any)?.bytes);
         statsByUserId.set(userId, cur);
       }
-
       const fsSizes = await Promise.all(
         userIds.map(async (id) => ({ id, bytes: await getUserUploadsBytes(id) }))
       );
@@ -381,6 +390,29 @@ router.patch("/api/admin/users/:id", async (req: Request, res: Response) => {
       }
     });
     res.json({ user: safeUser(updated) });
+  } catch (err) {
+    res.status(500).json({ error: String(err) });
+  }
+});
+
+// Manually set/reset a user's password (admin only)
+router.patch("/api/admin/users/:id/password", async (req: Request, res: Response) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) return res.status(400).json({ error: "invalid user id" });
+
+  const passwordRaw = (req.body || {}).password;
+  const password = typeof passwordRaw === 'string' ? passwordRaw : '';
+  if (!password || password.length < 6) {
+    return res.status(400).json({ error: "password must be at least 6 characters" });
+  }
+
+  try {
+    const hash = await bcrypt.hash(password, 10);
+    await prisma.user.update({ where: { id }, data: { passwordHash: hash } });
+    res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: String(err) });
   }

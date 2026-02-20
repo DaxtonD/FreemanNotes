@@ -197,6 +197,32 @@ export default function UserManagementModal({ onClose }: { onClose: () => void }
     }
   }
 
+  async function resetUserPassword(u: AdminUser) {
+    if (!token) return;
+    const next = window.prompt(`Set a new password for ${u.email}:`);
+    if (next == null) return;
+    const password = String(next || '');
+    if (password.length < 6) {
+      setMsg('Error: password must be at least 6 characters');
+      return;
+    }
+    setMsg(null);
+    try {
+      const res = await fetch(`/api/admin/users/${u.id}/password`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({ password })
+      });
+      if (!res.ok) throw new Error(await readError(res));
+      setMsg(`Password updated for ${u.email}`);
+    } catch (err: any) {
+      setMsg(`Error: ${err?.message ?? String(err)}`);
+    }
+  }
+
   async function createUser(e?: React.FormEvent) {
     if (e) e.preventDefault();
     if (!token) return;
@@ -340,16 +366,27 @@ export default function UserManagementModal({ onClose }: { onClose: () => void }
                     </div>
 
                     <div role="cell" className="user-mgmt__actioncell">
-                      <button
-                        className="btn btn-danger user-mgmt__delete"
-                        type="button"
-                        onClick={() => deleteUser(u.id)}
-                        disabled={isMe}
-                        title="Delete user"
-                        aria-label={`Delete ${u.email}`}
-                      >
-                        {isNarrow ? '🗑' : 'Delete'}
-                      </button>
+                      <div className="user-mgmt__actions">
+                        <button
+                          className="btn"
+                          type="button"
+                          onClick={() => resetUserPassword(u)}
+                          title="Set password"
+                          aria-label={`Set password for ${u.email}`}
+                        >
+                          Reset password
+                        </button>
+                        <button
+                          className="btn btn-danger user-mgmt__delete"
+                          type="button"
+                          onClick={() => deleteUser(u.id)}
+                          disabled={isMe}
+                          title="Delete user"
+                          aria-label={`Delete ${u.email}`}
+                        >
+                          {isNarrow ? '🗑' : 'Delete'}
+                        </button>
+                      </div>
                     </div>
                   </div>
                 );

@@ -9,7 +9,8 @@ function deviceHeaders(): Record<string, string> {
 }
 
 export async function register(email: string, password: string, name?: string, inviteToken?: string) {
-  const body: any = { email, password };
+  const normalizedEmail = String(email || '').trim().toLowerCase();
+  const body: any = { email: normalizedEmail, password };
   if (name) body.name = name;
   if (inviteToken) body.inviteToken = inviteToken;
   const res = await fetch('/api/auth/register', {
@@ -22,10 +23,11 @@ export async function register(email: string, password: string, name?: string, i
 }
 
 export async function login(email: string, password: string) {
+  const normalizedEmail = String(email || '').trim().toLowerCase();
   const res = await fetch('/api/auth/login', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...deviceHeaders() },
-    body: JSON.stringify({ email, password })
+    body: JSON.stringify({ email: normalizedEmail, password })
   });
   if (!res.ok) throw new Error(await res.text());
   return res.json();
@@ -59,6 +61,27 @@ export async function uploadMyPhoto(token: string, dataUrl: string) {
     method: 'POST',
     headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', ...deviceHeaders() },
     body: JSON.stringify({ dataUrl })
+  });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+export async function requestPasswordReset(email: string) {
+  const normalizedEmail = String(email || '').trim().toLowerCase();
+  const res = await fetch('/api/auth/forgot-password', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email: normalizedEmail })
+  });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+export async function resetPasswordWithToken(token: string, password: string) {
+  const res = await fetch('/api/auth/reset-password', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ token, password })
   });
   if (!res.ok) throw new Error(await res.text());
   return res.json();

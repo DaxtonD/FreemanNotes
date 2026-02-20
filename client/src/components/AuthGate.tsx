@@ -48,6 +48,14 @@ export default function AuthGate({
       .catch(() => setRegistrationEnabled(false));
   }, []);
 
+  useEffect(() => {
+    try {
+      if (user || token) return;
+      const resetToken = new URLSearchParams(window.location.search).get('reset');
+      if (resetToken) setShowLogin(true);
+    } catch {}
+  }, [user, token]);
+
   if (user || token) return (
     <NotesGrid
       selectedLabelIds={selectedLabelIds || []}

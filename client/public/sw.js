@@ -80,6 +80,27 @@ self.addEventListener('fetch', (event) => {
   // Navigation requests: network first, fall back to cached app shell.
   if (req.mode === 'navigate') {
     event.respondWith((async () => {
+      let cachedShell = null;
+      try {
+        cachedShell = (await caches.match('/index.html')) || (await caches.match('/')) || null;
+      } catch {}
+
+      // Prefer cached shell immediately so manual refresh while offline still boots instantly.
+      if (cachedShell) {
+        event.waitUntil((async () => {
+          try {
+            const preload = await event.preloadResponse;
+            const fresh = preload || (await fetch(req));
+            if (sameOrigin && fresh && fresh.ok) {
+              const cache = await caches.open(RUNTIME_CACHE);
+              await cache.put('/index.html', fresh.clone());
+              try { await cache.put('/', fresh.clone()); } catch {}
+            }
+          } catch {}
+        })());
+        return cachedShell;
+      }
+
       try {
         const preload = await event.preloadResponse;
         if (preload) return preload;
@@ -91,6 +112,7 @@ self.addEventListener('fetch', (event) => {
           try {
             const cache = await caches.open(RUNTIME_CACHE);
             await cache.put('/index.html', net.clone());
+            try { await cache.put('/', net.clone()); } catch {}
           } catch {}
         }
         return net;

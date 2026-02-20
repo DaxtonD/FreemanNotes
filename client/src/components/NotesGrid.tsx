@@ -30,6 +30,7 @@ import {
   kickOfflineSync,
   loadCachedNotes,
   migrateYDocPersistence,
+  offlineDb,
   saveCachedNotes,
   setSyncTokenProvider,
   subscribeSyncState,
@@ -127,6 +128,7 @@ function buildNoteLoadSignature(note: any): string {
     .sort()
     .join(',');
   const offlinePending = (note as any)?.offlinePendingCreate ? '1' : '0';
+  const offlinePendingChanges = (note as any)?.offlinePendingChanges ? '1' : '0';
   const offlineFailed = (note as any)?.offlineSyncFailed ? '1' : '0';
   const offlineOpId = String((note as any)?.offlineOpId || '');
 
@@ -149,9 +151,18 @@ function buildNoteLoadSignature(note: any): string {
     collaboratorsSig,
     linkPreviewsSig,
     offlinePending,
+    offlinePendingChanges,
     offlineFailed,
     offlineOpId,
   ].join('|');
+}
+
+function extractPositiveNoteIdFromQueuedPath(path: string): number | null {
+  const p = String(path || '');
+  const m = p.match(/^\/api\/notes\/(\d+)(?:\/|$|\?)/i);
+  if (!m || !m[1]) return null;
+  const id = Number(m[1]);
+  return Number.isFinite(id) && id > 0 ? id : null;
 }
 
 function buildNotesLoadSignature(notes: any[]): string {
@@ -657,6 +668,19 @@ export default function NotesGrid({
     return subscribeSyncState((s) => setSyncState(s));
   }, []);
 
+  const prevSyncStateRef = useRef(syncState);
+  useEffect(() => {
+    const prev = prevSyncStateRef.current;
+    prevSyncStateRef.current = syncState;
+
+    if (!token) return;
+    if (syncState !== 'ONLINE_IDLE') return;
+    const cameFromFlush = prev === 'FLUSHING_OUTBOX' || prev === 'FLUSHING_UPLOADS' || prev === 'SYNCING_DOCS' || prev === 'CONNECTING';
+    if (!cameFromFlush) return;
+
+    try { void load(); } catch {}
+  }, [syncState, token]);
+
   useEffect(() => {
     try {
       setSyncTokenProvider(() => token || '');
@@ -702,6 +726,86 @@ export default function NotesGrid({
     };
     window.addEventListener('freemannotes:offline-upload/success', onOfflineUploadSuccess as EventListener);
     return () => window.removeEventListener('freemannotes:offline-upload/success', onOfflineUploadSuccess as EventListener);
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const refreshQueuedNoteSyncFlags = async () => {
+      try {
+        const [outboxRows, uploadRows] = await Promise.all([
+          offlineDb.outboxMutations.toArray(),
+          offlineDb.uploadQueue.toArray(),
+        ]);
+        if (cancelled) return;
+
+        const pendingByNoteId = new Set<number>();
+        const failedByNoteId = new Set<number>();
+
+        for (const row of outboxRows || []) {
+          if (String((row as any)?.kind || '') !== 'http.json') continue;
+          const noteId = extractPositiveNoteIdFromQueuedPath(String((row as any)?.payload?.path || ''));
+          if (!noteId) continue;
+          pendingByNoteId.add(noteId);
+          if ((row as any)?.lastError) failedByNoteId.add(noteId);
+        }
+
+        for (const row of uploadRows || []) {
+          const noteId = Number((row as any)?.noteId);
+          if (!Number.isFinite(noteId) || noteId <= 0) continue;
+          pendingByNoteId.add(noteId);
+          if ((row as any)?.lastError) failedByNoteId.add(noteId);
+        }
+
+        setNotes((prev) => {
+          if (!Array.isArray(prev) || prev.length === 0) return prev;
+          let changed = false;
+          const next = prev.map((n: any) => {
+            const id = Number((n as any)?.id);
+            if (!Number.isFinite(id) || id <= 0) return n;
+
+            const nextPendingChanges = pendingByNoteId.has(id);
+            const createPending = !!(n as any)?.offlinePendingCreate;
+            const createFailed = createPending && !!(n as any)?.offlineSyncFailed;
+            const nextFailed = createFailed || failedByNoteId.has(id);
+
+            const prevPendingChanges = !!(n as any)?.offlinePendingChanges;
+            const prevFailed = !!(n as any)?.offlineSyncFailed;
+            if (prevPendingChanges === nextPendingChanges && prevFailed === nextFailed) return n;
+
+            changed = true;
+            return {
+              ...n,
+              offlinePendingChanges: nextPendingChanges,
+              offlineSyncFailed: nextFailed,
+            };
+          });
+          return changed ? next : prev;
+        });
+      } catch {}
+    };
+
+    void refreshQueuedNoteSyncFlags();
+    const timer = window.setInterval(() => { void refreshQueuedNoteSyncFlags(); }, 1200);
+    const onOnline = () => { void refreshQueuedNoteSyncFlags(); };
+    const onOffline = () => { void refreshQueuedNoteSyncFlags(); };
+    const onVisible = () => {
+      try {
+        if (document.visibilityState === 'visible') void refreshQueuedNoteSyncFlags();
+      } catch {}
+    };
+
+    window.addEventListener('online', onOnline);
+    window.addEventListener('offline', onOffline);
+    document.addEventListener('visibilitychange', onVisible);
+
+    return () => {
+      cancelled = true;
+      try { window.clearInterval(timer); } catch {}
+      window.removeEventListener('online', onOnline);
+      window.removeEventListener('offline', onOffline);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
   }, []);
 
   useEffect(() => {

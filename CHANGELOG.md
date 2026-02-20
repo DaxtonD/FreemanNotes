@@ -15,6 +15,27 @@ Adheres to Semantic Versioning (MAJOR.MINOR.PATCH).
 ### Fixed
 - 
 
+## [0.9.1] - 2026-02-20
+
+### Added
+- Password reset flow end-to-end:
+	- `POST /api/auth/forgot-password` and `POST /api/auth/reset-password`
+	- reset-link email support and reset-token handling in sign-in UI.
+- Admin user-management password action (`PATCH /api/admin/users/:id/password`) and UI control for manual resets.
+
+### Changed
+- User-management table/actions on mobile now use wrapped content instead of clipping/ellipsis for critical fields.
+- Offline sync UX now uses a FontAwesome sync icon badge in note cards instead of the previous “Syncing…” text.
+- Offline note sync indicators now cover queued offline edits/uploads (not only offline-created notes).
+- Service worker navigation handling now prioritizes cached shell for resilient offline manual refresh, with background revalidation.
+
+### Fixed
+- User-management stats aggregation issues that could report `0` note/image/DB usage despite existing data.
+- Checklist completed-items collapsed/expanded flash on mobile/PWA refresh by initializing persisted state before first paint.
+- Offline user preference changes (appearance/editor/card prefs) now queue and persist to server after reconnect.
+- Notes cache fallback now allows offline reload/manual refresh recovery when IndexedDB is unavailable/slow.
+- Notes grid now refreshes after offline queue flush so cards reflect reconciled server state after reconnect.
+
 ## [0.9.0] - 2026-02-19
 
 ### Added

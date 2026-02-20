@@ -31,6 +31,14 @@ dotenv.config();
 
 const PORT = process.env.PORT ? Number(process.env.PORT) : 4000;
 const app = express();
+const traceNoteOpen = /^(1|true|yes|on)$/i.test(String(process.env.TRACE_NOTE_OPEN || '').trim());
+
+function traceLog(event: string, payload?: Record<string, any>) {
+  if (!traceNoteOpen) return;
+  try {
+    console.log(`[trace:note-open] ${event}`, payload || {});
+  } catch {}
+}
 
 // Increase JSON body limit to support data URL image uploads.
 // Configurable via env MAX_IMAGE_UPLOAD_MB (default 10MB).
@@ -40,6 +48,23 @@ const imgLimitMb = (() => {
   return Number.isFinite(n) && n > 0 ? n : 10;
 })();
 app.use(express.json({ limit: `${imgLimitMb}mb` }));
+if (traceNoteOpen) {
+  app.use((req, res, next) => {
+    try {
+      const method = String(req.method || '').toUpperCase();
+      const path = String((req as any).path || req.url || '');
+      if (!path.startsWith('/api/notes')) return next();
+      const ua = String(req.headers['user-agent'] || '');
+      const isMobile = /android|iphone|ipad|ipod|mobile|wv|pwa/i.test(ua);
+      const start = Date.now();
+      traceLog('http.in', { method, path, isMobile, ua: ua.slice(0, 120) });
+      res.on('finish', () => {
+        traceLog('http.out', { method, path, status: res.statusCode, ms: Date.now() - start });
+      });
+    } catch {}
+    next();
+  });
+}
 // Serve uploaded files (e.g., user photos)
 try {
   const uploadsDir = getUploadsDir();
@@ -124,13 +149,18 @@ async function start() {
           const parsed = parseCollabRoom(docName);
           if (parsed) {
             const noteId = Number(parsed.noteId);
+            traceLog('collab.bindState.begin', { docName, noteId, stamp: parsed.stamp || null });
             try {
               const note = await prisma.note.findUnique({ where: { id: noteId }, include: { items: true } });
               if (!note) return;
               const expectedStamp = collabStampFromCreatedAt((note as any).createdAt);
               // Reject legacy/incorrect rooms so note ID reuse after DB reset cannot
               // attach stale in-memory collaboration state to a new note.
-              if (!expectedStamp || !parsed.stamp || String(parsed.stamp) !== String(expectedStamp)) {
+              if (!expectedStamp) {
+                console.warn('Ignoring collab room with missing canonical stamp source', { docName, noteId });
+                return;
+              }
+              if (parsed.stamp && String(parsed.stamp) !== String(expectedStamp)) {
                 console.warn('Ignoring non-canonical collab room', { docName, noteId, expectedStamp, gotStamp: parsed.stamp || null });
                 return;
               }
@@ -141,7 +171,9 @@ async function start() {
               const hasPersisted = !!(persisted && persisted.length > 0);
               if (hasPersisted) {
                 Y.applyUpdate(ydoc, new Uint8Array(persisted as Buffer));
+                traceLog('collab.bindState.loadedYData', { docName, noteId, bytes: persisted?.length || 0 });
               } else if (note) {
+                traceLog('collab.bindState.seedFromDb', { docName, noteId, hasBody: !!note.body, items: Array.isArray(note.items) ? note.items.length : 0 });
                 // Initialize Y.Doc from DB once, server-authoritatively.
                 // 1) Text notes: seed ProseMirror fragment with TipTap JSON or plain text.
                 try {
@@ -199,6 +231,8 @@ async function start() {
               }
             } catch (e) {
               console.warn("Yjs bindState load error:", e);
+            } finally {
+              traceLog('collab.bindState.end', { docName, noteId });
             }
             // Persist updates in a debounced/batched way.
             // Realtime collaboration itself remains immediate over websocket;
@@ -257,15 +291,20 @@ async function start() {
           const parsed = parseCollabRoom(docName);
           if (!parsed) return;
           const noteId = Number(parsed.noteId);
+          traceLog('collab.writeState.begin', { docName, noteId, stamp: parsed.stamp || null });
           try {
             const note = await prisma.note.findUnique({ where: { id: noteId }, select: { createdAt: true } });
             if (!note) return;
             const expectedStamp = collabStampFromCreatedAt((note as any).createdAt);
-            if (!expectedStamp || !parsed.stamp || String(parsed.stamp) !== String(expectedStamp)) return;
+            if (!expectedStamp) return;
+            if (parsed.stamp && String(parsed.stamp) !== String(expectedStamp)) return;
             const snapshot = Y.encodeStateAsUpdate(ydoc);
             await prisma.note.updateMany({ where: { id: noteId }, data: { yData: Buffer.from(snapshot) } });
+            traceLog('collab.writeState.persisted', { docName, noteId, bytes: snapshot?.byteLength || 0 });
           } catch (e) {
             console.warn("Yjs final persist error:", e);
+          } finally {
+            traceLog('collab.writeState.end', { docName, noteId });
           }
         }
       });
@@ -377,6 +416,21 @@ async function start() {
     }
   }
 
+  // Conventional PWA icon aliases for iOS/Safari and installability checks.
+  // Keep these stable across dev/prod without duplicating image assets.
+  app.get('/apple-touch-icon.png', (_req, res) => {
+    try { res.redirect(302, '/icons/icon-192.png'); } catch { res.status(404).end(); }
+  });
+  app.get('/icons/apple-touch-icon.png', (_req, res) => {
+    try { res.redirect(302, '/icons/icon-192.png'); } catch { res.status(404).end(); }
+  });
+  app.get('/icons/android-chrome-192x192.png', (_req, res) => {
+    try { res.redirect(302, '/icons/icon-192.png'); } catch { res.status(404).end(); }
+  });
+  app.get('/icons/android-chrome-512x512.png', (_req, res) => {
+    try { res.redirect(302, '/icons/icon-512.png'); } catch { res.status(404).end(); }
+  });
+
   if (isDev) {
     // Use Vite dev server as middleware so one process serves front+api in dev.
     const { createServer: createViteServer } = await import("vite");
@@ -410,6 +464,12 @@ async function start() {
           // App shell files must revalidate so new builds roll out.
           if (rel === "index.html" || rel === "manifest.webmanifest" || rel === "sw.js") {
             res.setHeader("Cache-Control", "no-cache");
+            if (rel === 'manifest.webmanifest') {
+              try { res.setHeader('Content-Type', 'application/manifest+json; charset=utf-8'); } catch {}
+            }
+            if (rel === 'sw.js') {
+              try { res.setHeader('Content-Type', 'application/javascript; charset=utf-8'); } catch {}
+            }
             return;
           }
           // Vite emits content-hashed assets; safe to cache forever.
@@ -435,6 +495,7 @@ async function start() {
   server.on("upgrade", (request, socket, head) => {
     // Only handle Yjs collaboration upgrades here; leave others (e.g., Vite HMR) alone
     const { url } = request;
+    traceLog('ws.upgrade', { url: String(url || ''), ua: String(request.headers['user-agent'] || '').slice(0, 120) });
     if (url && url.startsWith("/collab")) {
       wss.handleUpgrade(request, socket as any, head, (ws) => {
         setupWSConnection(ws, request);

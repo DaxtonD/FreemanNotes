@@ -7,6 +7,8 @@ import UserManagementModal from './UserManagementModal';
 import AvatarCropModal from './AvatarCropModal';
 import { useTheme } from '../themeContext';
 import { usePwaInstall } from '../lib/pwaInstall';
+import { getOrCreateDeviceProfile } from '../lib/deviceProfile';
+import { enqueueHttpJsonMutation, kickOfflineSync } from '../lib/offline';
 import { ensurePushSubscribed, getLastServerPushTestAt, getPushClientStatus, getPushHealth, sendTestPush, showLocalTestNotification, type PushClientStatus, type PushHealthStatus } from '../lib/pushNotifications';
 
 const APP_VERSION = typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : '0.0.0';
@@ -537,7 +539,36 @@ export default function PreferencesModal({ onClose }: { onClose: () => void }) {
         linkColorLight: pendingLinkColorLight,
       };
       // remove checkbox color fields from payload
-      await (auth?.updateMe?.(payload));
+      const token = String((auth as any)?.token || '');
+      const queuePrefsUpdate = async () => {
+        if (!token) return;
+        let deviceHeaders: Record<string, string> = {};
+        try {
+          const p = getOrCreateDeviceProfile();
+          deviceHeaders = {
+            'x-device-key': String((p as any)?.deviceKey || ''),
+            'x-device-name': String((p as any)?.deviceName || ''),
+          };
+        } catch {}
+        await enqueueHttpJsonMutation({
+          method: 'PATCH',
+          path: '/api/auth/me',
+          body: payload,
+          meta: { source: 'prefs-save' },
+          headers: deviceHeaders,
+        } as any);
+        void kickOfflineSync();
+      };
+
+      if (navigator.onLine === false) {
+        await queuePrefsUpdate();
+      } else {
+        try {
+          await (auth?.updateMe?.(payload));
+        } catch {
+          await queuePrefsUpdate();
+        }
+      }
     } catch {}
     try { localStorage.removeItem('prefs.checkboxBg'); localStorage.removeItem('prefs.checkboxBorder'); } catch {}
     onClose();

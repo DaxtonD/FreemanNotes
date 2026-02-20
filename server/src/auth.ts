@@ -2,7 +2,8 @@ import { Router, Request, Response, NextFunction } from "express";
 import prisma from "./prismaClient";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
-import { sendInviteEmail } from "./mail";
+import { sendInviteEmail, sendPasswordResetEmail } from "./mail";
+import { randomBytes, createHash } from 'crypto';
 import fs from 'fs';
 import path from 'path';
 import sharp from 'sharp';
@@ -16,6 +17,14 @@ function getJwtSecret() {
   const s = process.env.JWT_SECRET;
   if (!s) throw new Error("JWT_SECRET not set in environment");
   return s;
+}
+
+function getPasswordResetSecret() {
+  return process.env.PASSWORD_RESET_SECRET || getJwtSecret();
+}
+
+function passwordHashFingerprint(passwordHash: string): string {
+  return createHash('sha256').update(String(passwordHash || '')).digest('hex');
 }
 
 async function getUserFromToken(req: Request) {
@@ -141,6 +150,8 @@ function mergeEffectivePrefs(user: any, devicePrefs: any | null): any {
 router.post("/api/auth/register", async (req: Request, res: Response) => {
   const { email, password, name, inviteToken } = req.body || {};
   if (!email || !password) return res.status(400).json({ error: "email and password required" });
+  const emailNormalized = String(email || '').trim().toLowerCase();
+  if (!emailNormalized) return res.status(400).json({ error: "email and password required" });
   // Bootstrap allowance: if no users exist yet, allow registration even if disabled
   const usersCount = await prisma.user.count();
   const registrationEnabled = String(process.env.USER_REGISTRATION_ENABLED || '').toLowerCase() === 'true' || usersCount === 0;
@@ -155,11 +166,11 @@ router.post("/api/auth/register", async (req: Request, res: Response) => {
     }
     if (!invite) return res.status(400).json({ error: "invalid invite token" });
     if (invite.usedAt) return res.status(400).json({ error: "invite already used" });
-    if (invite.email && invite.email !== email) return res.status(400).json({ error: "invite email does not match registration email" });
+    if (invite.email && String(invite.email).trim().toLowerCase() !== emailNormalized) return res.status(400).json({ error: "invite email does not match registration email" });
   }
 
   try {
-    const existing = await prisma.user.findUnique({ where: { email } });
+    const existing = await prisma.user.findUnique({ where: { email: emailNormalized } });
     if (existing) return res.status(409).json({ error: "email already registered" });
     const hash = await bcrypt.hash(password, 10);
     let role: string = 'user';
@@ -171,7 +182,7 @@ router.post("/api/auth/register", async (req: Request, res: Response) => {
     }
     const userDefaults = getInitialUserPrefs();
     const user = await prisma.user.create({ data: {
-      email,
+      email: emailNormalized,
       name: name || null,
       passwordHash: hash,
       role,
@@ -218,8 +229,10 @@ router.post("/api/auth/register", async (req: Request, res: Response) => {
 router.post("/api/auth/login", async (req: Request, res: Response) => {
   const { email, password } = req.body || {};
   if (!email || !password) return res.status(400).json({ error: "email and password required" });
+  const emailNormalized = String(email || '').trim().toLowerCase();
+  if (!emailNormalized) return res.status(400).json({ error: "email and password required" });
   try {
-    const user = await prisma.user.findUnique({ where: { email } });
+    const user = await prisma.user.findUnique({ where: { email: emailNormalized } });
     if (!user || !user.passwordHash) return res.status(401).json({ error: "invalid credentials" });
     const match = await bcrypt.compare(password, user.passwordHash);
     if (!match) return res.status(401).json({ error: "invalid credentials" });
@@ -478,6 +491,71 @@ router.get('/api/config', (_req: Request, res: Response) => {
   res.json({ userRegistrationEnabled: enabled });
 });
 
+// Request password reset email (always returns success-shaped response to avoid user enumeration)
+router.post('/api/auth/forgot-password', async (req: Request, res: Response) => {
+  const emailRaw = String((req.body || {}).email || '').trim().toLowerCase();
+  if (!emailRaw) return res.status(200).json({ ok: true });
+
+  try {
+    const user = await prisma.user.findUnique({ where: { email: emailRaw }, select: { id: true, email: true, passwordHash: true } });
+    if (user?.id && user.passwordHash) {
+      const resetTokenId = randomBytes(12).toString('hex');
+      const fingerprint = passwordHashFingerprint(String(user.passwordHash));
+      const token = jwt.sign(
+        {
+          kind: 'pwd-reset',
+          jti: resetTokenId,
+          userId: Number(user.id),
+          fp: fingerprint,
+        },
+        getPasswordResetSecret(),
+        { expiresIn: '30m' }
+      );
+      try {
+        await sendPasswordResetEmail(String(user.email || emailRaw), token);
+      } catch (err) {
+        console.warn('Failed to send password reset email:', err);
+      }
+    }
+  } catch (err) {
+    console.warn('Forgot password request failed:', err);
+  }
+
+  // Keep response intentionally generic.
+  return res.status(200).json({ ok: true });
+});
+
+// Complete password reset with signed token from email link.
+router.post('/api/auth/reset-password', async (req: Request, res: Response) => {
+  const token = String((req.body || {}).token || '').trim();
+  const password = String((req.body || {}).password || '');
+
+  if (!token) return res.status(400).json({ error: 'token required' });
+  if (!password || password.length < 6) return res.status(400).json({ error: 'password must be at least 6 characters' });
+
+  try {
+    const payload = jwt.verify(token, getPasswordResetSecret()) as any;
+    if (!payload || String(payload.kind || '') !== 'pwd-reset') return res.status(400).json({ error: 'invalid reset token' });
+    const userId = Number(payload.userId);
+    if (!Number.isFinite(userId) || userId <= 0) return res.status(400).json({ error: 'invalid reset token' });
+
+    const user = await prisma.user.findUnique({ where: { id: userId }, select: { id: true, passwordHash: true } });
+    if (!user?.id || !user.passwordHash) return res.status(400).json({ error: 'invalid reset token' });
+
+    const expectedFp = passwordHashFingerprint(String(user.passwordHash));
+    if (!payload.fp || String(payload.fp) !== expectedFp) {
+      return res.status(400).json({ error: 'reset token expired or already used' });
+    }
+
+    const hash = await bcrypt.hash(password, 10);
+    await prisma.user.update({ where: { id: userId }, data: { passwordHash: hash } });
+
+    return res.json({ ok: true });
+  } catch {
+    return res.status(400).json({ error: 'invalid or expired reset token' });
+  }
+});
+
 // send invite (authenticated)
 router.post('/api/invite', async (req: Request, res: Response) => {
   const inviter = await getUserFromToken(req);
@@ -486,7 +564,7 @@ router.post('/api/invite', async (req: Request, res: Response) => {
   const { email, role } = req.body || {};
   if (!email) return res.status(400).json({ error: 'email required' });
   try {
-    const token = require('crypto').randomBytes(16).toString('hex');
+    const token = randomBytes(16).toString('hex');
     const desiredRole = role === 'admin' ? 'admin' : 'user';
     const invite = await prisma.invite.create({ data: { email, token, invitedById: inviter.id, desiredRole } });
     let emailSent = false;

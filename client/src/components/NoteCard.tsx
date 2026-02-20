@@ -11,7 +11,7 @@ import MoreMenu from "./MoreMenu";
 import MoveToCollectionModal from "./MoveToCollectionModal";
 import UrlEntryModal from "./UrlEntryModal";
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faPalette, faUsers, faTag, faFolder, faImage, faUser, faNoteSticky, faListCheck, faPaperclip } from '@fortawesome/free-solid-svg-icons';
+import { faPalette, faUsers, faTag, faFolder, faImage, faUser, faNoteSticky, faListCheck, faPaperclip, faArrowsRotate } from '@fortawesome/free-solid-svg-icons';
 import LabelsDialog from "./LabelsDialog";
 import ColorPalette from "./ColorPalette";
 import ImageDialog from "./ImageDialog";
@@ -51,6 +51,7 @@ type Note = {
   imagesCount?: number;
   cardSpan?: number;
   offlinePendingCreate?: boolean;
+  offlinePendingChanges?: boolean;
   offlineOpId?: string;
   offlineSyncFailed?: boolean;
   offlineSyncError?: string;
@@ -257,17 +258,29 @@ export default function NoteCard({
   const [showReminderPicker, setShowReminderPicker] = useState(false);
   const [showEditor, setShowEditor] = useState(false);
   const [showTextEditor, setShowTextEditor] = useState(false);
-  const [showCompleted, setShowCompleted] = useState<boolean>(true);
   const myDeviceKey = React.useMemo(() => {
     try { return getOrCreateDeviceProfile().deviceKey; } catch { return ''; }
   }, []);
+
+  const [showCompleted, setShowCompleted] = useState<boolean>(() => {
+    try {
+      const deviceKey = getOrCreateDeviceProfile().deviceKey;
+      if (!deviceKey) return true;
+      const k = `fn.note.showCompleted.${deviceKey}.${note.id}`;
+      const v = localStorage.getItem(k);
+      return v === null ? true : v === 'true';
+    } catch {
+      return true;
+    }
+  });
 
   React.useEffect(() => {
     try {
       if (!myDeviceKey) return;
       const k = `fn.note.showCompleted.${myDeviceKey}.${note.id}`;
       const v = localStorage.getItem(k);
-      if (v !== null) setShowCompleted(v === 'true');
+      const next = (v === null ? true : v === 'true');
+      setShowCompleted((prev) => (prev === next ? prev : next));
     } catch {}
   }, [myDeviceKey, note.id]);
   const [rtHtmlFromY, setRtHtmlFromY] = React.useState<string | null>(null);
@@ -1865,15 +1878,15 @@ export default function NoteCard({
         <span className="note-title-text">{!String(title || '').trim() ? 'Add a title....' : title}</span>
       </div>
 
-      {!!(note as any)?.offlinePendingCreate && (
+      {((note as any)?.offlinePendingCreate || (note as any)?.offlinePendingChanges) && (
         <div
           className={`note-sync-badge note-sync-badge--inline${(note as any)?.offlineSyncFailed ? ' note-sync-badge--failed' : ''}`}
           title={(note as any)?.offlineSyncFailed
             ? 'Sync delayed: still retrying in background. Will keep retrying automatically.'
-            : 'Pending sync: this note was created offline and will finish syncing automatically.'}
+            : 'Pending sync: offline changes will finish syncing automatically.'}
           aria-label={(note as any)?.offlineSyncFailed ? 'Sync delayed' : 'Pending sync'}
         >
-          {(note as any)?.offlineSyncFailed ? 'Sync delayed' : 'Syncing…'}
+          {(note as any)?.offlineSyncFailed ? 'Sync delayed' : <FontAwesomeIcon icon={faArrowsRotate} className="note-sync-badge__icon" />}
         </div>
       )}
 
