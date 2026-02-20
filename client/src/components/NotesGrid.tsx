@@ -29,10 +29,12 @@ import {
   getSyncState,
   kickOfflineSync,
   loadCachedNotes,
+  migrateYDocPersistence,
   saveCachedNotes,
   setSyncTokenProvider,
   subscribeSyncState,
 } from '../lib/offline';
+import { noteCollabRoom } from '../lib/collabRoom';
 
 const MemoNoteCard = React.memo(
   NoteCard,
@@ -727,7 +729,16 @@ export default function NotesGrid({
         const opId = String(detail.opId || '');
         const serverNote = detail.note || null;
         const serverId = Number(serverNote?.id);
+        const tempClientNoteId = Number(detail.tempClientNoteId);
         if (!opId || !Number.isFinite(serverId)) return;
+
+        try {
+          if (Number.isFinite(tempClientNoteId) && tempClientNoteId < 0) {
+            const fromRoom = noteCollabRoom(Number(tempClientNoteId));
+            const toRoom = noteCollabRoom(Number(serverId), (serverNote as any)?.createdAt);
+            void migrateYDocPersistence(fromRoom, toRoom);
+          }
+        } catch {}
 
         setNotes((prev) => {
           const tempNote = prev.find((n: any) => String((n as any)?.offlineOpId || '') === opId) || null;

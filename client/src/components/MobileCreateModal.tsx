@@ -549,11 +549,10 @@ export default function MobileCreateModal({
             ],
             content: '',
           });
-          await new Promise<void>((resolve) => {
-            provider.on('sync', (isSynced: boolean) => { if (isSynced) resolve(); });
-          });
+          // Do not block on websocket sync in mobile/PWA create flow.
+          // Apply content immediately and allow provider/network to catch up.
           try { tempEditor?.commands.setContent(bodyJson); } catch {}
-          await new Promise(r => setTimeout(r, 100));
+          await new Promise(r => setTimeout(r, 120));
           try { tempEditor?.destroy(); } catch {}
           try { provider.destroy(); } catch {}
           try { ydoc.destroy(); } catch {}

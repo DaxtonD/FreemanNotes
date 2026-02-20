@@ -10,14 +10,30 @@ Adheres to Semantic Versioning (MAJOR.MINOR.PATCH).
 - 
 
 ### Changed
-- Notes grid drag performance tuning:
-	- memoized note card rendering paths in `NotesGrid`,
-	- custom memo comparison to reduce drag-time re-renders from callback identity churn.
+- 
 
 ### Fixed
-- Resolved note/checklist content duplication on open/close caused by pre-sync Yjs fallback seeding races.
-- Hardened server-side TipTap Yjs initialization in Node runtime to avoid `window`-dependent parsing errors.
-- Checklist row delete (`✕`) now deletes immediately on first click without requiring prior row selection.
+- 
+
+## [0.9.0] - 2026-02-19
+
+### Added
+- IndexedDB-backed Yjs local persistence (`y-indexeddb`) as the canonical local document store for editor rooms, including best-effort migration from legacy Dexie Yjs rows.
+- Temporary note-open tracing in server startup/runtime (opt-in via `TRACE_NOTE_OPEN`) for diagnosing note-open HTTP + websocket/Yjs persistence flow.
+
+### Changed
+- Rich text and checklist editors now follow a stricter local-first startup order:
+	- bind local Y.Doc persistence first,
+	- render from local state,
+	- attach websocket sync non-blocking afterward.
+- Offline temporary note reconciliation now migrates local Yjs persistence keys from temporary IDs to canonical server note room IDs.
+- Mobile/PWA new-note create flow no longer blocks initial content seed on websocket `sync` event.
+
+### Fixed
+- Eliminated editor content flicker/disappear on open caused by startup races between optimistic snapshots and early empty Yjs updates.
+- Prevented open-time editor write calls by gating derived body/item persistence to local user-edit transactions.
+- Fixed offline-created note behavior where note cards showed content but editors opened empty (desktop/mobile/PWA parity restored).
+- Improved mobile/PWA resilience for offline/online transitions to reduce post-reconnect data loss scenarios.
 
 ## [0.8.4] - 2026-02-18
 

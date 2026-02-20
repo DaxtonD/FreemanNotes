@@ -948,13 +948,12 @@ export default function TakeNoteBar({
             ],
             content: '',
           });
-          // Wait until synced before seeding to avoid overwriting any state
-          await new Promise<void>((resolve) => {
-            provider.on('sync', (isSynced: boolean) => { if (isSynced) resolve(); });
-          });
+          // Do not block on websocket sync here (mobile/PWA can delay/miss sync
+          // while app is backgrounded/throttled). Apply content immediately and
+          // let provider flush when connection becomes available.
           try { tempEditor?.commands.setContent(bodyJson); } catch {}
-          // Give a brief moment for updates to flush
-          await new Promise(r => setTimeout(r, 100));
+          // Give a brief moment for local Yjs update propagation.
+          await new Promise(r => setTimeout(r, 120));
           try { tempEditor?.destroy(); } catch {}
           try { provider.destroy(); } catch {}
           try { ydoc.destroy(); } catch {}

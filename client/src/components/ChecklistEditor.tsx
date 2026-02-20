@@ -215,15 +215,15 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
     const id = window.setTimeout(() => { pointerSafeRef.current = true; }, 160);
     return () => window.clearTimeout(id);
   }, []);
-  // Ensure items have stable identity before Yjs sync kicks in.
-  // Without this, the first edit can cause Yjs to inject uid/key values,
-  // changing React keys and remounting editors (caret appears to "disappear").
+  // Keep optimistic/server snapshot visible while Yjs local/remote state hydrates.
+  // This prevents "content flashes then disappears" during provider startup.
   const [items, setItems] = useState<Array<any>>(() => (note.items || []).map((it: any, idx: number) => {
     const stableUid = (typeof it?.uid === 'string' && it.uid)
       ? String(it.uid)
       : (typeof it?.id === 'number' ? `id-${Number(it.id)}` : `init-${idx}-${Math.random().toString(36).slice(2, 8)}`);
     return { indent: 0, uid: stableUid, key: stableUid, ...it };
   }));
+  const itemsRef = useRef<Array<any>>([]);
   const [saving, setSaving] = useState(false);
   const [completedOpen, setCompletedOpen] = useState(true);
   const myDeviceKey = React.useMemo(() => {
@@ -338,8 +338,20 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
   const [urlModal, setUrlModal] = useState<{ mode: 'add' | 'edit'; previewId?: number; initialUrl?: string } | null>(null);
 
   React.useEffect(() => {
+    itemsRef.current = items;
+  }, [items]);
+
+  React.useEffect(() => {
     lastSavedTitleRef.current = note.title || '';
     setTitle(note.title || '');
+    setItems((note.items || []).map((it: any, idx: number) => {
+      const stableUid = (typeof it?.uid === 'string' && it.uid)
+        ? String(it.uid)
+        : (typeof it?.id === 'number' ? `id-${Number(it.id)}` : `init-${idx}-${Math.random().toString(36).slice(2, 8)}`);
+      return { indent: 0, uid: stableUid, key: stableUid, ...it };
+    }));
+    seenImagesMetaRef.current = false;
+    setLocalDocReady(false);
     try {
       setBg(String((noteBg ?? (note as any)?.viewerColor ?? (note as any)?.color ?? '') || ''));
     } catch {
@@ -757,6 +769,8 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
   const debouncedSyncTimer = React.useRef<number | null>(null);
   const syncedRef = React.useRef<boolean>(false);
   const dirtyRef = React.useRef<boolean>(false);
+  const seenImagesMetaRef = React.useRef<boolean>(false);
+  const [localDocReady, setLocalDocReady] = React.useState<boolean>(false);
 
   React.useEffect(() => {
     let disposed = false;
@@ -765,11 +779,15 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
     (async () => {
       try {
         cleanup = await bindYDocPersistence(collabRoom, ydoc);
+      } catch {
+        cleanup = null;
+      } finally {
+        if (!disposed) setLocalDocReady(true);
         if (disposed && cleanup) {
           try { cleanup(); } catch {}
           cleanup = null;
         }
-      } catch {}
+      }
     })();
 
     return () => {
@@ -1273,6 +1291,7 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
 
   // Setup Yjs provider and bind checklist CRDT
   useEffect(() => {
+    if (!localDocReady) return;
     const room = collabRoom;
     const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
     const serverUrl = `${proto}://${window.location.host}/collab`;
@@ -1283,36 +1302,27 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
     const ymeta = ydoc.getMap<any>('meta');
     ymetaRef.current = ymeta;
 
-    const seedFromSnapshotIfEmpty = () => {
-      try {
-        if (yarr.length > 0) return;
-        const initial = (note.items || []).map((it: any, idx: number) => {
+    // For offline-created temporary notes, initialize Yjs array from optimistic
+    // note snapshot so checklist rows are visible before server reconciliation.
+    try {
+      const pendingCreate = !!(note as any)?.offlinePendingCreate;
+      const tempId = Number((note as any)?.id);
+      if (pendingCreate && Number.isFinite(tempId) && tempId < 0 && yarr.length === 0) {
+        const initial = ((note as any)?.items || []).map((it: any, idx: number) => {
           const m = new Y.Map<any>();
-          if (typeof it.id === 'number') m.set('id', it.id);
+          if (typeof it?.id === 'number') m.set('id', Number(it.id));
           const uid = (typeof it?.uid === 'string' && it.uid)
             ? String(it.uid)
-            : (typeof it?.id === 'number' ? `id-${Number(it.id)}` : `seed-${idx}-${Math.random().toString(36).slice(2, 8)}`);
+            : (typeof it?.id === 'number' ? `id-${Number(it.id)}` : `tmp-${idx}-${Math.random().toString(36).slice(2, 8)}`);
           m.set('uid', uid);
-          m.set('content', String(it.content || ''));
-          m.set('checked', !!it.checked);
-          m.set('indent', Number(it.indent || 0));
+          m.set('content', String(it?.content || ''));
+          m.set('checked', !!it?.checked);
+          m.set('indent', Number(it?.indent || 0));
           return m;
         });
-        if (initial.length) yarr.insert(0, initial as any);
-      } catch {}
-    };
-
-    // Important for offline open/edit flows: sync may never fire while offline.
-    // Seed from snapshot only when websocket sync is unavailable, to avoid
-    // pre-sync local inserts racing remote Yjs state.
-    const offlineSeedTimer = window.setTimeout(() => {
-      try {
-        const p: any = provider as any;
-        const offline = (typeof navigator !== 'undefined' && navigator.onLine === false);
-        const canSeedNow = offline || (!p?.synced && !p?.wsconnected && !p?.wsconnecting);
-        if (canSeedNow) seedFromSnapshotIfEmpty();
-      } catch {}
-    }, 650);
+        if (initial.length > 0) yarr.insert(0, initial as any);
+      }
+    } catch {}
 
     const refreshImagesFromServer = async () => {
       try {
@@ -1327,6 +1337,10 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
 
     const onMeta = () => {
       try {
+        if (!seenImagesMetaRef.current) {
+          seenImagesMetaRef.current = true;
+          return;
+        }
         const payload: any = ymeta.get('imagesTick');
         if (!payload || !payload.t) return;
         if (payload.by && String(payload.by) === String(clientIdRef.current)) return;
@@ -1335,36 +1349,15 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
     };
     try { ymeta.observe(onMeta as any); } catch {}
 
-    const seededRef = { current: false } as { current: boolean };
     const onSync = (isSynced: boolean) => {
       if (!isSynced) return;
       syncedRef.current = true;
-      // Seed Yjs array from existing items if empty on first sync
-      try {
-        const yarr2 = yarrayRef.current;
-        if (yarr2 && yarr2.length === 0 && !seededRef.current) {
-          const initial = (note.items || []).map((it: any) => {
-            const m = new Y.Map<any>();
-            if (typeof it.id === 'number') m.set('id', it.id);
-            // Use deterministic uid when possible to keep React keys stable.
-            const uid = (typeof it?.uid === 'string' && it.uid)
-              ? String(it.uid)
-              : (typeof it?.id === 'number' ? `id-${Number(it.id)}` : `u${Math.random().toString(36).slice(2,8)}`);
-            m.set('uid', uid);
-            m.set('content', String(it.content || ''));
-            m.set('checked', !!it.checked);
-            m.set('indent', Number(it.indent || 0));
-            return m;
-          });
-          if (initial.length) yarr2.insert(0, initial as any);
-          seededRef.current = true;
-        }
-      } catch {}
     };
     provider.on('sync', onSync);
 
     const updateFromY = (_events?: any, transaction?: any) => {
-      try { if (transaction && transaction.local) markDirty(); } catch {}
+      const isLocalTx = !!(transaction && transaction.local);
+      try { if (isLocalTx) markDirty(); } catch {}
       try {
         const arr = yarr.toArray().map((m, idx) => ({
           id: (typeof m.get('id') === 'number' ? Number(m.get('id')) : undefined),
@@ -1375,13 +1368,19 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
           // Prefer uid for React key stability; fallback to id, then index
           key: (m.get('uid') ? String(m.get('uid')) : (typeof m.get('id') === 'number' ? Number(m.get('id')) : `i${idx}`)),
         }));
+        const prevItems = itemsRef.current || [];
+        // Do not wipe visible checklist snapshot before first remote sync completes.
+        // This avoids open-time flicker/disappear when local Y.Doc starts empty.
+        if (!syncedRef.current && arr.length === 0 && prevItems.length > 0) {
+          return;
+        }
         const isFocused = !!(activeChecklistEditor.current && activeChecklistEditor.current.isFocused);
         const structuralChanged = (() => {
           try {
-            if (arr.length !== items.length) return true;
+            if (arr.length !== prevItems.length) return true;
             for (let i = 0; i < arr.length; i++) {
               const a = arr[i];
-              const b = items[i];
+              const b = prevItems[i];
               if (!b) return true;
               const aKey = (typeof a.uid === 'string' && a.uid) ? `u:${a.uid}` : (typeof a.id === 'number' ? `i:${a.id}` : `p:${i}`);
               const bKey = (typeof (b as any).uid === 'string' && (b as any).uid) ? `u:${(b as any).uid}` : (typeof b.id === 'number' ? `i:${b.id}` : `p:${i}`);
@@ -1409,7 +1408,7 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
             }, 1200);
           }
         } catch {}
-        if (syncedRef.current) {
+        if (isLocalTx) {
           if (debouncedSyncTimer.current) window.clearTimeout(debouncedSyncTimer.current);
           debouncedSyncTimer.current = window.setTimeout(async () => {
             try {
@@ -1446,14 +1445,13 @@ export default function ChecklistEditor({ note, onClose, onSaved, noteBg, onImag
     yarr.observeDeep(updateFromY as any);
 
     return () => {
-      try { window.clearTimeout(offlineSeedTimer); } catch {}
       try { yarr.unobserveDeep(updateFromY as any); } catch {}
       try { provider.off('sync', onSync as any); } catch {}
       try { ymeta.unobserve(onMeta as any); } catch {}
       try { if (linkPreviewTimerRef.current) window.clearTimeout(linkPreviewTimerRef.current); } catch {}
       try { provider.destroy(); } catch {}
     };
-  }, [collabRoom, note.id, token, ydoc]);
+  }, [localDocReady, collabRoom, note.id, token, ydoc]);
 
   const broadcastImagesChanged = React.useCallback(() => {
     try {

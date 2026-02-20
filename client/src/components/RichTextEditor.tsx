@@ -20,7 +20,7 @@ import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faLink, faPalette } from '@fortawesome/free-solid-svg-icons';
 import MoreMenu from './MoreMenu';
 import UrlEntryModal from './UrlEntryModal';
-import { enqueueHttpJsonMutation, enqueueImageUpload, kickOfflineSync } from '../lib/offline';
+import { bindYDocPersistence, enqueueHttpJsonMutation, enqueueImageUpload, kickOfflineSync } from '../lib/offline';
 import { noteCollabRoomFromNote } from '../lib/collabRoom';
 
 function formatReminderDueIdentifier(dueMs: number): string {
@@ -239,9 +239,11 @@ export default function RichTextEditor({ note, onClose, onSaved, noteBg, onImage
   const [collaborators, setCollaborators] = React.useState<Array<{ collabId?: number; userId: number; email: string; name?: string; userImageUrl?: string }>>([]);
   const [showMore, setShowMore] = React.useState(false);
   const moreBtnRef = React.useRef<HTMLButtonElement | null>(null);
-  const seededOnceRef = React.useRef<boolean>(false);
   const syncedRef = React.useRef<boolean>(false);
   const dirtyRef = React.useRef<boolean>(false);
+  const seenImagesMetaRef = React.useRef<boolean>(false);
+  const seededOfflineSnapshotRef = React.useRef<boolean>(false);
+  const [localDocReady, setLocalDocReady] = React.useState<boolean>(false);
   const [urlModal, setUrlModal] = React.useState<{ mode: 'add' | 'edit'; previewId?: number; initialUrl?: string } | null>(null);
 
   // Keep collaborators in sync with server-provided note data.
@@ -383,9 +385,11 @@ export default function RichTextEditor({ note, onClose, onSaved, noteBg, onImage
     } catch {
       setBg('');
     }
-    seededOnceRef.current = false;
     syncedRef.current = false;
     dirtyRef.current = false;
+    seenImagesMetaRef.current = false;
+    seededOfflineSnapshotRef.current = false;
+    setLocalDocReady(false);
   }, [note.id, noteBg, (note as any)?.viewerColor, (note as any)?.color]);
 
   const saveTitleNow = React.useCallback(async (nextTitle?: string) => {
@@ -417,12 +421,40 @@ export default function RichTextEditor({ note, onClose, onSaved, noteBg, onImage
 
   // Collaborative setup via Yjs + y-websocket (room per note)
   const ydoc = React.useMemo(() => new Y.Doc(), [note.id]);
+  const collabRoom = React.useMemo(() => noteCollabRoomFromNote(note), [note.id, (note as any)?.createdAt]);
   const providerRef = React.useRef<WebsocketProvider | null>(null);
+
+  // Local-first hydration/persistence (IndexedDB-backed Y.Doc)
   React.useEffect(() => {
-    const room = noteCollabRoomFromNote(note);
+    let disposed = false;
+    let cleanup: (() => void) | null = null;
+
+    (async () => {
+      try {
+        cleanup = await bindYDocPersistence(collabRoom, ydoc);
+      } catch {
+        cleanup = null;
+      } finally {
+        if (!disposed) setLocalDocReady(true);
+        if (disposed && cleanup) {
+          try { cleanup(); } catch {}
+          cleanup = null;
+        }
+      }
+    })();
+
+    return () => {
+      disposed = true;
+      try { cleanup && cleanup(); } catch {}
+    };
+  }, [collabRoom, ydoc]);
+
+  // Network sync layer (non-blocking for render)
+  React.useEffect(() => {
+    if (!localDocReady) return;
     const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
     const serverUrl = `${proto}://${window.location.host}/collab`;
-    const provider = new WebsocketProvider(serverUrl, room, ydoc);
+    const provider = new WebsocketProvider(serverUrl, collabRoom, ydoc);
     providerRef.current = provider;
     const onSync = (isSynced: boolean) => { if (isSynced) syncedRef.current = true; };
     try { provider.on('sync', onSync as any); } catch {}
@@ -430,7 +462,7 @@ export default function RichTextEditor({ note, onClose, onSaved, noteBg, onImage
       try { provider.off('sync', onSync as any); } catch {}
       try { provider.destroy(); } catch {}
     };
-  }, [note.id, ydoc]);
+  }, [localDocReady, collabRoom, ydoc]);
 
   const broadcastImagesChanged = React.useCallback(() => {
     try {
@@ -455,6 +487,10 @@ export default function RichTextEditor({ note, onClose, onSaved, noteBg, onImage
     if (!ymeta) return;
     const onMeta = () => {
       try {
+        if (!seenImagesMetaRef.current) {
+          seenImagesMetaRef.current = true;
+          return;
+        }
         const payload: any = ymeta.get('imagesTick');
         if (!payload || !payload.t) return;
         if (payload.by && String(payload.by) === String(clientIdRef.current)) return;
@@ -496,6 +532,45 @@ export default function RichTextEditor({ note, onClose, onSaved, noteBg, onImage
     ],
     editorProps: { attributes: { class: 'rt-editor' } },
   });
+
+  // For offline-created temporary notes, seed Yjs from optimistic snapshot so
+  // content is visible immediately before create reconciliation completes.
+  React.useEffect(() => {
+    if (!localDocReady || !editor) return;
+    if (seededOfflineSnapshotRef.current) return;
+    const noteId = Number((note as any)?.id);
+    const pendingCreate = !!(note as any)?.offlinePendingCreate;
+    if (!pendingCreate || !Number.isFinite(noteId) || noteId >= 0) return;
+
+    try {
+      const hasEditorText = !!String(editor.getText?.() || '').trim();
+      if (hasEditorText) {
+        seededOfflineSnapshotRef.current = true;
+        return;
+      }
+
+      const rawBody = String((note as any)?.body || '').trim();
+      if (!rawBody) {
+        seededOfflineSnapshotRef.current = true;
+        return;
+      }
+
+      let parsed: any = null;
+      try { parsed = JSON.parse(rawBody); } catch { parsed = rawBody; }
+      if (parsed && typeof parsed === 'object') {
+        editor.commands.setContent(parsed as any, { emitUpdate: false } as any);
+      } else {
+        const text = String(parsed || '').trim();
+        if (text) {
+          editor.commands.setContent({
+            type: 'doc',
+            content: [{ type: 'paragraph', content: [{ type: 'text', text }] }],
+          } as any, { emitUpdate: false } as any);
+        }
+      }
+      seededOfflineSnapshotRef.current = true;
+    } catch {}
+  }, [localDocReady, editor, note.id, (note as any)?.offlinePendingCreate, (note as any)?.body]);
 
   function toggleMarkAcrossLine(mark: 'bold' | 'italic' | 'underline') {
     if (!editor) return;
@@ -552,81 +627,6 @@ export default function RichTextEditor({ note, onClose, onSaved, noteBg, onImage
       });
     } catch {}
   }, [ (note as any).images ]);
-
-  // Fallback seed for offline/open-race cases:
-  // retry seeding for a short window so provider sync races don't leave an empty editor.
-  React.useEffect(() => {
-    if (!editor) return;
-    const rawBody = String((note as any)?.body || '');
-    if (!rawBody.trim()) return;
-    let attempts = 0;
-    const MAX_ATTEMPTS = 8;
-
-    const trySeed = () => {
-      try {
-        const p: any = providerRef.current as any;
-        const offline = (typeof navigator !== 'undefined' && navigator.onLine === false);
-        const providerSynced = !!(p && p.synced);
-        const wsConnected = !!(p && p.wsconnected);
-        const wsConnecting = !!(p && p.wsconnecting);
-
-        // Avoid local fallback seeding while websocket sync is active/available,
-        // otherwise local content can race with remote Yjs state and duplicate.
-        // Keep fallback only for offline/disconnected openings.
-        if (!offline && (syncedRef.current || providerSynced || wsConnected || wsConnecting)) {
-          seededOnceRef.current = true;
-          return true;
-        }
-
-        const currentText = String(editor.getText?.() || '').trim();
-        if (currentText) {
-          seededOnceRef.current = true;
-          return true;
-        }
-        if (dirtyRef.current) return true;
-
-        let parsed: any = null;
-        try {
-          parsed = JSON.parse(rawBody);
-        } catch {
-          parsed = rawBody;
-        }
-
-        if (parsed && typeof parsed === 'object') {
-          editor.commands.setContent(parsed as any, { emitUpdate: false } as any);
-          seededOnceRef.current = true;
-          return true;
-        }
-
-        const text = String(parsed || '').trim();
-        if (!text) return true;
-        editor.commands.setContent({
-          type: 'doc',
-          content: [{ type: 'paragraph', content: [{ type: 'text', text }] }],
-        } as any, { emitUpdate: false } as any);
-        seededOnceRef.current = true;
-        return true;
-      } catch {}
-      return false;
-    };
-
-    const initialTimer = window.setTimeout(() => {
-      trySeed();
-    }, 120);
-
-    const interval = window.setInterval(() => {
-      attempts += 1;
-      const done = trySeed();
-      if (done || attempts >= MAX_ATTEMPTS) {
-        try { window.clearInterval(interval); } catch {}
-      }
-    }, 250);
-
-    return () => {
-      try { window.clearTimeout(initialTimer); } catch {}
-      try { window.clearInterval(interval); } catch {}
-    };
-  }, [editor, note.id, (note as any).body]);
 
   const [, setToolbarTick] = React.useState(0);
   React.useEffect(() => {
@@ -820,18 +820,23 @@ export default function RichTextEditor({ note, onClose, onSaved, noteBg, onImage
   React.useEffect(() => {
     if (!editor) return;
     const onUpdate = () => {
-      // Mark dirty only after initial sync; otherwise initial content hydration
-      // can spuriously count as a user edit.
-      try { if (syncedRef.current) markDirty(); } catch {}
+      // Mark dirty only while the editor is focused so hydration/replay updates
+      // don't count as user edits and don't trigger open-time writes.
+      try {
+        const focused = !!(editor && (editor as any).isFocused);
+        if (focused) markDirty();
+      } catch {}
       if (savePreviewTimer.current) window.clearTimeout(savePreviewTimer.current);
       savePreviewTimer.current = window.setTimeout(async () => {
         try {
+          if (!dirtyRef.current) return;
           const json = editor.getJSON();
-          await fetch(`/api/notes/${note.id}`, {
+          const result = await requestJsonOrQueue({
             method: 'PATCH',
-            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-            body: JSON.stringify({ body: JSON.stringify(json), type: 'TEXT' })
+            path: `/api/notes/${note.id}`,
+            body: { body: JSON.stringify(json), type: 'TEXT' },
           });
+          if (result.status === 'failed') throw new Error('Failed to update note preview snapshot');
         } catch {}
       }, 700);
 
